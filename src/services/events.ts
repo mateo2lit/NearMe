@@ -166,3 +166,21 @@ export function formatDistance(miles: number): string {
   if (miles < 1) return `${(miles * 5280).toFixed(0)} ft`;
   return `${miles.toFixed(1)} mi`;
 }
+
+/**
+ * Filter out events matching hidden categories/tags (user Settings preference).
+ */
+export function applyHiddenFilter(
+  events: Event[],
+  hiddenCategories: string[] = [],
+  hiddenTags: string[] = []
+): Event[] {
+  if (hiddenCategories.length === 0 && hiddenTags.length === 0) return events;
+  const hCats = new Set(hiddenCategories);
+  const hTags = new Set(hiddenTags);
+  return events.filter((e) => {
+    if (hCats.has(e.category)) return false;
+    if (e.tags?.some((t) => hTags.has(t))) return false;
+    return true;
+  });
+}

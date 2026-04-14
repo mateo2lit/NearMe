@@ -15,7 +15,9 @@ export default function TagBadge({ tag, selected, onPress, size = "sm" }: TagBad
   if (!info) return null;
 
   const isMd = size === "md";
-  const bgColor = selected ? info.color + "30" : COLORS.cardAlt;
+  // Selected: white bubble with colored text (high contrast against dark bg)
+  // Unselected: subtle cardAlt bubble with muted text
+  const bgColor = selected ? "#ffffff" : COLORS.cardAlt;
   const borderColor = selected ? info.color : "transparent";
   const textColor = selected ? info.color : COLORS.muted;
 

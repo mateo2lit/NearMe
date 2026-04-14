@@ -35,6 +35,8 @@ export default function SettingsScreen() {
     lat: number;
     lng: number;
   } | null>(null);
+  const [hiddenCategories, setHiddenCategories] = useState<EventCategory[]>([]);
+  const [hiddenTags, setHiddenTags] = useState<string[]>([]);
 
   useEffect(() => {
     (async () => {
@@ -44,12 +46,30 @@ export default function SettingsScreen() {
         setSelectedCategories(prefs.categories || []);
         setSelectedTags(prefs.tags || []);
         setRadius(prefs.radius || 5);
+        setHiddenCategories(prefs.hiddenCategories || []);
+        setHiddenTags(prefs.hiddenTags || []);
         if (prefs.customLocation) {
           setCustomLocation(prefs.customLocation);
         }
       }
     })();
   }, []);
+
+  const toggleHiddenCategory = async (cat: EventCategory) => {
+    const next = hiddenCategories.includes(cat)
+      ? hiddenCategories.filter((c) => c !== cat)
+      : [...hiddenCategories, cat];
+    setHiddenCategories(next);
+    await savePrefs({ hiddenCategories: next });
+  };
+
+  const toggleHiddenTag = async (tag: string) => {
+    const next = hiddenTags.includes(tag)
+      ? hiddenTags.filter((t) => t !== tag)
+      : [...hiddenTags, tag];
+    setHiddenTags(next);
+    await savePrefs({ hiddenTags: next });
+  };
 
   const savePrefs = async (updates: Record<string, any>) => {
     const prefsStr = await AsyncStorage.getItem("@nearme_preferences");
@@ -274,6 +294,72 @@ export default function SettingsScreen() {
         ))}
       </View>
 
+      {/* Hide Events section */}
+      <Text style={styles.sectionTitle}>Hide Events</Text>
+      <Text style={styles.sectionSubtitle}>
+        Events matching these categories or tags won't appear in your feed.
+      </Text>
+      <Text style={styles.subHeader}>Hidden categories</Text>
+      <View style={styles.categoriesGrid}>
+        {CATEGORIES.map((cat) => {
+          const isHidden = hiddenCategories.includes(cat.id);
+          return (
+            <TouchableOpacity
+              key={cat.id}
+              style={[
+                styles.categoryChip,
+                isHidden && {
+                  backgroundColor: COLORS.hot + "15",
+                  borderColor: COLORS.hot,
+                },
+              ]}
+              onPress={() => toggleHiddenCategory(cat.id)}
+              activeOpacity={0.7}
+            >
+              <Ionicons
+                name={isHidden ? "eye-off" : (cat.icon as any)}
+                size={16}
+                color={isHidden ? COLORS.hot : COLORS.muted}
+              />
+              <Text
+                style={[
+                  styles.categoryChipText,
+                  isHidden && { color: COLORS.hot },
+                ]}
+              >
+                {cat.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+      <Text style={[styles.subHeader, { marginTop: 16 }]}>Hidden tags</Text>
+      <View style={styles.tagsGrid}>
+        {TAGS.map((tag) => {
+          const isHidden = hiddenTags.includes(tag.id);
+          return (
+            <TouchableOpacity
+              key={tag.id}
+              style={[
+                styles.hideTagChip,
+                isHidden && { backgroundColor: COLORS.hot + "15", borderColor: COLORS.hot },
+              ]}
+              onPress={() => toggleHiddenTag(tag.id)}
+              activeOpacity={0.7}
+            >
+              <Ionicons
+                name={isHidden ? "eye-off" : "pricetag"}
+                size={12}
+                color={isHidden ? COLORS.hot : COLORS.muted}
+              />
+              <Text style={[styles.hideTagText, isHidden && { color: COLORS.hot }]}>
+                {tag.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
       {/* About section */}
       <Text style={styles.sectionTitle}>About</Text>
       <View style={styles.aboutCard}>
@@ -442,6 +528,30 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
+  },
+  subHeader: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: COLORS.muted,
+    letterSpacing: 1,
+    marginBottom: 8,
+    marginTop: 4,
+  },
+  hideTagChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLORS.card,
+    borderWidth: 1.5,
+    borderColor: COLORS.border,
+  },
+  hideTagText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: COLORS.muted,
   },
   aboutCard: {
     backgroundColor: COLORS.card,

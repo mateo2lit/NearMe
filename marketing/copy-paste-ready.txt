@@ -1,0 +1,126 @@
+============================================
+APP STORE CONNECT — COPY/PASTE READY
+Open this file in Notepad or VS Code, then copy each section.
+============================================
+
+
+--- PROMOTIONAL TEXT (170 chars max) ---
+
+Find what's happening around you right now — from pickleball games to trivia nights to live concerts. Your perfect weekend starts here.
+
+
+--- DESCRIPTION (4,000 chars max) ---
+
+Your city. Your vibe. Your night.
+
+Stop scrolling through event sites and Facebook groups trying to find plans. NearMe's AI curates exactly what's happening within a few miles of you — tonight, tomorrow, this weekend.
+
+What you'll find:
+• Live music, concerts & DJ sets
+• Pickup sports — pickleball, basketball, volleyball, soccer
+• Bar nights — karaoke, trivia, happy hours, open mics
+• Singles mixers & speed dating events
+• Comedy shows, game nights, dance nights
+• Food festivals, farmers markets, tastings
+• Yoga, running clubs, fitness meetups
+• Family-friendly community events
+• Date night ideas
+
+Built for locals who actually go out.
+
+Tell NearMe what you're into, your vibe, and your goals. Our AI matches you to real events from Ticketmaster, SeatGeek, Bandsintown, local venue websites, and city calendars — not random ticket listings.
+
+Designed around you:
+• Personalized feed — 7-question onboarding learns your vibe
+• Real-time — knows what's happening NOW vs later
+• Smart filters — 21+, free, outdoor, active, date night, family
+• Interactive map — see every event around you at a glance
+• Search by keyword — find that specific thing you're looking for
+• Save for later — heart events and revisit anytime
+• Share to friends — send events via text with one tap
+• Any city — works wherever you go
+
+AI-powered discovery:
+NearMe scans thousands of events across 7+ data sources, scores them against your goals, and surfaces the best matches. The AI gets smarter the more you use it.
+
+Premium features:
+• Unlimited events, saves, and filters
+• "Happening now" real-time alerts
+• AI-powered recommendations
+• Dating & singles events (speed dating, mixers)
+• No ads, ever
+
+Try it free for 7 days with the yearly plan. Less than $1/week. Cancel anytime.
+
+Why NearMe?
+Because "I don't know, what do you want to do?" is a garbage plan. Open the app. Pick something. Go.
+
+
+--- KEYWORDS (100 chars max, no spaces after commas) ---
+
+tonight,nightlife,trivia,karaoke,pickleball,bars,hangout,happening,nearby,date,social,explore
+
+
+--- SUPPORT URL ---
+
+https://mateo2lit.github.io/NearMe/
+
+
+--- MARKETING URL (optional — same as support) ---
+
+https://mateo2lit.github.io/NearMe/
+
+
+--- VERSION ---
+
+1.0
+
+
+--- COPYRIGHT ---
+
+2026 David Hershman
+
+
+============================================
+APP REVIEW INFORMATION (bottom of version page)
+============================================
+
+
+--- SIGN-IN REQUIRED ---
+
+No
+
+
+--- CONTACT FIRST NAME ---
+
+David
+
+
+--- CONTACT LAST NAME ---
+
+Hershman
+
+
+--- CONTACT EMAIL ---
+
+dbh28tekkit@gmail.com
+
+
+--- CONTACT PHONE ---
+
+(your phone number — Apple requires this)
+
+
+--- NOTES FOR REVIEWER ---
+
+NearMe is a location-based event discovery app. No account or login is required — the app uses the device's location (with explicit user permission) to display events happening nearby. All events are sourced from public APIs (Ticketmaster Discovery API, SeatGeek Events API, Google Places) and publicly available venue websites. No user-generated content.
+
+The optional subscription (NearMe Premium) is implemented via Apple StoreKit with a 7-day free trial into an annual plan ($49.99/year), or a weekly plan ($4.99/week) with a 3-day free trial. All core features are functional during the trial period. Trial users get full access.
+
+To test:
+1. Allow location access on launch
+2. Complete the 7-step onboarding flow (goals, vibe, social style, schedule, blocker, budget)
+3. Wait through the brief "AI is curating your feed" loading screen
+4. View the personalized teaser with one recommended event
+5. Start the free trial to enter the main app
+6. Browse the event feed, tap events for details, view map, save events

@@ -6,14 +6,13 @@ import {
   TouchableOpacity,
   FlatList,
   RefreshControl,
-  TextInput,
 } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import FeedCard from "../../src/components/FeedCard";
 import SkeletonCard from "../../src/components/SkeletonCard";
 import TagFilter from "../../src/components/TagFilter";
-import { fetchNearbyEvents } from "../../src/services/events";
+import { fetchNearbyEvents, applyHiddenFilter } from "../../src/services/events";
 import { getFeedHandoff, clearFeedHandoff } from "../../src/services/eventCache";
 import { useLocation } from "../../src/hooks/useLocation";
 import { useSyncStatus } from "../../src/hooks/useSyncStatus";
@@ -31,7 +30,7 @@ export default function DiscoverScreen() {
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [tick, setTick] = useState(0);
-  const [searchQuery, setSearchQuery] = useState("");
+  const [dateFilter, setDateFilter] = useState<"all" | "today" | "tomorrow" | "week">("all");
 
   const [topPicks, setTopPicks] = useState<Event[]>([]);
 
@@ -103,7 +102,9 @@ export default function DiscoverScreen() {
       tags
     );
 
-    const diversified = diversifyByVenue(data);
+    // Apply user's "hide events" filter from Settings
+    const filtered = applyHiddenFilter(data, prefs?.hiddenCategories, prefs?.hiddenTags);
+    const diversified = diversifyByVenue(filtered);
 
     // Compute top picks — highest scored events for user's goals
     const onboarding = prefs?.onboarding;
@@ -133,7 +134,8 @@ export default function DiscoverScreen() {
         // Read prefs to compute top picks on the handoff events
         const prefsStr = await AsyncStorage.getItem("@nearme_preferences");
         const prefs = prefsStr ? JSON.parse(prefsStr) : null;
-        const diversified = diversifyByVenue(handoff);
+        const filteredHandoff = applyHiddenFilter(handoff, prefs?.hiddenCategories, prefs?.hiddenTags);
+        const diversified = diversifyByVenue(filteredHandoff);
         if (prefs?.onboarding?.goals?.length) {
           const scored = diversified
             .map((e) => ({ event: e, score: scoreEvent(e, prefs.onboarding) }))
@@ -227,57 +229,72 @@ export default function DiscoverScreen() {
     />
   );
 
-  // Apply search filter
-  const query = searchQuery.trim().toLowerCase();
-  const filterFn = (e: Event) => {
-    if (!query) return true;
-    return (
-      e.title?.toLowerCase().includes(query) ||
-      e.description?.toLowerCase().includes(query) ||
-      e.venue?.name?.toLowerCase().includes(query) ||
-      e.address?.toLowerCase().includes(query)
-    );
+  // Apply date filter
+  const dateMatch = (e: Event) => {
+    if (dateFilter === "all") return true;
+    if (!e.start_time) return false;
+    const ts = new Date(e.start_time);
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startOfTomorrow = new Date(startOfToday);
+    startOfTomorrow.setDate(startOfTomorrow.getDate() + 1);
+    const startOfDayAfter = new Date(startOfTomorrow);
+    startOfDayAfter.setDate(startOfDayAfter.getDate() + 1);
+    const endOfWeek = new Date(startOfToday);
+    endOfWeek.setDate(endOfWeek.getDate() + 7);
+
+    if (dateFilter === "today") return ts >= startOfToday && ts < startOfTomorrow;
+    if (dateFilter === "tomorrow") return ts >= startOfTomorrow && ts < startOfDayAfter;
+    if (dateFilter === "week") return ts >= startOfToday && ts < endOfWeek;
+    return true;
   };
-  const visibleEvents = events.filter(filterFn);
-  const visiblePicks = query ? [] : topPicks; // hide picks during search
-  const totalCount = topPicks.length + events.length; // consistent total
+  const visibleEvents = events.filter(dateMatch);
+  const visiblePicks = topPicks.filter(dateMatch);
+  const totalCount = visiblePicks.length + visibleEvents.length;
 
   // Loading = show skeletons instead of blank screen
   const showingSkeletons = (loading || location.loading) && events.length === 0;
 
   return (
     <View style={styles.container}>
-      {/* Header */}
+      {/* Header — inline title + location */}
       <View style={styles.header}>
-        <View>
+        <View style={styles.headerLeft}>
           <Text style={styles.headerTitle}>NearMe</Text>
-          <View style={styles.locationRow}>
-            <Ionicons name="location" size={12} color={COLORS.accent} />
-            <Text style={styles.locationText}>{location.cityName}</Text>
+          <View style={styles.headerLocationChip}>
+            <Ionicons name="location" size={11} color={COLORS.accent} />
+            <Text style={styles.headerLocationText} numberOfLines={1}>
+              {location.cityName}
+            </Text>
           </View>
         </View>
         <View style={styles.counterBadge}>
-          <Text style={styles.counterText}>{totalCount} events</Text>
+          <Text style={styles.counterText}>{totalCount}</Text>
         </View>
       </View>
 
-      {/* Search bar */}
-      <View style={styles.searchWrap}>
-        <Ionicons name="search" size={16} color={COLORS.muted} style={styles.searchIcon} />
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Search events, venues…"
-          placeholderTextColor={COLORS.muted}
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-          returnKeyType="search"
-          clearButtonMode="while-editing"
-        />
-        {searchQuery.length > 0 && (
-          <TouchableOpacity onPress={() => setSearchQuery("")} style={styles.searchClear}>
-            <Ionicons name="close-circle" size={18} color={COLORS.muted} />
-          </TouchableOpacity>
-        )}
+      {/* Date filter chips */}
+      <View style={styles.dateChipRow}>
+        {([
+          { id: "all", label: "All" },
+          { id: "today", label: "Today" },
+          { id: "tomorrow", label: "Tomorrow" },
+          { id: "week", label: "This Week" },
+        ] as const).map((d) => {
+          const active = dateFilter === d.id;
+          return (
+            <TouchableOpacity
+              key={d.id}
+              style={[styles.dateChip, active && styles.dateChipActive]}
+              onPress={() => setDateFilter(d.id)}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.dateChipText, active && styles.dateChipTextActive]}>
+                {d.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
       </View>
 
       {/* Sync status banner */}
@@ -320,23 +337,23 @@ export default function DiscoverScreen() {
       ) : visibleEvents.length === 0 && visiblePicks.length === 0 ? (
         <View style={styles.center}>
           <View style={styles.emptyIcon}>
-            <Ionicons name={query ? "search" : "radio"} size={40} color={COLORS.accent} />
+            <Ionicons name="radio" size={40} color={COLORS.accent} />
           </View>
           <Text style={styles.emptyTitle}>
-            {query ? "No matches" : "No events nearby"}
+            {dateFilter !== "all" ? `Nothing ${dateFilter === "week" ? "this week" : dateFilter}` : "No events nearby"}
           </Text>
           <Text style={styles.emptySubtitle}>
-            {query
-              ? `Nothing matches "${searchQuery}". Try a different keyword.`
+            {dateFilter !== "all"
+              ? "Try a different date filter"
               : "Try expanding your search radius\nor removing some filters"}
           </Text>
           <TouchableOpacity
             style={styles.refreshBtn}
-            onPress={query ? () => setSearchQuery("") : onRefresh}
+            onPress={dateFilter !== "all" ? () => setDateFilter("all") : onRefresh}
             activeOpacity={0.8}
           >
-            <Ionicons name={query ? "close" : "refresh"} size={18} color="#fff" />
-            <Text style={styles.refreshBtnText}>{query ? "Clear search" : "Refresh"}</Text>
+            <Ionicons name={dateFilter !== "all" ? "close" : "refresh"} size={18} color="#fff" />
+            <Text style={styles.refreshBtnText}>{dateFilter !== "all" ? "Clear filter" : "Refresh"}</Text>
           </TouchableOpacity>
         </View>
       ) : (
@@ -344,7 +361,7 @@ export default function DiscoverScreen() {
           data={visibleEvents}
           renderItem={renderCard}
           keyExtractor={(item) => item.id}
-          extraData={[savedIds, tick, query]}
+          extraData={[savedIds, tick, dateFilter]}
           contentContainerStyle={styles.feed}
           showsVerticalScrollIndicator={false}
           ListHeaderComponent={
@@ -423,23 +440,37 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 60,
     paddingBottom: 8,
+    gap: 10,
+  },
+  headerLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    flex: 1,
   },
   headerTitle: {
-    fontSize: 28,
+    fontSize: 26,
     fontWeight: "800",
     color: COLORS.text,
     letterSpacing: -0.5,
   },
-  locationRow: {
+  headerLocationChip: {
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
-    marginTop: 2,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    flexShrink: 1,
   },
-  locationText: {
-    fontSize: 13,
-    color: COLORS.muted,
-    fontWeight: "500",
+  headerLocationText: {
+    fontSize: 12,
+    color: COLORS.text,
+    fontWeight: "600",
+    flexShrink: 1,
   },
   counterBadge: {
     backgroundColor: COLORS.card,
@@ -483,6 +514,34 @@ const styles = StyleSheet.create({
   searchClear: {
     padding: 2,
     marginLeft: 4,
+  },
+  // Date filter chips
+  dateChipRow: {
+    flexDirection: "row",
+    gap: 8,
+    paddingHorizontal: SPACING.md,
+    marginTop: 10,
+  },
+  dateChip: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    alignItems: "center",
+  },
+  dateChipActive: {
+    backgroundColor: COLORS.accent,
+    borderColor: COLORS.accent,
+  },
+  dateChipText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: COLORS.muted,
+  },
+  dateChipTextActive: {
+    color: "#fff",
   },
   // Sync banner
   syncBanner: {

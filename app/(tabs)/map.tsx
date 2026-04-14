@@ -10,7 +10,7 @@ import {
 import MapView, { Marker, PROVIDER_GOOGLE } from "react-native-maps";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { fetchNearbyEvents } from "../../src/services/events";
+import { fetchNearbyEvents, applyHiddenFilter } from "../../src/services/events";
 import { getEventTimeLabel, formatDistance } from "../../src/services/events";
 import { useLocation } from "../../src/hooks/useLocation";
 import { CATEGORY_MAP } from "../../src/constants/categories";
@@ -47,9 +47,11 @@ export default function MapScreen() {
           location.lng,
           prefs?.radius || 5
         );
+        // Apply Settings hide filter
+        const visible = applyHiddenFilter(data, prefs?.hiddenCategories, prefs?.hiddenTags);
         // Diversify by venue to match Discover tab's count
         const counts = new Map<string, number>();
-        const diversified = data.filter((e) => {
+        const diversified = visible.filter((e) => {
           const key = e.venue_id || e.address || e.title;
           const c = counts.get(key) || 0;
           if (c >= 2) return false;
