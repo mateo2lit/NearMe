@@ -48,6 +48,19 @@ const FAMILY_KEYWORDS = [
   "face paint", "petting zoo", "carnival",
 ];
 
+const SINGLES_KEYWORDS = [
+  "singles", "speed dating", "speed-dating", "mixer", "meet & greet",
+  "meet and greet", "matchmak", "dating event", "dating night",
+  "love connection", "solo travelers", "solo friendly",
+  "singles night", "singles mingle", "eligible bachelor",
+  "first date", "date night",
+];
+
+const DATE_NIGHT_KEYWORDS = [
+  "date night", "couples", "romantic", "candlelit", "sunset cruise",
+  "wine and paint", "wine & paint", "paint and sip", "dinner show",
+];
+
 function textContains(text: string, keywords: string[]): boolean {
   const lower = text.toLowerCase();
   return keywords.some((kw) => lower.includes(kw));
@@ -126,10 +139,21 @@ export function generateTags(event: EventInput): string[] {
     tags.push("free");
   }
 
+  // Singles / dating events (HIGH VALUE TAG)
+  if (textContains(text, SINGLES_KEYWORDS)) {
+    tags.push("singles");
+    tags.push("date-night");
+    // Singles events are almost always 21+
+    if (!tags.includes("21+") && !tags.includes("18+") && !tags.includes("all-ages")) {
+      tags.push("21+");
+    }
+  }
+
   // Date night
   if (
     cat === "nightlife" ||
     cat === "arts" ||
+    textContains(text, DATE_NIGHT_KEYWORDS) ||
     (cat === "food" && !textContains(text, FAMILY_KEYWORDS))
   ) {
     tags.push("date-night");

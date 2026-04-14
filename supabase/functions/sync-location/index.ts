@@ -193,18 +193,46 @@ async function fetchSeatGeek(lat: number, lng: number, radiusMiles: number) {
 async function fetchEventbrite(lat: number, lng: number, radiusMiles: number) {
   if (!EVENTBRITE_TOKEN) return [];
   const events: any[] = [];
-  try {
-    const url = new URL("https://www.eventbriteapi.com/v3/events/search/");
-    url.searchParams.set("location.latitude", String(lat));
-    url.searchParams.set("location.longitude", String(lng));
-    url.searchParams.set("location.within", `${radiusMiles}mi`);
-    url.searchParams.set("start_date.keyword", "this_week");
-    url.searchParams.set("expand", "venue");
 
-    const res = await fetch(url.toString(), {
-      headers: { Authorization: `Bearer ${EVENTBRITE_TOKEN}` },
-    });
-    const data = await res.json();
+  // Run main search + targeted dating/singles search in parallel
+  const queries = [
+    { q: "", label: "general" },
+    { q: "singles dating speed dating mixer", label: "dating" },
+    { q: "happy hour trivia karaoke", label: "bar-nights" },
+  ];
+
+  const seenIds = new Set<string>();
+
+  for (const { q, label } of queries) {
+    try {
+      const url = new URL("https://www.eventbriteapi.com/v3/events/search/");
+      url.searchParams.set("location.latitude", String(lat));
+      url.searchParams.set("location.longitude", String(lng));
+      url.searchParams.set("location.within", `${radiusMiles}mi`);
+      url.searchParams.set("start_date.keyword", "this_week");
+      url.searchParams.set("expand", "venue");
+      if (q) url.searchParams.set("q", q);
+
+      const res = await fetch(url.toString(), {
+        headers: { Authorization: `Bearer ${EVENTBRITE_TOKEN}` },
+      });
+      const data = await res.json();
+      console.log(`[eb:${label}] ${data?.events?.length || 0} results`);
+      // Merge, dedupe by Eventbrite ID
+      for (const eb of data?.events || []) {
+        if (seenIds.has(eb.id)) continue;
+        seenIds.add(eb.id);
+        (events as any).push({ __raw: eb });
+      }
+    } catch (err) {
+      console.error(`[eb:${label}] error:`, err);
+    }
+  }
+
+  // Now process all unique events
+  try {
+    const data = { events: events.map((e: any) => e.__raw) };
+    events.length = 0; // reset
     for (const eb of data?.events || []) {
       const venue = eb.venue;
       const eLat = venue?.latitude ? parseFloat(venue.latitude) : null;
@@ -289,25 +317,33 @@ async function extractWithClaude(html: string, venueName: string, venueCategory:
       },
       body: JSON.stringify({
         model: "claude-haiku-4-5-20251001",
-        max_tokens: 1024,
+        max_tokens: 1500,
         messages: [{
           role: "user",
-          content: `Extract recurring events from this ${venueCategory}. Venue: "${venueName}"
+          content: `Extract local events from this ${venueCategory} venue's website for an events app. Venue: "${venueName}"
 
-Text:
+PRIORITIZE finding:
+1. Singles/dating: speed dating, singles mixers, matchmaker events, solo-friendly nights
+2. Recurring nights: trivia, karaoke, open mic, happy hour, DJ sets, live music, game night
+3. Active/social: pickup sports, run clubs, yoga, fitness classes with social element
+4. Special events: tastings, comedy, paint & sip, dinner shows, date nights
+
+Website text:
 ${text}
 
-Return JSON array. Each event:
-- title (specific: "Tuesday Trivia" not "Trivia")
-- description (1-2 sentences)
+Return a JSON array. Each event must have:
+- title (specific like "Tuesday Speed Dating" NOT just "Dating Event")
+- description (1-2 sentences describing what attendees do)
 - category (nightlife|music|sports|food|arts|community|fitness|outdoors|movies)
-- subcategory (trivia|karaoke|happy_hour|live_music|dj_set|open_mic|game_night|dancing|comedy|yoga|etc)
-- day_of_week (monday|tuesday|etc)
-- time ("7:30 PM")
+- subcategory (trivia|karaoke|happy_hour|live_music|dj_set|open_mic|game_night|dancing|comedy|yoga|pickleball|speed_dating|singles_mixer|tasting|paint_sip|etc)
+- day_of_week (monday|tuesday|wednesday|thursday|friday|saturday|sunday, or null for one-time)
+- time (e.g. "7:30 PM" or null)
 - is_free (boolean)
-- price (number or null)
+- price (number in USD, or null)
 
-Return ONLY the JSON array. No events = [].`,
+BE AGGRESSIVE - extract any mentioned recurring activity or special event. Include happy hours, drink specials with entertainment, etc.
+
+Return ONLY valid JSON array. If nothing found, return [].`,
         }],
       }),
     });
@@ -433,6 +469,77 @@ async function scanVenues(lat: number, lng: number, radiusMeters: number) {
   return all;
 }
 
+// ─── Geohash Encoder ─────────────────────────────────────────
+
+const BASE32 = "0123456789bcdefghjkmnpqrstuvwxyz";
+
+function encodeGeohash(lat: number, lng: number, precision = 5): string {
+  let minLat = -90, maxLat = 90;
+  let minLng = -180, maxLng = 180;
+  let hash = "";
+  let bits = 0;
+  let bit = 0;
+  let even = true;
+
+  while (hash.length < precision) {
+    if (even) {
+      const mid = (minLng + maxLng) / 2;
+      if (lng >= mid) { bits = (bits << 1) | 1; minLng = mid; }
+      else { bits = bits << 1; maxLng = mid; }
+    } else {
+      const mid = (minLat + maxLat) / 2;
+      if (lat >= mid) { bits = (bits << 1) | 1; minLat = mid; }
+      else { bits = bits << 1; maxLat = mid; }
+    }
+    even = !even;
+    bit++;
+    if (bit === 5) {
+      hash += BASE32[bits];
+      bits = 0;
+      bit = 0;
+    }
+  }
+  return hash;
+}
+
+// ─── Rate Limiting ───────────────────────────────────────────
+
+const RATE_LIMIT_MAX = 10; // max 10 sync requests
+const RATE_LIMIT_WINDOW_MIN = 60; // per hour
+
+async function checkRateLimit(clientId: string, ip: string | null): Promise<{ allowed: boolean; remaining: number }> {
+  const since = new Date(Date.now() - RATE_LIMIT_WINDOW_MIN * 60000).toISOString();
+
+  const { count } = await supabase
+    .from("rate_limits")
+    .select("*", { count: "exact", head: true })
+    .eq("client_id", clientId)
+    .eq("endpoint", "sync-location")
+    .gte("called_at", since);
+
+  const used = count || 0;
+  if (used >= RATE_LIMIT_MAX) {
+    return { allowed: false, remaining: 0 };
+  }
+
+  // Log this call
+  await supabase.from("rate_limits").insert({
+    client_id: clientId,
+    endpoint: "sync-location",
+    ip: ip || null,
+  });
+
+  return { allowed: true, remaining: RATE_LIMIT_MAX - used - 1 };
+}
+
+// Simple bot/abuse heuristics: no lat/lng at all, or absurd values
+function isAbusiveRequest(lat: number, lng: number, radiusMiles: number): boolean {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return true;
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return true;
+  if (radiusMiles < 0 || radiusMiles > 100) return true;
+  return false;
+}
+
 // ─── Main Handler ────────────────────────────────────────────
 
 serve(async (req: Request) => {
@@ -442,21 +549,45 @@ serve(async (req: Request) => {
     const lng = body.lng;
     const radiusMiles = body.radius_miles || 15;
 
-    if (!lat || !lng) {
+    if (lat == null || lng == null) {
       return new Response(JSON.stringify({ error: "lat and lng required" }), {
         status: 400, headers: { "Content-Type": "application/json" },
       });
     }
 
-    // Cooldown check
+    if (isAbusiveRequest(lat, lng, radiusMiles)) {
+      return new Response(JSON.stringify({ error: "Invalid location parameters" }), {
+        status: 400, headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    // Rate limit by geohash+IP (identifies approximate user location)
+    const clientId = encodeGeohash(lat, lng, 6);
+    const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+               req.headers.get("cf-connecting-ip") ||
+               "unknown";
+
+    const rate = await checkRateLimit(`${clientId}:${ip}`, ip);
+    if (!rate.allowed) {
+      console.warn(`[rate-limit] blocked ${clientId}:${ip}`);
+      return new Response(
+        JSON.stringify({ error: "Rate limit exceeded. Try again in an hour." }),
+        { status: 429, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    // Geohash-based caching (precision 5 ≈ 4.9km cells)
+    const geohash = encodeGeohash(lat, lng, 5);
     const gridLat = Math.round(lat * 10) / 10;
     const gridLng = Math.round(lng * 10) / 10;
     const gridKey = `${gridLat},${gridLng}`;
 
+    // Check both geohash and legacy grid_key for existing sync
     const { data: syncLog } = await supabase
       .from("sync_log")
-      .select("synced_at, event_count")
-      .eq("grid_key", gridKey)
+      .select("synced_at, event_count, geohash")
+      .or(`geohash.eq.${geohash},grid_key.eq.${gridKey}`)
+      .order("synced_at", { ascending: false })
       .limit(1);
 
     const lastSync = syncLog?.[0]?.synced_at;
@@ -465,27 +596,31 @@ serve(async (req: Request) => {
       ? (Date.now() - new Date(lastSync).getTime()) / 3600000
       : Infinity;
 
-    // Only skip if recent AND previous sync actually found events
     if (hoursSince < SYNC_COOLDOWN_HOURS && lastCount > 0) {
       return new Response(
-        JSON.stringify({ synced: false, reason: `synced ${hoursSince.toFixed(1)}h ago with ${lastCount} events` }),
+        JSON.stringify({
+          synced: false,
+          reason: `synced ${hoursSince.toFixed(1)}h ago with ${lastCount} events`,
+          geohash,
+          remaining_requests: rate.remaining,
+        }),
         { status: 200, headers: { "Content-Type": "application/json" } }
       );
     }
 
-    console.log(`[sync] ${gridKey} (${hoursSince.toFixed(1)}h since)`);
+    console.log(`[sync] ${gridKey} geohash=${geohash} (${hoursSince.toFixed(1)}h since)`);
 
     // 1. Venues
     const venueCount = await syncVenues(lat, lng, radiusMiles * 1609.34);
 
-    // 2. Events from all sources in parallel
+    // 2. Events from APIs in parallel
     const [tm, sg, eb] = await Promise.all([
       fetchTicketmaster(lat, lng, radiusMiles),
       fetchSeatGeek(lat, lng, radiusMiles),
       fetchEventbrite(lat, lng, radiusMiles),
     ]);
 
-    // 3. Scan venue websites (sequential with batching)
+    // 3. Scan venue websites
     const scraped = await scanVenues(lat, lng, radiusMiles * 1609.34);
 
     // 4. Dedupe and upsert
@@ -502,22 +637,28 @@ serve(async (req: Request) => {
       await supabase.from("events").upsert(unique, { onConflict: "source,source_id" });
     }
 
-    // Log sync
+    // Log sync with both geohash and grid_key for backwards compat
     await supabase.from("sync_log").upsert({
-      grid_key: gridKey, lat: gridLat, lng: gridLng,
+      grid_key: gridKey,
+      geohash,
+      lat: gridLat,
+      lng: gridLng,
       synced_at: new Date().toISOString(),
-      event_count: unique.length, venue_count: venueCount,
+      event_count: unique.length,
+      venue_count: venueCount,
     }, { onConflict: "grid_key" });
 
     return new Response(
       JSON.stringify({
-        synced: true, lat, lng,
+        synced: true,
+        lat, lng, geohash,
         venues: venueCount,
         ticketmaster: tm.length,
         seatgeek: sg.length,
         eventbrite: eb.length,
         scraped: scraped.length,
         upserted: unique.length,
+        remaining_requests: rate.remaining,
       }),
       { status: 200, headers: { "Content-Type": "application/json" } }
     );

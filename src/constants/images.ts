@@ -74,6 +74,13 @@ const SUBCATEGORY_IMAGES: Record<string, string> = {
   screening:      "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=600",
   outdoor_movie:  "https://images.unsplash.com/photo-1517604931442-7e0c8ed2963c?w=600",
 
+  // Dating / singles
+  speed_dating:   "https://images.unsplash.com/photo-1522202176988-66273c2fd55f?w=600",
+  singles_mixer:  "https://images.unsplash.com/photo-1529333166437-7750a6dd5a70?w=600",
+  matchmaking:    "https://images.unsplash.com/photo-1522202176988-66273c2fd55f?w=600",
+  paint_sip:      "https://images.unsplash.com/photo-1460661419201-fd4cecdf8a8b?w=600",
+  tasting:        "https://images.unsplash.com/photo-1510812431401-41d2bd2722f3?w=600",
+
   // Community
   volunteer:      "https://images.unsplash.com/photo-1559027615-cd4628902d4a?w=600",
   networking:     "https://images.unsplash.com/photo-1515187029135-18ee286d815b?w=600",
@@ -88,6 +95,11 @@ const SUBCATEGORY_IMAGES: Record<string, string> = {
 
 // Keyword-based matching (checked against title + description)
 const KEYWORD_IMAGES: [string[], string][] = [
+  [["speed dating", "speed-dating"], SUBCATEGORY_IMAGES.speed_dating],
+  [["singles mixer", "singles night", "singles mingle", "singles event"], SUBCATEGORY_IMAGES.singles_mixer],
+  [["matchmaking", "matchmaker"],    SUBCATEGORY_IMAGES.matchmaking],
+  [["paint and sip", "paint & sip", "wine and paint"], SUBCATEGORY_IMAGES.paint_sip],
+  [["tasting", "wine tasting"],      SUBCATEGORY_IMAGES.tasting],
   [["pickleball"],          SUBCATEGORY_IMAGES.pickleball],
   [["basketball", "hoops"], SUBCATEGORY_IMAGES.basketball],
   [["volleyball"],          SUBCATEGORY_IMAGES.volleyball],

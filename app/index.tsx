@@ -9,8 +9,14 @@ export default function Index() {
 
   useEffect(() => {
     (async () => {
-      const onboarded = await AsyncStorage.getItem("@nearme_onboarded");
-      if (onboarded === "true") {
+      const [onboarded, subscribed] = await Promise.all([
+        AsyncStorage.getItem("@nearme_onboarded"),
+        AsyncStorage.getItem("@nearme_subscribed"),
+      ]);
+
+      // Hard paywall gate: require both onboarding completion AND active subscription flag.
+      // Trial = subscription. Without either, user is sent back through onboarding.
+      if (onboarded === "true" && subscribed === "true") {
         router.replace("/(tabs)");
       } else {
         router.replace("/onboarding");

@@ -16,6 +16,7 @@ export const TAGS: TagOption[] = [
   { id: "active", label: "Active", icon: "fitness", color: "#ff6b6b" },
   { id: "free", label: "Free", icon: "gift", color: "#00b894" },
   { id: "date-night", label: "Date Night", icon: "heart", color: "#fd79a8" },
+  { id: "singles", label: "Singles", icon: "heart-circle", color: "#ff6b9d" },
   { id: "family", label: "Family", icon: "people", color: "#fdcb6e" },
   { id: "late-night", label: "Late Night", icon: "moon", color: "#6c5ce7" },
   { id: "daytime", label: "Daytime", icon: "sunny", color: "#feca57" },

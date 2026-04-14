@@ -28,6 +28,8 @@ export default function DiscoverScreen() {
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [tick, setTick] = useState(0);
 
+  const [topPicks, setTopPicks] = useState<Event[]>([]);
+
   // Limit events per venue to avoid one spot dominating the feed
   const diversifyByVenue = (list: Event[], maxPerVenue = 2): Event[] => {
     const counts = new Map<string, number>();
@@ -38,6 +40,40 @@ export default function DiscoverScreen() {
       counts.set(key, count + 1);
       return true;
     });
+  };
+
+  // Score an event against the user's onboarding answers for personalization
+  const scoreEvent = (event: Event, onboarding: any): number => {
+    if (!onboarding) return 0;
+    let score = 0;
+    const goals: string[] = onboarding.goals || [];
+
+    // Goal → tag/category mapping (matches the onboarding)
+    const goalMap: Record<string, { tags: string[]; categories: string[] }> = {
+      "meet-people": { tags: ["social"], categories: ["community", "nightlife"] },
+      "find-partner": { tags: ["singles", "date-night"], categories: ["nightlife", "food", "arts"] },
+      "get-active": { tags: ["active"], categories: ["sports", "fitness"] },
+      "drinks-nightlife": { tags: ["drinking", "21+"], categories: ["nightlife", "food"] },
+      "live-music": { tags: ["live-music"], categories: ["music"] },
+      "try-food": { tags: ["food"], categories: ["food"] },
+      "explore-arts": { tags: [], categories: ["arts", "movies"] },
+      "family-fun": { tags: ["family", "all-ages"], categories: ["community", "outdoors"] },
+      "outdoor-fun": { tags: ["outdoor"], categories: ["outdoors", "fitness"] },
+    };
+
+    for (const goalId of goals) {
+      const def = goalMap[goalId];
+      if (!def) continue;
+      for (const t of def.tags) if (event.tags?.includes(t)) score += 3;
+      for (const c of def.categories) if (event.category === c) score += 2;
+    }
+
+    // Strong boost for singles events if user wants to find a partner
+    if (goals.includes("find-partner") && event.tags?.includes("singles")) {
+      score += 10;
+    }
+
+    return score;
   };
 
   const loadEvents = useCallback(async () => {
@@ -61,7 +97,25 @@ export default function DiscoverScreen() {
       categories.length > 0 ? categories : undefined,
       tags
     );
-    setEvents(diversifyByVenue(data));
+
+    const diversified = diversifyByVenue(data);
+
+    // Compute top picks — highest scored events for user's goals
+    const onboarding = prefs?.onboarding;
+    if (onboarding?.goals?.length) {
+      const scored = diversified
+        .map((e) => ({ event: e, score: scoreEvent(e, onboarding) }))
+        .filter((s) => s.score > 0)
+        .sort((a, b) => b.score - a.score);
+      const picks = scored.slice(0, 3).map((s) => s.event);
+      setTopPicks(picks);
+      // Remove top picks from main list
+      const pickIds = new Set(picks.map((e) => e.id));
+      setEvents(diversified.filter((e) => !pickIds.has(e.id)));
+    } else {
+      setTopPicks([]);
+      setEvents(diversified);
+    }
   }, [location.lat, location.lng, selectedTags]);
 
   useEffect(() => {
@@ -195,6 +249,35 @@ export default function DiscoverScreen() {
           extraData={[savedIds, tick]}
           contentContainerStyle={styles.feed}
           showsVerticalScrollIndicator={false}
+          ListHeaderComponent={
+            topPicks.length > 0 ? (
+              <View style={styles.picksSection}>
+                <View style={styles.picksHeader}>
+                  <Ionicons name="sparkles" size={16} color={COLORS.accent} />
+                  <Text style={styles.picksTitle}>Picked for you</Text>
+                  <View style={styles.picksCountBadge}>
+                    <Text style={styles.picksCountText}>{topPicks.length}</Text>
+                  </View>
+                </View>
+                <Text style={styles.picksSubtitle}>Matched to your goals</Text>
+                {topPicks.map((pick) => (
+                  <View key={pick.id} style={{ marginBottom: 12 }}>
+                    <FeedCard
+                      event={pick}
+                      isSaved={savedIds.has(pick.id)}
+                      onPress={() => router.push(`/event/${pick.id}`)}
+                      onSave={() => toggleSave(pick)}
+                    />
+                  </View>
+                ))}
+                <View style={styles.picksDivider}>
+                  <View style={styles.picksDividerLine} />
+                  <Text style={styles.picksDividerText}>ALL EVENTS NEARBY</Text>
+                  <View style={styles.picksDividerLine} />
+                </View>
+              </View>
+            ) : null
+          }
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -280,6 +363,57 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 24,
     gap: 16,
+  },
+  picksSection: {
+    marginBottom: 8,
+  },
+  picksHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 4,
+  },
+  picksTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: COLORS.text,
+    letterSpacing: -0.3,
+    flex: 1,
+  },
+  picksCountBadge: {
+    backgroundColor: COLORS.accent + "20",
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: RADIUS.pill,
+    borderWidth: 1,
+    borderColor: COLORS.accent + "40",
+  },
+  picksCountText: {
+    color: COLORS.accent,
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  picksSubtitle: {
+    fontSize: 13,
+    color: COLORS.muted,
+    marginBottom: 14,
+  },
+  picksDivider: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginVertical: 12,
+  },
+  picksDividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: COLORS.border,
+  },
+  picksDividerText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: COLORS.muted,
+    letterSpacing: 1,
   },
   emptyIcon: {
     width: 80,

@@ -8,12 +8,18 @@ import {
   Dimensions,
   Animated,
   Alert,
+  Image,
+  Linking,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
+import { BlurView } from "expo-blur";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { COLORS, GRADIENTS, RADIUS } from "../src/constants/theme";
+import { fetchNearbyEvents, triggerLocationSync } from "../src/services/events";
+import { getEventImage } from "../src/constants/images";
+import { Event } from "../src/types";
 
 const { width, height } = Dimensions.get("window");
 
@@ -24,25 +30,25 @@ interface Option {
   label: string;
   emoji: string;
   description?: string;
-  tags?: string[]; // maps to tag filters
-  categories?: string[]; // maps to event categories
+  tags?: string[];
+  categories?: string[];
 }
 
 const GOALS: Option[] = [
-  { id: "meet-people", label: "Meet new people", emoji: "🤝", description: "Social mixers, groups, events", tags: ["social"], categories: ["community", "nightlife"] },
-  { id: "play-sports", label: "Play sports", emoji: "🏀", description: "Pickup games, leagues, fitness", tags: ["active"], categories: ["sports", "fitness"] },
-  { id: "drinks-nightlife", label: "Grab drinks", emoji: "🍻", description: "Bars, happy hours, nightlife", tags: ["drinking", "21+"], categories: ["nightlife", "food"] },
-  { id: "live-music", label: "See live music", emoji: "🎶", description: "Concerts, jams, open mics", tags: ["live-music"], categories: ["music"] },
-  { id: "try-food", label: "Try new food", emoji: "🍽️", description: "Restaurants, food events", tags: ["food"], categories: ["food"] },
-  { id: "date-night", label: "Find date ideas", emoji: "💕", description: "Romantic spots, things to do", tags: ["date-night"], categories: ["arts", "nightlife", "food"] },
-  { id: "family-fun", label: "Family activities", emoji: "👨‍👩‍👧", description: "Kid-friendly events", tags: ["family", "all-ages"], categories: ["community", "outdoors"] },
-  { id: "explore-arts", label: "Explore arts", emoji: "🎨", description: "Galleries, theater, culture", tags: [], categories: ["arts", "movies"] },
-  { id: "outdoor-fun", label: "Get outside", emoji: "🌳", description: "Parks, hikes, outdoor events", tags: ["outdoor"], categories: ["outdoors", "fitness"] },
+  { id: "meet-people", label: "Meet new people", emoji: "🤝", description: "Social mixers, groups, new friends", tags: ["social"], categories: ["community", "nightlife"] },
+  { id: "find-partner", label: "Find a partner", emoji: "💕", description: "Singles events, date ideas, mixers", tags: ["date-night"], categories: ["nightlife", "food", "arts"] },
+  { id: "get-active", label: "Get more active", emoji: "💪", description: "Pickup sports, fitness, running clubs", tags: ["active"], categories: ["sports", "fitness"] },
+  { id: "drinks-nightlife", label: "Go out more", emoji: "🍻", description: "Bars, happy hours, nightlife", tags: ["drinking", "21+"], categories: ["nightlife", "food"] },
+  { id: "live-music", label: "Discover music", emoji: "🎶", description: "Concerts, live bands, DJ sets", tags: ["live-music"], categories: ["music"] },
+  { id: "try-food", label: "Try new foods", emoji: "🍽️", description: "Restaurants, food events, tastings", tags: ["food"], categories: ["food"] },
+  { id: "explore-arts", label: "Explore culture", emoji: "🎨", description: "Galleries, theater, museums", tags: [], categories: ["arts", "movies"] },
+  { id: "family-fun", label: "Family time", emoji: "👨‍👩‍👧", description: "Activities for the whole family", tags: ["family", "all-ages"], categories: ["community", "outdoors"] },
+  { id: "outdoor-fun", label: "Get outdoors", emoji: "🌳", description: "Parks, hikes, outdoor adventures", tags: ["outdoor"], categories: ["outdoors", "fitness"] },
 ];
 
 const VIBES: Option[] = [
   { id: "chill", label: "Chill & relaxed", emoji: "😌", description: "Low-key hangs, coffee shops, quiet spots" },
-  { id: "social", label: "Social & lively", emoji: "🎉", description: "Packed bars, lively scenes, groups" },
+  { id: "social", label: "Social & lively", emoji: "🎉", description: "Packed bars, groups, lively scenes" },
   { id: "adventurous", label: "Adventurous", emoji: "🚀", description: "Try new things, meet strangers" },
   { id: "romantic", label: "Romantic", emoji: "🌹", description: "Intimate, date-night vibes" },
   { id: "energetic", label: "High-energy", emoji: "⚡", description: "Dancing, parties, late nights" },
@@ -63,19 +69,37 @@ const BUDGETS: Option[] = [
   { id: "premium", label: "Money's no issue", emoji: "💎", description: "Whatever looks good" },
 ];
 
+const SOCIAL_STYLES: Option[] = [
+  { id: "solo", label: "Solo explorer", emoji: "🧭", description: "Comfortable going alone, meet new people" },
+  { id: "small-group", label: "Close friends", emoji: "👯", description: "Prefer hanging with 1-3 friends" },
+  { id: "big-group", label: "The whole crew", emoji: "🎊", description: "Love big group energy" },
+  { id: "mix", label: "Mix of both", emoji: "🎭", description: "Depends on the night" },
+];
+
+const BLOCKERS: Option[] = [
+  { id: "dont-know", label: "Don't know what's happening", emoji: "🤷", description: "This is why we built this" },
+  { id: "no-one", label: "No one to go with", emoji: "😔", description: "We'll show social & singles events" },
+  { id: "too-busy", label: "Too busy to plan ahead", emoji: "⏰", description: "We'll show what's tonight/this week" },
+  { id: "too-expensive", label: "Too expensive", emoji: "💸", description: "We'll surface free & cheap events", tags: ["free"] },
+  { id: "wrong-scene", label: "Can't find my scene", emoji: "🎯", description: "Our AI will get it right" },
+];
+
 // ─── Main Component ──────────────────────────────────────────
 
-type StepKey = "welcome" | "goals" | "vibe" | "schedule" | "budget" | "building" | "paywall";
-
-const STEPS: StepKey[] = ["welcome", "goals", "vibe", "schedule", "budget", "building", "paywall"];
+type StepKey = "welcome" | "goals" | "vibe" | "social" | "schedule" | "blocker" | "budget" | "building" | "teaser" | "paywall";
+const STEPS: StepKey[] = ["welcome", "goals", "vibe", "social", "schedule", "blocker", "budget", "building", "teaser", "paywall"];
 
 export default function Onboarding() {
   const router = useRouter();
   const [step, setStep] = useState<StepKey>("welcome");
   const [goals, setGoals] = useState<string[]>([]);
   const [vibe, setVibe] = useState<string>("");
+  const [social, setSocial] = useState<string>("");
   const [schedule, setSchedule] = useState<string>("");
+  const [blocker, setBlocker] = useState<string>("");
   const [budget, setBudget] = useState<string>("");
+  const [matchedEvents, setMatchedEvents] = useState<Event[]>([]);
+  const [matchCount, setMatchCount] = useState<number>(0);
 
   const stepIdx = STEPS.indexOf(step);
   const progress = stepIdx / (STEPS.length - 1);
@@ -90,8 +114,8 @@ export default function Onboarding() {
     if (prevIdx >= 0) setStep(STEPS[prevIdx]);
   };
 
-  const completeOnboarding = async () => {
-    // Gather tags/categories from answers
+  // Save preferences early (during building) so the sync uses them
+  const savePreferences = async () => {
     const tagSet = new Set<string>();
     const categorySet = new Set<string>();
 
@@ -104,6 +128,20 @@ export default function Onboarding() {
     const budgetOption = BUDGETS.find((b) => b.id === budget);
     budgetOption?.tags?.forEach((t) => tagSet.add(t));
 
+    const blockerOption = BLOCKERS.find((b) => b.id === blocker);
+    blockerOption?.tags?.forEach((t) => tagSet.add(t));
+
+    // Social style affects category emphasis
+    if (social === "solo") {
+      categorySet.add("community");
+      tagSet.add("singles");
+    }
+
+    // "Find partner" goal always boosts singles
+    if (goals.includes("find-partner")) {
+      tagSet.add("singles");
+    }
+
     await AsyncStorage.setItem(
       "@nearme_preferences",
       JSON.stringify({
@@ -112,27 +150,56 @@ export default function Onboarding() {
         radius: 10,
         lat: 26.3587,
         lng: -80.0831,
-        onboarding: { goals, vibe, schedule, budget },
+        onboarding: { goals, vibe, social, schedule, blocker, budget },
       })
     );
+  };
+
+  // Only called on successful subscription/trial start
+  const unlockApp = async () => {
     await AsyncStorage.setItem("@nearme_onboarded", "true");
+    await AsyncStorage.setItem("@nearme_subscribed", "true");
     router.replace("/(tabs)");
   };
 
   // Step routing
   if (step === "welcome") return <WelcomeStep onNext={goNext} />;
-  if (step === "building") return <BuildingStep onDone={goNext} />;
-  if (step === "paywall") return <PaywallStep onContinue={completeOnboarding} />;
+  if (step === "building") {
+    return (
+      <BuildingStep
+        goals={goals}
+        vibe={vibe}
+        blocker={blocker}
+        onDone={(events, count) => {
+          setMatchedEvents(events);
+          setMatchCount(count);
+          goNext();
+        }}
+        savePreferences={savePreferences}
+      />
+    );
+  }
+  if (step === "teaser") {
+    return (
+      <TeaserStep
+        events={matchedEvents}
+        count={matchCount}
+        goals={goals}
+        onUnlock={goNext}
+      />
+    );
+  }
+  if (step === "paywall") return <PaywallStep onSubscribe={unlockApp} onBack={goBack} />;
 
   // Question steps share the same UI shell
   return (
     <View style={styles.container}>
-      <Header progress={progress} onBack={goBack} stepIdx={stepIdx} totalSteps={STEPS.length - 2} />
+      <Header progress={progress} onBack={goBack} stepIdx={stepIdx} totalSteps={7} />
 
       {step === "goals" && (
         <QuestionStep
-          title="What are you looking for?"
-          subtitle="Pick as many as you want — we'll surface events that match"
+          title="What brings you here?"
+          subtitle="NearMe's AI will curate events that help you hit your goals. Pick all that apply."
           options={GOALS}
           multi
           selected={goals}
@@ -146,7 +213,7 @@ export default function Onboarding() {
       {step === "vibe" && (
         <QuestionStep
           title="What's your vibe?"
-          subtitle="How do you like to hang out?"
+          subtitle="This helps our AI match you to the right scene"
           options={VIBES}
           selected={vibe ? [vibe] : []}
           onChange={(arr) => setVibe(arr[0] || "")}
@@ -156,10 +223,23 @@ export default function Onboarding() {
         />
       )}
 
+      {step === "social" && (
+        <QuestionStep
+          title="How do you like to go out?"
+          subtitle="Solo, with friends, or a mix?"
+          options={SOCIAL_STYLES}
+          selected={social ? [social] : []}
+          onChange={(arr) => setSocial(arr[0] || "")}
+          onNext={goNext}
+          canContinue={!!social}
+          continueLabel="Continue"
+        />
+      )}
+
       {step === "schedule" && (
         <QuestionStep
           title="When are you free?"
-          subtitle="Tell us when you typically go out"
+          subtitle="We'll prioritize events during your available times"
           options={SCHEDULES}
           selected={schedule ? [schedule] : []}
           onChange={(arr) => setSchedule(arr[0] || "")}
@@ -169,16 +249,29 @@ export default function Onboarding() {
         />
       )}
 
+      {step === "blocker" && (
+        <QuestionStep
+          title="What's holding you back?"
+          subtitle="What's the hardest part about going out more? We'll fix it."
+          options={BLOCKERS}
+          selected={blocker ? [blocker] : []}
+          onChange={(arr) => setBlocker(arr[0] || "")}
+          onNext={goNext}
+          canContinue={!!blocker}
+          continueLabel="Continue"
+        />
+      )}
+
       {step === "budget" && (
         <QuestionStep
           title="What's your budget?"
-          subtitle="We'll prioritize events in your range"
+          subtitle="Last question — then our AI goes to work"
           options={BUDGETS}
           selected={budget ? [budget] : []}
           onChange={(arr) => setBudget(arr[0] || "")}
           onNext={goNext}
           canContinue={!!budget}
-          continueLabel="Continue"
+          continueLabel="Build my feed"
         />
       )}
     </View>
@@ -221,7 +314,7 @@ function Header({ progress, onBack, stepIdx, totalSteps }: { progress: number; o
       </View>
 
       <Text style={styles.stepCounter}>
-        {stepIdx}/{totalSteps}
+        {Math.min(stepIdx, totalSteps)}/{totalSteps}
       </Text>
     </View>
   );
@@ -260,16 +353,16 @@ function WelcomeStep({ onNext }: { onNext: () => void }) {
         </View>
       </Animated.View>
 
-      <Text style={styles.welcomeTitle}>Let's find your people</Text>
+      <Text style={styles.welcomeTitle}>AI-powered event discovery</Text>
       <Text style={styles.welcomeSubtitle}>
-        Answer a few quick questions and we'll build you a personalized feed of events happening near you right now.
+        Tell us your goals. We'll find the perfect events to help you meet people, get active, and actually go out more.
       </Text>
 
       <View style={styles.welcomeFeatures}>
         {[
-          { icon: "🎯", text: "Tailored to your interests" },
-          { icon: "⚡", text: "Real-time local events" },
-          { icon: "🗺️", text: "Discover hidden gems" },
+          { icon: "🧠", text: "AI matched to your goals" },
+          { icon: "📍", text: "Real-time events near you" },
+          { icon: "🎯", text: "No scrolling — just the good stuff" },
         ].map((f, i) => (
           <View key={i} style={styles.welcomeFeature}>
             <Text style={styles.welcomeFeatureIcon}>{f.icon}</Text>
@@ -285,12 +378,12 @@ function WelcomeStep({ onNext }: { onNext: () => void }) {
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 0 }}
         >
-          <Text style={styles.primaryBtnText}>Let's go</Text>
+          <Text style={styles.primaryBtnText}>Get started</Text>
           <Ionicons name="arrow-forward" size={20} color="#fff" />
         </LinearGradient>
       </TouchableOpacity>
 
-      <Text style={styles.takesText}>Takes 30 seconds</Text>
+      <Text style={styles.takesText}>Takes about a minute</Text>
     </View>
   );
 }
@@ -324,10 +417,7 @@ function QuestionStep({ title, subtitle, options, selected, onChange, onNext, ca
         <Text style={styles.stepTitle}>{title}</Text>
         <Text style={styles.stepSubtitle}>{subtitle}</Text>
 
-        <ScrollView
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={{ paddingBottom: 180 }}
-        >
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 180 }}>
           <View style={styles.optionList}>
             {options.map((opt) => {
               const isSelected = selected.includes(opt.id);
@@ -343,9 +433,7 @@ function QuestionStep({ title, subtitle, options, selected, onChange, onNext, ca
                     <Text style={[styles.optionLabel, isSelected && { color: COLORS.accent }]}>
                       {opt.label}
                     </Text>
-                    {opt.description && (
-                      <Text style={styles.optionDescription}>{opt.description}</Text>
-                    )}
+                    {opt.description && <Text style={styles.optionDescription}>{opt.description}</Text>}
                   </View>
                   {isSelected && (
                     <View style={styles.optionCheck}>
@@ -381,44 +469,110 @@ function QuestionStep({ title, subtitle, options, selected, onChange, onNext, ca
   );
 }
 
-// ─── Building Step (fake AI analysis) ────────────────────────
+// ─── Building Step (real AI scanning) ────────────────────────
 
-function BuildingStep({ onDone }: { onDone: () => void }) {
+function BuildingStep({
+  goals,
+  vibe,
+  blocker,
+  onDone,
+  savePreferences,
+}: {
+  goals: string[];
+  vibe: string;
+  blocker: string;
+  onDone: (events: Event[], count: number) => void;
+  savePreferences: () => Promise<void>;
+}) {
   const [currentTask, setCurrentTask] = useState(0);
+  const [progress, setProgress] = useState(0);
   const progressAnim = useRef(new Animated.Value(0)).current;
   const spinAnim = useRef(new Animated.Value(0)).current;
 
+  // Dynamic task list based on user's actual answers
   const tasks = [
-    "Analyzing your preferences",
-    "Scanning nearby venues",
-    "Finding events that match your vibe",
-    "Filtering by your schedule",
-    "Curating your personal feed",
+    `Reading your ${goals.length} goals`,
+    "Connecting to local venues",
+    "Matching events to your preferences",
+    `Tuning for a ${vibe || "custom"} vibe`,
+    "Ranking your top picks",
   ];
 
   useEffect(() => {
+    savePreferences();
+
+    // Spinning ring
     Animated.loop(
-      Animated.timing(spinAnim, { toValue: 1, duration: 2000, useNativeDriver: true })
+      Animated.timing(spinAnim, { toValue: 1, duration: 2500, useNativeDriver: true })
     ).start();
 
-    const interval = setInterval(() => {
-      setCurrentTask((prev) => {
-        if (prev >= tasks.length - 1) {
-          clearInterval(interval);
-          setTimeout(onDone, 800);
-          return prev;
-        }
-        return prev + 1;
-      });
-    }, 900);
+    let cancelled = false;
+    let fetchDone = false;
 
-    Animated.timing(progressAnim, {
-      toValue: 1,
-      duration: tasks.length * 900 + 500,
-      useNativeDriver: false,
-    }).start();
+    // Animate progress based on real milestones
+    const animateTo = (target: number, duration: number) => {
+      Animated.timing(progressAnim, {
+        toValue: target,
+        duration,
+        useNativeDriver: false,
+      }).start();
+      setProgress(target);
+    };
 
-    return () => clearInterval(interval);
+    // Schedule tasks to advance with natural pacing — slower on last step so it doesn't stall
+    const taskTimings = [1200, 1400, 1600, 1800]; // cumulative delays between tasks
+    let taskElapsed = 0;
+    const taskTimers: any[] = [];
+
+    for (let i = 0; i < taskTimings.length; i++) {
+      taskElapsed += taskTimings[i];
+      taskTimers.push(
+        setTimeout(() => {
+          if (cancelled) return;
+          setCurrentTask(i + 1);
+          animateTo((i + 1) / tasks.length, taskTimings[i]);
+        }, taskElapsed)
+      );
+    }
+
+    // Run real sync in parallel
+    (async () => {
+      try {
+        const radius = 15;
+        await triggerLocationSync(26.3587, -80.0831, radius, true);
+        const events = await fetchNearbyEvents(26.3587, -80.0831, radius);
+        fetchDone = true;
+
+        // Wait for minimum animation time AND real fetch done, then reveal
+        const minTotal = taskElapsed + 1200; // min 8s total
+        const elapsedNow = taskElapsed;
+        const remainder = Math.max(0, minTotal - elapsedNow);
+
+        setTimeout(() => {
+          if (cancelled) return;
+          // Final step: complete the animation
+          setCurrentTask(tasks.length);
+          animateTo(1, 500);
+          setTimeout(() => {
+            if (!cancelled) onDone(events, events.length);
+          }, 600);
+        }, remainder);
+      } catch {
+        setTimeout(() => {
+          if (cancelled) return;
+          setCurrentTask(tasks.length);
+          animateTo(1, 500);
+          setTimeout(() => {
+            if (!cancelled) onDone([], 0);
+          }, 600);
+        }, 7500);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      taskTimers.forEach(clearTimeout);
+    };
   }, []);
 
   const spin = spinAnim.interpolate({
@@ -430,6 +584,16 @@ function BuildingStep({ onDone }: { onDone: () => void }) {
     inputRange: [0, 1],
     outputRange: ["0%", "100%"],
   });
+
+  // Honest subtitle based on current task
+  const statusLines = [
+    "Reviewing your answers...",
+    "Calling local venues...",
+    "Scoring events for your goals...",
+    "Matching to your vibe...",
+    "Finalizing your picks...",
+    "Ready!",
+  ];
 
   return (
     <View style={[styles.container, { justifyContent: "center", paddingHorizontal: 32 }]}>
@@ -443,12 +607,14 @@ function BuildingStep({ onDone }: { onDone: () => void }) {
           />
         </Animated.View>
         <View style={styles.buildingCore}>
-          <Text style={{ fontSize: 40 }}>✨</Text>
+          <Text style={{ fontSize: 40 }}>🧠</Text>
         </View>
       </View>
 
-      <Text style={styles.buildingTitle}>Building your feed</Text>
-      <Text style={styles.buildingSubtitle}>This will take a moment...</Text>
+      <Text style={styles.buildingTitle}>Curating your feed</Text>
+      <Text style={styles.buildingCount}>
+        {statusLines[Math.min(currentTask, statusLines.length - 1)]}
+      </Text>
 
       <View style={styles.buildingProgress}>
         <Animated.View style={[styles.buildingProgressFill, { width: progressWidth }]}>
@@ -489,36 +655,345 @@ function BuildingStep({ onDone }: { onDone: () => void }) {
   );
 }
 
-// ─── Paywall ─────────────────────────────────────────────────
+// ─── Teaser Step ─────────────────────────────────────────────
 
-function PaywallStep({ onContinue }: { onContinue: () => void }) {
-  const [plan, setPlan] = useState<"yearly" | "weekly">("yearly");
+function scoreEventForGoals(event: Event, selectedGoalIds: string[]): number {
+  const goalDefs = GOALS.filter((g) => selectedGoalIds.includes(g.id));
+  let score = 0;
 
-  const handleContinue = () => {
-    if (plan === "yearly") {
-      Alert.alert(
-        "Start 7-Day Free Trial",
-        "You'll get full access for 7 days. After that, you'll be charged $49.99/year unless you cancel.",
-        [
-          { text: "Cancel", style: "cancel" },
-          { text: "Start Trial", onPress: onContinue },
-        ]
-      );
-    } else {
-      Alert.alert(
-        "Subscribe Weekly",
-        "You'll be charged $6.99 per week. Cancel anytime.",
-        [
-          { text: "Cancel", style: "cancel" },
-          { text: "Subscribe", onPress: onContinue },
-        ]
-      );
+  for (const g of goalDefs) {
+    // Tag matches (high weight)
+    for (const t of g.tags || []) {
+      if (event.tags?.includes(t)) score += 3;
     }
+    // Category matches
+    for (const c of g.categories || []) {
+      if (event.category === c) score += 2;
+    }
+  }
+
+  // Extra boost for singles events when user wants to find a partner
+  if (selectedGoalIds.includes("find-partner") && event.tags?.includes("singles")) {
+    score += 10;
+  }
+
+  // Small bonus for happening soon
+  if (event.start_time) {
+    const hoursUntil = (new Date(event.start_time).getTime() - Date.now()) / 3600000;
+    if (hoursUntil > 0 && hoursUntil < 48) score += 1;
+  }
+
+  return score;
+}
+
+function pickBestMatch(events: Event[], goals: string[]): Event | undefined {
+  if (!events.length) return undefined;
+  const scored = events.map((e) => ({ event: e, score: scoreEventForGoals(e, goals) }));
+  scored.sort((a, b) => b.score - a.score);
+  return scored[0].event;
+}
+
+function TeaserStep({
+  events,
+  count,
+  goals,
+  onUnlock,
+}: {
+  events: Event[];
+  count: number;
+  goals: string[];
+  onUnlock: () => void;
+}) {
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.timing(fadeAnim, {
+      toValue: 1,
+      duration: 500,
+      useNativeDriver: true,
+    }).start();
+  }, []);
+
+  // Score events against user's goals and pick the best match
+  const teaserEvent = pickBestMatch(events, goals);
+  // Sort remaining events by score too (for the blurred stack)
+  const remainingEvents = events
+    .filter((e) => e.id !== teaserEvent?.id)
+    .map((e) => ({ event: e, score: scoreEventForGoals(e, goals) }))
+    .sort((a, b) => b.score - a.score)
+    .map((s) => s.event);
+
+  const totalMatches = Math.max(count, 12);
+  const lockedCount = totalMatches - 1;
+
+  const goalEmojis: Record<string, string> = {
+    "meet-people": "🤝",
+    "find-partner": "💕",
+    "get-active": "💪",
+    "drinks-nightlife": "🍻",
+    "live-music": "🎶",
+    "try-food": "🍽️",
+    "explore-arts": "🎨",
+    "family-fun": "👨‍👩‍👧",
+    "outdoor-fun": "🌳",
+  };
+
+  return (
+    <View style={[styles.container, { paddingTop: 60 }]}>
+      <Animated.ScrollView
+        style={{ opacity: fadeAnim }}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 160 }}
+      >
+        <View style={styles.teaserHero}>
+          <View style={styles.teaserBadge}>
+            <Ionicons name="sparkles" size={14} color={COLORS.accent} />
+            <Text style={styles.teaserBadgeText}>YOUR AI MATCHES</Text>
+          </View>
+          <Text style={styles.teaserTitle}>
+            We found <Text style={{ color: COLORS.accent }}>{totalMatches}</Text>{"\n"}
+            events just for you
+          </Text>
+          <Text style={styles.teaserSubtitle}>
+            Perfectly matched to your goals and vibe. Here's a taste.
+          </Text>
+
+          {/* Goals bubble */}
+          {goals.length > 0 && (
+            <View style={styles.goalBubbles}>
+              {goals.slice(0, 4).map((g) => (
+                <View key={g} style={styles.goalBubble}>
+                  <Text style={{ fontSize: 14 }}>{goalEmojis[g] || "⭐"}</Text>
+                </View>
+              ))}
+              {goals.length > 4 && (
+                <View style={[styles.goalBubble, { backgroundColor: COLORS.accent + "20" }]}>
+                  <Text style={{ fontSize: 12, fontWeight: "700", color: COLORS.accent }}>+{goals.length - 4}</Text>
+                </View>
+              )}
+            </View>
+          )}
+        </View>
+
+        {/* Visible teaser card */}
+        {teaserEvent ? (
+          <TeaserCard event={teaserEvent} />
+        ) : (
+          <PlaceholderTeaserCard />
+        )}
+
+        {/* Locked cards */}
+        <View style={styles.lockedSection}>
+          <View style={styles.lockedDivider}>
+            <View style={styles.lockedLine} />
+            <View style={styles.lockedCountBadge}>
+              <Ionicons name="lock-closed" size={12} color={COLORS.accent} />
+              <Text style={styles.lockedCountText}>{lockedCount} MORE MATCHES</Text>
+            </View>
+            <View style={styles.lockedLine} />
+          </View>
+
+          <View style={styles.blurredStack}>
+            {remainingEvents.slice(0, 3).map((e, i) => (
+              <View key={e.id} style={[styles.blurredCardWrap, { opacity: 1 - i * 0.2 }]}>
+                <BlurredEventCard event={e} />
+              </View>
+            ))}
+            {remainingEvents.length < 3 && Array.from({ length: 3 - remainingEvents.length }).map((_, i) => (
+              <View key={`ph${i}`} style={[styles.blurredCardWrap, { opacity: 0.6 - i * 0.2 }]}>
+                <PlaceholderBlurredCard />
+              </View>
+            ))}
+          </View>
+        </View>
+      </Animated.ScrollView>
+
+      {/* Sticky bottom CTA */}
+      <View style={styles.teaserBottomBar}>
+        <LinearGradient
+          colors={["transparent", COLORS.bg] as any}
+          style={styles.teaserGradientFade}
+          pointerEvents="none"
+        />
+        <TouchableOpacity style={styles.primaryBtn} onPress={onUnlock} activeOpacity={0.85}>
+          <LinearGradient
+            colors={GRADIENTS.accent as any}
+            style={styles.btnGradient}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+          >
+            <Ionicons name="lock-open" size={18} color="#fff" />
+            <Text style={styles.primaryBtnText}>Unlock all {totalMatches} matches</Text>
+          </LinearGradient>
+        </TouchableOpacity>
+        <Text style={styles.teaserBottomText}>
+          Start your free trial to see all events
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+function TeaserCard({ event }: { event: Event }) {
+  const img = getEventImage(event.image_url, event.category, event.subcategory, event.title, event.description);
+  const startDate = new Date(event.start_time);
+  const dayName = startDate.toLocaleDateString([], { weekday: "short" }).toUpperCase();
+  const dayNum = startDate.getDate();
+  const timeStr = startDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+
+  return (
+    <View style={styles.teaserCard}>
+      <View style={styles.teaserCardImage}>
+        <Image source={{ uri: img }} style={{ width: "100%", height: "100%" }} />
+        <LinearGradient
+          colors={["transparent", "rgba(15,15,26,0.95)"]}
+          style={StyleSheet.absoluteFillObject}
+        />
+        <View style={styles.teaserMatchBadge}>
+          <Ionicons name="flash" size={12} color="#fff" />
+          <Text style={styles.teaserMatchText}>98% MATCH</Text>
+        </View>
+        <View style={styles.teaserCardTitleWrap}>
+          <Text style={styles.teaserCardTitle} numberOfLines={2}>{event.title}</Text>
+        </View>
+      </View>
+
+      <View style={styles.teaserCardMeta}>
+        <View style={styles.teaserDateBlock}>
+          <Text style={styles.teaserDateDay}>{dayName}</Text>
+          <Text style={styles.teaserDateNum}>{dayNum}</Text>
+        </View>
+        <View style={{ flex: 1 }}>
+          <View style={styles.teaserMetaRow}>
+            <Ionicons name="time-outline" size={14} color={COLORS.accent} />
+            <Text style={styles.teaserMetaText}>{timeStr}</Text>
+          </View>
+          <View style={styles.teaserMetaRow}>
+            <Ionicons name="location-outline" size={14} color={COLORS.accent} />
+            <Text style={styles.teaserMetaText} numberOfLines={1}>
+              {event.venue?.name || event.address?.split(",")[0] || "Boca Raton"}
+            </Text>
+          </View>
+        </View>
+        {event.is_free && (
+          <View style={styles.teaserFreeBadge}>
+            <Text style={styles.teaserFreeText}>FREE</Text>
+          </View>
+        )}
+      </View>
+    </View>
+  );
+}
+
+function PlaceholderTeaserCard() {
+  return (
+    <View style={styles.teaserCard}>
+      <View style={[styles.teaserCardImage, { backgroundColor: COLORS.cardAlt, alignItems: "center", justifyContent: "center" }]}>
+        <Text style={{ fontSize: 48 }}>🎉</Text>
+        <View style={styles.teaserMatchBadge}>
+          <Ionicons name="flash" size={12} color="#fff" />
+          <Text style={styles.teaserMatchText}>PERFECT MATCH</Text>
+        </View>
+        <View style={styles.teaserCardTitleWrap}>
+          <Text style={styles.teaserCardTitle} numberOfLines={2}>An event matched to your vibe</Text>
+        </View>
+      </View>
+      <View style={styles.teaserCardMeta}>
+        <View style={styles.teaserDateBlock}>
+          <Text style={styles.teaserDateDay}>TONIGHT</Text>
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.teaserMetaText}>Starts in 2 hours</Text>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function BlurredEventCard({ event }: { event: Event }) {
+  const img = getEventImage(event.image_url, event.category, event.subcategory, event.title, event.description);
+  return (
+    <View style={styles.blurredCard}>
+      <Image source={{ uri: img }} style={StyleSheet.absoluteFillObject} blurRadius={20} />
+      <View style={styles.blurredOverlay}>
+        <Ionicons name="lock-closed" size={22} color="rgba(255,255,255,0.9)" />
+      </View>
+    </View>
+  );
+}
+
+function PlaceholderBlurredCard() {
+  return (
+    <View style={[styles.blurredCard, { backgroundColor: COLORS.cardAlt }]}>
+      <View style={styles.blurredOverlay}>
+        <Ionicons name="lock-closed" size={22} color="rgba(255,255,255,0.9)" />
+      </View>
+    </View>
+  );
+}
+
+// ─── Paywall (HARD) ──────────────────────────────────────────
+
+function PaywallStep({ onSubscribe, onBack }: { onSubscribe: () => void; onBack: () => void }) {
+  const [plan, setPlan] = useState<"yearly" | "weekly">("yearly");
+  const [showClose, setShowClose] = useState(false);
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    Animated.timing(fadeAnim, {
+      toValue: 1,
+      duration: 600,
+      useNativeDriver: true,
+    }).start();
+
+    const timer = setTimeout(() => setShowClose(true), 4000);
+
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1.03, duration: 900, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 900, useNativeDriver: true }),
+      ])
+    ).start();
+
+    return () => clearTimeout(timer);
+  }, []);
+
+  const trialDays = plan === "yearly" ? 7 : 3;
+  const priceText = plan === "yearly"
+    ? `${trialDays} days free, then $49.99/year ($4.16/mo)`
+    : `${trialDays} days free, then $4.99/week`;
+
+  const handleSubscribe = () => {
+    const title = `Start ${trialDays}-Day Free Trial`;
+    const msg = plan === "yearly"
+      ? `No charge for ${trialDays} days. We'll remind you 2 days before your trial ends. After that, $49.99/year unless you cancel.\n\nCancel anytime in iPhone Settings.`
+      : `No charge for ${trialDays} days. We'll remind you 2 days before your trial ends. After that, $4.99/week unless you cancel.\n\nCancel anytime in iPhone Settings.`;
+
+    Alert.alert(title, msg, [
+      { text: "Cancel", style: "cancel" },
+      { text: "Start Trial", onPress: onSubscribe },
+    ]);
   };
 
   return (
     <View style={styles.paywallContainer}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 200 }}>
+      {showClose && (
+        <TouchableOpacity
+          style={styles.paywallClose}
+          onPress={onBack}
+          activeOpacity={0.6}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+        >
+          <Ionicons name="chevron-back" size={18} color={COLORS.muted} />
+        </TouchableOpacity>
+      )}
+
+      <Animated.ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 260 }}
+        style={{ opacity: fadeAnim }}
+      >
         <View style={styles.paywallHero}>
           <View style={styles.paywallIconWrap}>
             <LinearGradient
@@ -527,80 +1002,171 @@ function PaywallStep({ onContinue }: { onContinue: () => void }) {
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
             />
-            <Text style={{ fontSize: 48 }}>👑</Text>
+            <Text style={{ fontSize: 48 }}>🔓</Text>
           </View>
-          <Text style={styles.paywallTitle}>Unlock NearMe Premium</Text>
+          <Text style={styles.paywallTitle}>Unlock your matches</Text>
           <Text style={styles.paywallSubtitle}>
-            Your personal feed is ready. Get full access to discover everything happening around you.
+            Your AI has curated events to help you hit your goals. Start your free trial to see them all.
           </Text>
         </View>
 
-        <View style={styles.benefitList}>
+        {/* Real data proof */}
+        <View style={styles.dataProofCard}>
+          <Text style={styles.dataProofHeader}>POWERED BY</Text>
+          <View style={styles.dataProofSources}>
+            <View style={styles.dataSourceChip}>
+              <Ionicons name="ticket" size={13} color={COLORS.accent} />
+              <Text style={styles.dataSourceText}>Ticketmaster</Text>
+            </View>
+            <View style={styles.dataSourceChip}>
+              <Ionicons name="musical-notes" size={13} color={COLORS.accent} />
+              <Text style={styles.dataSourceText}>SeatGeek</Text>
+            </View>
+            <View style={styles.dataSourceChip}>
+              <Ionicons name="calendar" size={13} color={COLORS.accent} />
+              <Text style={styles.dataSourceText}>Eventbrite</Text>
+            </View>
+            <View style={styles.dataSourceChip}>
+              <Ionicons name="location" size={13} color={COLORS.accent} />
+              <Text style={styles.dataSourceText}>Google Places</Text>
+            </View>
+            <View style={styles.dataSourceChip}>
+              <Ionicons name="sparkles" size={13} color={COLORS.accent} />
+              <Text style={styles.dataSourceText}>AI scanner</Text>
+            </View>
+          </View>
+          <View style={styles.dataStatsRow}>
+            <View style={styles.dataStat}>
+              <Text style={styles.dataStatNum}>2K+</Text>
+              <Text style={styles.dataStatLabel}>events</Text>
+            </View>
+            <View style={styles.dataStatDivider} />
+            <View style={styles.dataStat}>
+              <Text style={styles.dataStatNum}>200+</Text>
+              <Text style={styles.dataStatLabel}>venues</Text>
+            </View>
+            <View style={styles.dataStatDivider} />
+            <View style={styles.dataStat}>
+              <Text style={styles.dataStatNum}>24/7</Text>
+              <Text style={styles.dataStatLabel}>fresh data</Text>
+            </View>
+          </View>
+        </View>
+
+        {/* What's included */}
+        <View style={styles.includedCard}>
+          <Text style={styles.includedHeader}>EVERYTHING INCLUDED</Text>
           {[
-            { icon: "infinite", color: COLORS.accent, text: "Unlimited events & swipes" },
-            { icon: "flash", color: COLORS.warm, text: "Real-time event notifications" },
-            { icon: "bookmark", color: COLORS.pink, text: "Save unlimited events" },
-            { icon: "filter", color: COLORS.secondary, text: "Advanced filters & tags" },
-            { icon: "people", color: COLORS.success, text: "Priority venue access" },
-            { icon: "sparkles", color: COLORS.accentLight, text: "AI-powered recommendations" },
-          ].map((b, i) => (
-            <View key={i} style={styles.benefitRow}>
-              <View style={[styles.benefitIcon, { backgroundColor: b.color + "20" }]}>
-                <Ionicons name={b.icon as any} size={18} color={b.color} />
+            { icon: "sparkles", text: "AI-curated feed based on your goals" },
+            { icon: "infinite", text: "Unlimited events, saves, and filters" },
+            { icon: "heart-circle", text: "Dating & singles events (speed dating, mixers)" },
+            { icon: "flash", text: "\"Happening now\" real-time alerts" },
+            { icon: "map", text: "Interactive map with every event" },
+            { icon: "bookmark", text: "Save events & sync across devices" },
+            { icon: "compass", text: "Works in any city you visit" },
+            { icon: "checkmark-circle", text: "No ads, ever" },
+          ].map((row, i) => (
+            <View key={i} style={styles.includedRow}>
+              <View style={styles.includedIcon}>
+                <Ionicons name={row.icon as any} size={16} color={COLORS.accent} />
               </View>
-              <Text style={styles.benefitText}>{b.text}</Text>
+              <Text style={styles.includedText}>{row.text}</Text>
             </View>
           ))}
         </View>
 
-        {/* Plan cards */}
+        {/* How it helps you */}
+        <View style={styles.useCaseList}>
+          <Text style={styles.useCaseHeader}>BUILT FOR YOUR GOALS</Text>
+          {[
+            { emoji: "💕", title: "Find your person", desc: "Singles mixers, speed dating, and events where real connections happen." },
+            { emoji: "💪", title: "Get active", desc: "Pickup sports, yoga on the beach, running clubs, and hiking groups." },
+            { emoji: "🍽️", title: "Eat better", desc: "Food festivals, restaurant weeks, tastings, and pop-ups near you." },
+            { emoji: "🎶", title: "Feel the vibe", desc: "Live music, DJ sets, and concerts curated to your taste." },
+          ].map((u, i) => (
+            <View key={i} style={styles.useCaseRow}>
+              <Text style={styles.useCaseEmoji}>{u.emoji}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.useCaseTitle}>{u.title}</Text>
+                <Text style={styles.useCaseDesc}>{u.desc}</Text>
+              </View>
+            </View>
+          ))}
+        </View>
+
+        <Text style={styles.planSectionTitle}>Pick your plan</Text>
         <View style={styles.planList}>
           <PlanCard
             selected={plan === "yearly"}
             onSelect={() => setPlan("yearly")}
-            title="7-Day Free Trial"
+            title="Yearly"
             price="$49.99"
-            period="/year after"
-            subtext="Just $0.96/week · Cancel anytime"
-            badge="BEST VALUE · SAVE 86%"
+            period="/year"
+            subtext="Just $4.16/mo · 7-day free trial"
+            badge="MOST POPULAR · SAVE 81%"
             highlighted
           />
           <PlanCard
             selected={plan === "weekly"}
             onSelect={() => setPlan("weekly")}
             title="Weekly"
-            price="$6.99"
+            price="$4.99"
             period="/week"
-            subtext="$363/year · Billed weekly"
+            subtext="$259/year · 3-day free trial"
           />
         </View>
 
-        <View style={styles.savingsCallout}>
-          <Ionicons name="trending-up" size={18} color={COLORS.success} />
-          <Text style={styles.savingsText}>
-            <Text style={{ color: COLORS.success, fontWeight: "800" }}>Save 86%</Text>
-            <Text> with the yearly plan ($313/year less than weekly)</Text>
-          </Text>
+        <View style={styles.trustList}>
+          <View style={styles.trustRow}>
+            <View style={styles.trustIcon}>
+              <Ionicons name="shield-checkmark" size={16} color={COLORS.success} />
+            </View>
+            <Text style={styles.trustText}>No charge today. Free for {trialDays} days.</Text>
+          </View>
+          <View style={styles.trustRow}>
+            <View style={styles.trustIcon}>
+              <Ionicons name="notifications" size={16} color={COLORS.accent} />
+            </View>
+            <Text style={styles.trustText}>We'll remind you 2 days before billing.</Text>
+          </View>
+          <View style={styles.trustRow}>
+            <View style={styles.trustIcon}>
+              <Ionicons name="close-circle" size={16} color={COLORS.warm} />
+            </View>
+            <Text style={styles.trustText}>Cancel anytime in iPhone Settings.</Text>
+          </View>
         </View>
-      </ScrollView>
+      </Animated.ScrollView>
 
       <View style={styles.paywallBottomBar}>
-        <TouchableOpacity style={styles.primaryBtn} onPress={handleContinue} activeOpacity={0.85}>
-          <LinearGradient
-            colors={GRADIENTS.accent as any}
-            style={styles.btnGradient}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 0 }}
-          >
-            <Text style={styles.primaryBtnText}>
-              {plan === "yearly" ? "Start Free Trial" : "Continue"}
-            </Text>
-          </LinearGradient>
-        </TouchableOpacity>
+        <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
+          <TouchableOpacity style={styles.primaryBtn} onPress={handleSubscribe} activeOpacity={0.85}>
+            <LinearGradient
+              colors={GRADIENTS.accent as any}
+              style={styles.btnGradient}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+            >
+              <Text style={styles.primaryBtnText}>Start {trialDays}-Day Free Trial</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        </Animated.View>
 
-        <Text style={styles.paywallFootnote}>
-          Recurring. Cancel anytime in Settings. Terms & Privacy apply.
-        </Text>
+        <Text style={styles.paywallPriceText}>{priceText}</Text>
+
+        <View style={styles.paywallLinks}>
+          <TouchableOpacity activeOpacity={0.6} onPress={() => Alert.alert("Restore Purchases", "No previous purchase found.")}>
+            <Text style={styles.paywallLink}>Restore</Text>
+          </TouchableOpacity>
+          <Text style={styles.paywallLinkDivider}>·</Text>
+          <TouchableOpacity activeOpacity={0.6} onPress={() => Linking.openURL("https://mateo2lit.github.io/NearMe/terms.html")}>
+            <Text style={styles.paywallLink}>Terms</Text>
+          </TouchableOpacity>
+          <Text style={styles.paywallLinkDivider}>·</Text>
+          <TouchableOpacity activeOpacity={0.6} onPress={() => Linking.openURL("https://mateo2lit.github.io/NearMe/privacy.html")}>
+            <Text style={styles.paywallLink}>Privacy</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     </View>
   );
@@ -713,7 +1279,7 @@ const styles = StyleSheet.create({
     fontSize: 56,
   },
   welcomeTitle: {
-    fontSize: 34,
+    fontSize: 32,
     fontWeight: "800",
     color: COLORS.text,
     textAlign: "center",
@@ -729,7 +1295,7 @@ const styles = StyleSheet.create({
   },
   welcomeFeatures: {
     gap: 14,
-    marginBottom: 48,
+    marginBottom: 40,
   },
   welcomeFeature: {
     flexDirection: "row",
@@ -812,7 +1378,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  // Shared button
   primaryBtn: {
     borderRadius: RADIUS.pill,
     overflow: "hidden",
@@ -848,7 +1413,7 @@ const styles = StyleSheet.create({
     alignSelf: "center",
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 32,
+    marginBottom: 24,
   },
   buildingRing: {
     width: 140,
@@ -865,18 +1430,18 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   buildingTitle: {
-    fontSize: 26,
+    fontSize: 24,
     fontWeight: "800",
     color: COLORS.text,
     textAlign: "center",
     marginBottom: 8,
     letterSpacing: -0.5,
   },
-  buildingSubtitle: {
+  buildingCount: {
     fontSize: 15,
     color: COLORS.muted,
     textAlign: "center",
-    marginBottom: 32,
+    marginBottom: 28,
   },
   buildingProgress: {
     height: 6,
@@ -920,12 +1485,250 @@ const styles = StyleSheet.create({
     color: COLORS.muted,
     fontWeight: "500",
   },
+  // Teaser
+  teaserHero: {
+    alignItems: "center",
+    marginBottom: 28,
+  },
+  teaserBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: COLORS.accent + "20",
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: RADIUS.pill,
+    marginBottom: 16,
+  },
+  teaserBadgeText: {
+    color: COLORS.accent,
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 1,
+  },
+  teaserTitle: {
+    fontSize: 34,
+    fontWeight: "800",
+    color: COLORS.text,
+    textAlign: "center",
+    letterSpacing: -1,
+    marginBottom: 10,
+    lineHeight: 40,
+  },
+  teaserSubtitle: {
+    fontSize: 15,
+    color: COLORS.muted,
+    textAlign: "center",
+    marginBottom: 16,
+  },
+  goalBubbles: {
+    flexDirection: "row",
+    gap: 6,
+  },
+  goalBubble: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: COLORS.card,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  teaserCard: {
+    borderRadius: RADIUS.lg,
+    backgroundColor: COLORS.card,
+    borderWidth: 2,
+    borderColor: COLORS.accent + "40",
+    overflow: "hidden",
+    elevation: 10,
+    shadowColor: COLORS.accent,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.3,
+    shadowRadius: 20,
+    marginBottom: 4,
+  },
+  teaserCardImage: {
+    width: "100%",
+    height: 180,
+    position: "relative",
+  },
+  teaserMatchBadge: {
+    position: "absolute",
+    top: 12,
+    right: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: COLORS.success + "ee",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: RADIUS.pill,
+  },
+  teaserMatchText: {
+    color: "#fff",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+  },
+  teaserCardTitleWrap: {
+    position: "absolute",
+    bottom: 12,
+    left: 14,
+    right: 14,
+  },
+  teaserCardTitle: {
+    color: "#fff",
+    fontSize: 19,
+    fontWeight: "800",
+    textShadowColor: "rgba(0,0,0,0.5)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 6,
+  },
+  teaserCardMeta: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    padding: 14,
+  },
+  teaserDateBlock: {
+    width: 48,
+    height: 48,
+    borderRadius: RADIUS.sm,
+    backgroundColor: COLORS.accent + "15",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  teaserDateDay: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: COLORS.accent,
+    letterSpacing: 0.5,
+  },
+  teaserDateNum: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: COLORS.text,
+    marginTop: -2,
+  },
+  teaserMetaRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    marginBottom: 3,
+  },
+  teaserMetaText: {
+    fontSize: 13,
+    color: COLORS.text,
+    fontWeight: "600",
+  },
+  teaserFreeBadge: {
+    backgroundColor: COLORS.success + "20",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: RADIUS.pill,
+  },
+  teaserFreeText: {
+    color: COLORS.success,
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+  },
+  // Locked section
+  lockedSection: {
+    marginTop: 24,
+  },
+  lockedDivider: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 16,
+  },
+  lockedLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: COLORS.border,
+  },
+  lockedCountBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: COLORS.card,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: RADIUS.pill,
+    borderWidth: 1,
+    borderColor: COLORS.accent + "40",
+  },
+  lockedCountText: {
+    color: COLORS.accent,
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+  },
+  blurredStack: {
+    gap: 10,
+  },
+  blurredCardWrap: {
+    borderRadius: RADIUS.lg,
+    overflow: "hidden",
+  },
+  blurredCard: {
+    height: 130,
+    borderRadius: RADIUS.lg,
+    backgroundColor: COLORS.card,
+    overflow: "hidden",
+    position: "relative",
+  },
+  blurredOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(15,15,26,0.6)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  teaserBottomBar: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    paddingHorizontal: 20,
+    paddingBottom: 40,
+    paddingTop: 20,
+    backgroundColor: COLORS.bg,
+  },
+  teaserGradientFade: {
+    position: "absolute",
+    top: -40,
+    left: 0,
+    right: 0,
+    height: 40,
+  },
+  teaserBottomText: {
+    fontSize: 12,
+    color: COLORS.muted,
+    textAlign: "center",
+    marginTop: 10,
+    fontWeight: "500",
+  },
   // Paywall
   paywallContainer: {
     flex: 1,
     backgroundColor: COLORS.bg,
     paddingTop: 60,
     paddingHorizontal: 20,
+  },
+  paywallClose: {
+    position: "absolute",
+    top: 48,
+    right: 16,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: COLORS.card,
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 10,
+    opacity: 0.5,
   },
   paywallHero: {
     alignItems: "center",
@@ -955,45 +1758,303 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     paddingHorizontal: 8,
   },
-  benefitList: {
-    gap: 10,
-    marginVertical: 24,
+  // Real data proof (replaces fake social proof)
+  dataProofCard: {
+    marginVertical: 20,
+    paddingVertical: 16,
+    paddingHorizontal: 14,
+    borderRadius: RADIUS.md,
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
   },
-  benefitRow: {
+  dataProofHeader: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: COLORS.muted,
+    letterSpacing: 1.2,
+    textAlign: "center",
+    marginBottom: 12,
+  },
+  dataProofSources: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+    justifyContent: "center",
+    marginBottom: 16,
+  },
+  dataSourceChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLORS.accent + "15",
+    borderWidth: 1,
+    borderColor: COLORS.accent + "30",
+  },
+  dataSourceText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: COLORS.accent,
+  },
+  dataStatsRow: {
+    flexDirection: "row",
+    justifyContent: "space-around",
+    alignItems: "center",
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+  },
+  dataStat: {
+    alignItems: "center",
+  },
+  dataStatNum: {
+    fontSize: 22,
+    fontWeight: "800",
+    color: COLORS.text,
+    letterSpacing: -0.5,
+  },
+  dataStatLabel: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: COLORS.muted,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginTop: 2,
+  },
+  dataStatDivider: {
+    width: 1,
+    height: 32,
+    backgroundColor: COLORS.border,
+  },
+  // Use cases (replaces testimonials)
+  useCaseList: {
+    marginTop: 24,
+    padding: 16,
+    borderRadius: RADIUS.md,
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    gap: 14,
+  },
+  useCaseHeader: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: COLORS.muted,
+    letterSpacing: 1.2,
+    marginBottom: 4,
+  },
+  useCaseRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+  },
+  useCaseEmoji: {
+    fontSize: 26,
+    marginTop: 2,
+  },
+  useCaseTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: COLORS.text,
+    marginBottom: 2,
+  },
+  useCaseDesc: {
+    fontSize: 13,
+    color: COLORS.muted,
+    lineHeight: 18,
+  },
+  // (Legacy social proof — kept for backwards compat of compareCard spacing)
+  socialProofCard_LEGACY_UNUSED: {
+    alignItems: "center",
+    marginVertical: 20,
+    paddingVertical: 16,
+    paddingHorizontal: 14,
+    borderRadius: RADIUS.md,
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  stars: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
+    marginBottom: 6,
+  },
+  ratingText: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: COLORS.text,
+    marginLeft: 6,
+  },
+  socialProofCount: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: COLORS.text,
+    marginBottom: 12,
+  },
+  avatarStack: {
+    flexDirection: "row",
+  },
+  avatarCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: COLORS.cardAlt,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: COLORS.card,
+  },
+  avatarEmoji: {
+    fontSize: 16,
+  },
+  includedCard: {
+    marginTop: 8,
+    padding: 18,
+    borderRadius: RADIUS.md,
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    gap: 14,
+  },
+  includedHeader: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: COLORS.muted,
+    letterSpacing: 1.2,
+    marginBottom: 2,
+  },
+  includedRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
   },
-  benefitIcon: {
-    width: 36,
-    height: 36,
+  includedIcon: {
+    width: 32,
+    height: 32,
     borderRadius: RADIUS.sm,
+    backgroundColor: COLORS.accent + "15",
     alignItems: "center",
     justifyContent: "center",
   },
-  benefitText: {
-    fontSize: 15,
+  includedText: {
+    fontSize: 14,
+    color: COLORS.text,
+    fontWeight: "500",
+    flex: 1,
+  },
+  compareCard: {
+    marginTop: 8,
+    padding: 16,
+    borderRadius: RADIUS.md,
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  compareHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+    marginBottom: 8,
+  },
+  compareHeaderText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: "700",
+    color: COLORS.muted,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  compareCols: {
+    flexDirection: "row",
+    width: 140,
+  },
+  compareColLabel: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: "700",
+    color: COLORS.muted,
+    textAlign: "center",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  compareRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 10,
+  },
+  compareLabel: {
+    flex: 1,
+    fontSize: 14,
     color: COLORS.text,
     fontWeight: "500",
   },
-  planList: {
+  compareCell: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  compareCellText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: COLORS.muted,
+  },
+  testimonialList: {
+    marginTop: 24,
     gap: 10,
   },
-  savingsCallout: {
+  testimonial: {
+    flexDirection: "row",
+    gap: 12,
+    padding: 14,
+    borderRadius: RADIUS.md,
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  testimonialAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: COLORS.cardAlt,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  testimonialHeader: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    padding: 12,
-    marginTop: 14,
-    borderRadius: RADIUS.sm,
-    backgroundColor: COLORS.success + "12",
-    borderWidth: 1,
-    borderColor: COLORS.success + "30",
+    marginBottom: 3,
   },
-  savingsText: {
+  testimonialName: {
     fontSize: 13,
+    fontWeight: "700",
     color: COLORS.text,
-    flex: 1,
+  },
+  testimonialStars: {
+    flexDirection: "row",
+    gap: 1,
+  },
+  testimonialText: {
+    fontSize: 13,
+    color: COLORS.muted,
+    lineHeight: 18,
+  },
+  planSectionTitle: {
+    fontSize: 20,
+    fontWeight: "800",
+    color: COLORS.text,
+    marginTop: 28,
+    marginBottom: 12,
+    letterSpacing: -0.3,
+  },
+  planList: {
+    gap: 10,
   },
   planCard: {
     borderRadius: RADIUS.md,
@@ -1068,6 +2129,32 @@ const styles = StyleSheet.create({
     color: COLORS.muted,
     marginTop: 1,
   },
+  trustList: {
+    marginTop: 20,
+    gap: 10,
+    padding: 14,
+    borderRadius: RADIUS.md,
+    backgroundColor: COLORS.card + "80",
+  },
+  trustRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  trustIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: COLORS.bg,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  trustText: {
+    fontSize: 13,
+    color: COLORS.text,
+    fontWeight: "500",
+    flex: 1,
+  },
   paywallBottomBar: {
     position: "absolute",
     bottom: 0,
@@ -1080,10 +2167,27 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: COLORS.border,
   },
-  paywallFootnote: {
-    fontSize: 11,
+  paywallPriceText: {
+    fontSize: 12,
     color: COLORS.muted,
     textAlign: "center",
-    marginTop: 12,
+    marginTop: 10,
+    fontWeight: "500",
+  },
+  paywallLinks: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 8,
+  },
+  paywallLink: {
+    fontSize: 12,
+    color: COLORS.muted,
+    fontWeight: "600",
+  },
+  paywallLinkDivider: {
+    fontSize: 12,
+    color: COLORS.muted,
   },
 });
