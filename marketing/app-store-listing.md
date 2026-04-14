@@ -144,8 +144,8 @@ Same as support for now.
 ---
 
 ## App Review Information
-- **Contact First/Last Name:** David Hershman
-- **Contact Email:** dbh28tekkit@gmail.com
+- **Contact First/Last Name:** YOUR_NAME
+- **Contact Email:** YOUR_EMAIL@example.com
 - **Contact Phone:** (your number)
 - **Demo Account:** (not needed — NearMe doesn't require login)
 - **Notes for reviewer:**

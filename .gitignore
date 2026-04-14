@@ -40,3 +40,13 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# Supabase CLI local state
+supabase/.temp/
+supabase/.branches/
+
+# Local EAS overrides (keep this line — eas.json itself has placeholders)
+eas.local.json
+
+# OS
+Thumbs.db
