@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NearMe — Support</title>
+  <style>
+    :root {
+      --bg: #0f0f1a;
+      --card: #1a1a2e;
+      --border: #2e2e4a;
+      --text: #eeeef6;
+      --muted: #9090b0;
+      --accent: #7c6cf0;
+      --accent-light: #b0a4ff;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+    .container {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 60px 24px;
+    }
+    .hero {
+      text-align: center;
+      padding: 40px 0 60px;
+    }
+    .logo {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 100px;
+      height: 100px;
+      border-radius: 28px;
+      background: linear-gradient(135deg, #7c6cf0, #b06cf0);
+      font-size: 48px;
+      margin-bottom: 24px;
+    }
+    h1 {
+      font-size: 48px;
+      letter-spacing: -1px;
+      margin-bottom: 12px;
+    }
+    .tagline {
+      color: var(--muted);
+      font-size: 18px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 28px;
+      margin-bottom: 20px;
+    }
+    h2 {
+      font-size: 22px;
+      margin-bottom: 12px;
+    }
+    p {
+      color: var(--muted);
+      margin-bottom: 12px;
+    }
+    a {
+      color: var(--accent-light);
+      text-decoration: none;
+    }
+    a:hover { text-decoration: underline; }
+    .links {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-top: 20px;
+    }
+    .link-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 20px;
+      background: var(--accent);
+      color: #fff;
+      border-radius: 999px;
+      font-weight: 600;
+      font-size: 14px;
+    }
+    .link-btn.secondary {
+      background: var(--card);
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+    footer {
+      text-align: center;
+      padding: 40px 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .faq-item {
+      padding: 16px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .faq-item:last-child { border-bottom: none; }
+    .faq-q {
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 6px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="hero">
+      <div class="logo">✨</div>
+      <h1>NearMe</h1>
+      <p class="tagline">Your city. Your vibe. Your night.</p>
+    </div>
+
+    <div class="card">
+      <h2>Contact & Support</h2>
+      <p>Questions, bugs, feature requests, or just saying hi — we're listening.</p>
+      <p>Email: <a href="mailto:dbh28tekkit@gmail.com">dbh28tekkit@gmail.com</a></p>
+      <p>We typically reply within 48 hours.</p>
+      <div class="links">
+        <a href="mailto:dbh28tekkit@gmail.com" class="link-btn">Email Support</a>
+        <a href="privacy.html" class="link-btn secondary">Privacy Policy</a>
+        <a href="terms.html" class="link-btn secondary">Terms of Service</a>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>FAQ</h2>
+
+      <div class="faq-item">
+        <div class="faq-q">How does NearMe find events?</div>
+        <p>We aggregate events from Ticketmaster, SeatGeek, local venue websites, and public city calendars. Events are updated continuously.</p>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-q">Does NearMe work in my city?</div>
+        <p>Yes — NearMe works anywhere in the US (and growing). Set a custom address in Settings or let the app use your GPS to find events around you.</p>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-q">How do I cancel my subscription?</div>
+        <p>Open iPhone Settings → [Your Name] → Subscriptions → NearMe → Cancel. Your subscription stays active until the end of the billing period.</p>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-q">Is my data safe?</div>
+        <p>Yes. NearMe only stores what's needed to serve you events. We don't sell your data, track you across apps, or share personal info with third parties. See our <a href="privacy.html">Privacy Policy</a> for details.</p>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-q">I don't see any events near me — help?</div>
+        <p>First load in a new area can take 30-60 seconds while we sync data. Try expanding your search radius in Settings. If it still shows empty, email us and we'll look into it.</p>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-q">Can I report an incorrect event?</div>
+        <p>Absolutely. Email us with the event name and what's wrong, and we'll fix it.</p>
+      </div>
+    </div>
+
+    <footer>
+      <p>© 2026 NearMe. Made with ☕ in Boca Raton, FL.</p>
+    </footer>
+  </div>
+</body>
+</html>

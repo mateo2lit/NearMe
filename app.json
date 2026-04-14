@@ -15,10 +15,11 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.nearme.app",
+      "bundleIdentifier": "com.davidhershman.nearme",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "NearMe uses your location to show events and activities happening near you.",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "NearMe uses your location to show events and activities happening near you."
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "NearMe uses your location to show events and activities happening near you.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -27,10 +28,12 @@
         "backgroundColor": "#0a0a0f"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.nearme.app",
+      "package": "com.davidhershman.nearme",
       "permissions": [
         "ACCESS_FINE_LOCATION",
-        "ACCESS_COARSE_LOCATION"
+        "ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
       ]
     },
     "web": {
@@ -48,8 +51,10 @@
     ],
     "extra": {
       "eas": {
-        "projectId": ""
-      }
-    }
+        "projectId": "aa7f5b14-077f-4ad2-bb37-9544a315c798"
+      },
+      "router": {}
+    },
+    "owner": "dbhershman"
   }
 }

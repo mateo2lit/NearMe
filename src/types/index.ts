@@ -39,6 +39,7 @@ export interface Event {
   ticket_url: string | null;
   attendance: number | null;
   source_url: string | null;
+  tags: string[];
   distance?: number; // computed, in miles
 }
 
@@ -75,11 +76,19 @@ export type EventSource =
 
 export type SwipeAction = "save" | "skip";
 
+export interface CustomLocation {
+  label: string;
+  lat: number;
+  lng: number;
+}
+
 export interface UserPreferences {
   categories: EventCategory[];
+  tags: string[];
   radius: number; // miles
   lat: number;
   lng: number;
+  customLocation?: CustomLocation | null;
 }
 
 export interface CategoryOption {

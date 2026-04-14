@@ -1,6 +1,6 @@
 import { Tabs } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { COLORS } from "../../src/constants/theme";
+import { COLORS, RADIUS } from "../../src/constants/theme";
 
 export default function TabLayout() {
   return (
@@ -14,6 +14,13 @@ export default function TabLayout() {
           height: 88,
           paddingBottom: 28,
           paddingTop: 8,
+          borderTopLeftRadius: RADIUS.md,
+          borderTopRightRadius: RADIUS.md,
+          elevation: 20,
+          shadowColor: COLORS.accent,
+          shadowOffset: { width: 0, height: -4 },
+          shadowOpacity: 0.1,
+          shadowRadius: 12,
         },
         tabBarActiveTintColor: COLORS.accent,
         tabBarInactiveTintColor: COLORS.muted,

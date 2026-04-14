@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import {
   View,
   Text,
@@ -14,31 +14,20 @@ import { fetchNearbyEvents } from "../../src/services/events";
 import { getEventTimeLabel, formatDistance } from "../../src/services/events";
 import { useLocation } from "../../src/hooks/useLocation";
 import { CATEGORY_MAP } from "../../src/constants/categories";
-import { COLORS, BOCA_RATON } from "../../src/constants/theme";
+import { COLORS, RADIUS, BOCA_RATON } from "../../src/constants/theme";
 import { Event } from "../../src/types";
+import TagBadge from "../../src/components/TagBadge";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const { width } = Dimensions.get("window");
 
 const mapDarkStyle = [
-  { elementType: "geometry", stylers: [{ color: "#1d1d2b" }] },
-  { elementType: "labels.text.fill", stylers: [{ color: "#8888a0" }] },
-  { elementType: "labels.text.stroke", stylers: [{ color: "#1d1d2b" }] },
-  {
-    featureType: "road",
-    elementType: "geometry",
-    stylers: [{ color: "#2a2a3a" }],
-  },
-  {
-    featureType: "water",
-    elementType: "geometry",
-    stylers: [{ color: "#0e0e1a" }],
-  },
-  {
-    featureType: "poi",
-    elementType: "geometry",
-    stylers: [{ color: "#16161f" }],
-  },
+  { elementType: "geometry", stylers: [{ color: "#1a1a2e" }] },
+  { elementType: "labels.text.fill", stylers: [{ color: "#9090b0" }] },
+  { elementType: "labels.text.stroke", stylers: [{ color: "#1a1a2e" }] },
+  { featureType: "road", elementType: "geometry", stylers: [{ color: "#2e2e4a" }] },
+  { featureType: "water", elementType: "geometry", stylers: [{ color: "#0f0f1a" }] },
+  { featureType: "poi", elementType: "geometry", stylers: [{ color: "#1a1a2e" }] },
 ];
 
 export default function MapScreen() {
@@ -60,6 +49,14 @@ export default function MapScreen() {
         );
         setEvents(data);
       })();
+
+      // Center map on user location
+      mapRef.current?.animateToRegion({
+        latitude: location.lat,
+        longitude: location.lng,
+        latitudeDelta: 0.06,
+        longitudeDelta: 0.06,
+      }, 500);
     }
   }, [location.loading, location.lat, location.lng]);
 
@@ -76,28 +73,47 @@ export default function MapScreen() {
         provider={Platform.OS === "android" ? PROVIDER_GOOGLE : undefined}
         customMapStyle={mapDarkStyle}
         initialRegion={{
-          latitude: location.lat || BOCA_RATON.lat,
-          longitude: location.lng || BOCA_RATON.lng,
+          latitude: location.lat,
+          longitude: location.lng,
           latitudeDelta: 0.06,
           longitudeDelta: 0.06,
         }}
-        showsUserLocation
+        showsUserLocation={!location.isCustom}
         showsMyLocationButton={false}
         onPress={() => setSelectedEvent(null)}
       >
+        {/* User location marker (for custom address or as fallback) */}
+        {location.isCustom && (
+          <Marker
+            coordinate={{ latitude: location.lat, longitude: location.lng }}
+            anchor={{ x: 0.5, y: 0.5 }}
+          >
+            <View style={styles.userMarker}>
+              <View style={styles.userMarkerInner} />
+            </View>
+          </Marker>
+        )}
+
         {events.map((event) => (
           <Marker
             key={event.id}
             coordinate={{ latitude: event.lat, longitude: event.lng }}
-            onPress={() => setSelectedEvent(event)}
+            onPress={(e) => {
+              e.stopPropagation();
+              setSelectedEvent(event);
+            }}
             pinColor={getMarkerColor(event)}
+            stopPropagation
           />
         ))}
       </MapView>
 
       {/* Header overlay */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Nearby</Text>
+        <View>
+          <Text style={styles.headerTitle}>Nearby</Text>
+          <Text style={styles.headerLocation}>{location.cityName}</Text>
+        </View>
         <View style={styles.countBadge}>
           <Text style={styles.countText}>{events.length} events</Text>
         </View>
@@ -128,10 +144,7 @@ export default function MapScreen() {
         >
           <View style={styles.eventCardContent}>
             <View
-              style={[
-                styles.eventDot,
-                { backgroundColor: getMarkerColor(selectedEvent) },
-              ]}
+              style={[styles.eventDot, { backgroundColor: getMarkerColor(selectedEvent) }]}
             />
             <View style={styles.eventCardInfo}>
               <Text style={styles.eventCardTitle} numberOfLines={1}>
@@ -152,17 +165,15 @@ export default function MapScreen() {
                   </Text>
                 )}
               </View>
-              {selectedEvent.venue && (
-                <Text style={styles.eventCardVenue} numberOfLines={1}>
-                  {selectedEvent.venue.name}
-                </Text>
+              {(selectedEvent.tags || []).length > 0 && (
+                <View style={styles.eventCardTags}>
+                  {(selectedEvent.tags || []).slice(0, 2).map((tag) => (
+                    <TagBadge key={tag} tag={tag} selected />
+                  ))}
+                </View>
               )}
             </View>
-            <Ionicons
-              name="chevron-forward"
-              size={20}
-              color={COLORS.muted}
-            />
+            <Ionicons name="chevron-forward" size={20} color={COLORS.muted} />
           </View>
         </TouchableOpacity>
       )}
@@ -195,11 +206,22 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 8,
   },
+  headerLocation: {
+    fontSize: 12,
+    fontWeight: "500",
+    color: COLORS.muted,
+    textShadowColor: "rgba(0,0,0,0.8)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
+    marginTop: 2,
+  },
   countBadge: {
     backgroundColor: COLORS.card + "ee",
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: RADIUS.pill,
+    borderWidth: 1,
+    borderColor: COLORS.border,
   },
   countText: {
     color: COLORS.text,
@@ -210,9 +232,9 @@ const styles = StyleSheet.create({
     position: "absolute",
     bottom: 180,
     right: 20,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 46,
+    height: 46,
+    borderRadius: 23,
     backgroundColor: COLORS.card + "ee",
     alignItems: "center",
     justifyContent: "center",
@@ -221,6 +243,8 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.3,
     shadowRadius: 4,
+    borderWidth: 1,
+    borderColor: COLORS.border,
   },
   eventCard: {
     position: "absolute",
@@ -228,13 +252,13 @@ const styles = StyleSheet.create({
     left: 16,
     right: 16,
     backgroundColor: COLORS.card,
-    borderRadius: 16,
+    borderRadius: RADIUS.md,
     padding: 16,
     elevation: 8,
-    shadowColor: "#000",
+    shadowColor: COLORS.accent,
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
     borderWidth: 1,
     borderColor: COLORS.border,
   },
@@ -244,9 +268,9 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   eventDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
   },
   eventCardInfo: {
     flex: 1,
@@ -269,9 +293,25 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: COLORS.muted,
   },
-  eventCardVenue: {
-    fontSize: 13,
-    color: COLORS.muted,
-    marginTop: 2,
+  eventCardTags: {
+    flexDirection: "row",
+    gap: 4,
+    marginTop: 6,
+  },
+  userMarker: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: COLORS.accent + "30",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: COLORS.accent,
+  },
+  userMarkerInner: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: COLORS.accent,
   },
 });

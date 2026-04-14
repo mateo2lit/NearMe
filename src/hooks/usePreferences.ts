@@ -8,6 +8,7 @@ const ONBOARDED_KEY = "@nearme_onboarded";
 
 const DEFAULT_PREFS: UserPreferences = {
   categories: [],
+  tags: [],
   radius: DEFAULT_RADIUS_MILES,
   lat: BOCA_RATON.lat,
   lng: BOCA_RATON.lng,
@@ -25,7 +26,8 @@ export function usePreferences() {
         AsyncStorage.getItem(ONBOARDED_KEY),
       ]);
       if (prefsStr) {
-        setPreferences(JSON.parse(prefsStr));
+        const parsed = JSON.parse(prefsStr);
+        setPreferences({ ...DEFAULT_PREFS, ...parsed });
       }
       setHasOnboarded(onboarded === "true");
       setLoading(false);
@@ -53,6 +55,17 @@ export function usePreferences() {
     [preferences, savePreferences]
   );
 
+  const toggleTag = useCallback(
+    (tag: string) => {
+      const next = preferences.tags.includes(tag)
+        ? preferences.tags.filter((t) => t !== tag)
+        : [...preferences.tags, tag];
+      const updated = { ...preferences, tags: next };
+      savePreferences(updated);
+    },
+    [preferences, savePreferences]
+  );
+
   const setRadius = useCallback(
     (radius: number) => {
       const updated = { ...preferences, radius };
@@ -68,6 +81,7 @@ export function usePreferences() {
     savePreferences,
     completeOnboarding,
     toggleCategory,
+    toggleTag,
     setRadius,
   };
 }

@@ -9,13 +9,16 @@ import {
   Linking,
   Dimensions,
   Platform,
+  ActivityIndicator,
 } from "react-native";
+import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { MOCK_EVENTS } from "../../src/data/mock-events";
-import { getEventTimeLabel, formatDistance } from "../../src/services/events";
+import { fetchEventById, getEventTimeLabel, formatDistance } from "../../src/services/events";
 import { CATEGORY_MAP } from "../../src/constants/categories";
-import { COLORS } from "../../src/constants/theme";
+import { getEventImage } from "../../src/constants/images";
+import TagBadge from "../../src/components/TagBadge";
+import { COLORS, GRADIENTS, RADIUS, SPACING } from "../../src/constants/theme";
 import { Event } from "../../src/types";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
@@ -26,19 +29,27 @@ export default function EventDetail() {
   const router = useRouter();
   const [event, setEvent] = useState<Event | null>(null);
   const [isSaved, setIsSaved] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Find event from mock data (would be Supabase query in production)
-    const found = MOCK_EVENTS.find((e) => e.id === id);
-    if (found) setEvent(found);
-
-    // Check if saved
     (async () => {
+      // Try to load from saved events first (works offline), then Supabase
+      const savedStr = await AsyncStorage.getItem("@nearme_saved_events");
+      const savedArr: Event[] = savedStr ? JSON.parse(savedStr) : [];
+      const local = savedArr.find((e) => e.id === id);
+      if (local) {
+        setEvent(local);
+      } else {
+        const fetched = await fetchEventById(id!);
+        if (fetched) setEvent(fetched);
+      }
+
       const saved = await AsyncStorage.getItem("@nearme_saved");
       if (saved) {
         const ids = JSON.parse(saved);
         setIsSaved(ids.includes(id));
       }
+      setLoading(false);
     })();
   }, [id]);
 
@@ -53,26 +64,19 @@ export default function EventDetail() {
       const newIds = ids.filter((i) => i !== event.id);
       const newEvents = eventsArr.filter((e) => e.id !== event.id);
       await AsyncStorage.setItem("@nearme_saved", JSON.stringify(newIds));
-      await AsyncStorage.setItem(
-        "@nearme_saved_events",
-        JSON.stringify(newEvents)
-      );
+      await AsyncStorage.setItem("@nearme_saved_events", JSON.stringify(newEvents));
       setIsSaved(false);
     } else {
       ids.push(event.id);
       eventsArr.push(event);
       await AsyncStorage.setItem("@nearme_saved", JSON.stringify(ids));
-      await AsyncStorage.setItem(
-        "@nearme_saved_events",
-        JSON.stringify(eventsArr)
-      );
+      await AsyncStorage.setItem("@nearme_saved_events", JSON.stringify(eventsArr));
       setIsSaved(true);
     }
   };
 
   const openDirections = () => {
     if (!event) return;
-    const scheme = Platform.OS === "ios" ? "maps:" : "geo:";
     const url =
       Platform.OS === "ios"
         ? `maps:0,0?q=${event.lat},${event.lng}`
@@ -80,16 +84,33 @@ export default function EventDetail() {
     Linking.openURL(url);
   };
 
+  if (loading) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator size="large" color={COLORS.accent} />
+      </View>
+    );
+  }
+
   if (!event) {
     return (
       <View style={styles.center}>
+        <Ionicons name="alert-circle" size={48} color={COLORS.muted} />
         <Text style={styles.errorText}>Event not found</Text>
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={() => router.back()}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.backButtonText}>Go Back</Text>
+        </TouchableOpacity>
       </View>
     );
   }
 
   const timeInfo = getEventTimeLabel(event);
   const category = CATEGORY_MAP[event.category];
+  const tags = event.tags || [];
 
   const startDate = new Date(event.start_time);
   const endDate = event.end_time ? new Date(event.end_time) : null;
@@ -111,14 +132,14 @@ export default function EventDetail() {
       {/* Hero image */}
       <View style={styles.heroContainer}>
         <Image
-          source={{
-            uri:
-              event.image_url ||
-              "https://images.unsplash.com/photo-1501281668745-f7f57925c3b4?w=800",
-          }}
+          source={{ uri: getEventImage(event.image_url, event.category, event.subcategory, event.title, event.description) }}
           style={styles.heroImage}
         />
-        <View style={styles.heroOverlay} />
+        <LinearGradient
+          colors={["transparent", "rgba(15,15,26,0.4)", "rgba(15,15,26,0.95)"]}
+          locations={[0, 0.5, 1]}
+          style={StyleSheet.absoluteFillObject}
+        />
 
         {/* Back button */}
         <TouchableOpacity
@@ -130,9 +151,7 @@ export default function EventDetail() {
         </TouchableOpacity>
 
         {/* Time badge on hero */}
-        <View
-          style={[styles.heroTimeBadge, { backgroundColor: timeInfo.color }]}
-        >
+        <View style={[styles.heroTimeBadge, { backgroundColor: timeInfo.color + "ee" }]}>
           <Text style={styles.heroTimeText}>{timeInfo.label}</Text>
         </View>
       </View>
@@ -142,37 +161,24 @@ export default function EventDetail() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 120 }}
       >
-        {/* Title section */}
         <Text style={styles.title}>{event.title}</Text>
 
-        {/* Category + Price row */}
+        {/* Category + Price + Tags row */}
         <View style={styles.tagRow}>
           {category && (
-            <View
-              style={[styles.tag, { backgroundColor: category.color + "20" }]}
-            >
-              <Ionicons
-                name={category.icon as any}
-                size={14}
-                color={category.color}
-              />
+            <View style={[styles.tag, { backgroundColor: category.color + "20" }]}>
+              <Ionicons name={category.icon as any} size={14} color={category.color} />
               <Text style={[styles.tagText, { color: category.color }]}>
                 {category.label}
               </Text>
             </View>
           )}
           {event.is_free ? (
-            <View
-              style={[styles.tag, { backgroundColor: COLORS.success + "20" }]}
-            >
-              <Text style={[styles.tagText, { color: COLORS.success }]}>
-                FREE
-              </Text>
+            <View style={[styles.tag, { backgroundColor: COLORS.success + "20" }]}>
+              <Text style={[styles.tagText, { color: COLORS.success }]}>FREE</Text>
             </View>
           ) : event.price_min ? (
-            <View
-              style={[styles.tag, { backgroundColor: COLORS.warm + "20" }]}
-            >
+            <View style={[styles.tag, { backgroundColor: COLORS.warm + "20" }]}>
               <Text style={[styles.tagText, { color: COLORS.warm }]}>
                 ${event.price_min}
                 {event.price_max ? ` - $${event.price_max}` : "+"}
@@ -180,9 +186,7 @@ export default function EventDetail() {
             </View>
           ) : null}
           {event.is_recurring && event.recurrence_rule && (
-            <View
-              style={[styles.tag, { backgroundColor: COLORS.accent + "20" }]}
-            >
+            <View style={[styles.tag, { backgroundColor: COLORS.accent + "20" }]}>
               <Ionicons name="repeat" size={14} color={COLORS.accentLight} />
               <Text style={[styles.tagText, { color: COLORS.accentLight }]}>
                 {event.recurrence_rule}
@@ -190,6 +194,15 @@ export default function EventDetail() {
             </View>
           )}
         </View>
+
+        {/* Event tags */}
+        {tags.length > 0 && (
+          <View style={styles.eventTags}>
+            {tags.map((tag) => (
+              <TagBadge key={tag} tag={tag} selected />
+            ))}
+          </View>
+        )}
 
         {/* Info rows */}
         <View style={styles.infoSection}>
@@ -218,7 +231,7 @@ export default function EventDetail() {
             </View>
           </View>
 
-          {event.attendance && (
+          {event.attendance != null && event.attendance > 0 && (
             <View style={styles.infoRow}>
               <View style={styles.infoIcon}>
                 <Ionicons name="people" size={18} color={COLORS.accent} />
@@ -264,15 +277,57 @@ export default function EventDetail() {
         </View>
 
         {/* Description */}
-        <View style={styles.descriptionSection}>
-          <Text style={styles.sectionTitle}>About</Text>
-          <Text style={styles.description}>{event.description}</Text>
-        </View>
+        {event.description && (
+          <View style={styles.descriptionSection}>
+            <Text style={styles.sectionTitle}>About</Text>
+            <Text style={styles.description}>{event.description}</Text>
+          </View>
+        )}
 
-        {/* Source */}
-        <Text style={styles.sourceText}>
-          Source: {event.source === "scraped" ? "Venue website" : event.source}
-        </Text>
+        {/* RSVP / Ticket link */}
+        {(event.ticket_url || event.source_url) && (
+          <TouchableOpacity
+            style={styles.rsvpCard}
+            onPress={() => Linking.openURL(event.ticket_url || event.source_url!)}
+            activeOpacity={0.8}
+          >
+            <View style={styles.rsvpIcon}>
+              <Ionicons
+                name={event.ticket_url ? "ticket" : "open-outline"}
+                size={20}
+                color={COLORS.accent}
+              />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rsvpTitle}>
+                {event.ticket_url ? "Get Tickets / RSVP" : "View on Source"}
+              </Text>
+              <Text style={styles.rsvpUrl} numberOfLines={1}>
+                {(event.ticket_url || event.source_url || "").replace(/^https?:\/\/(www\.)?/, "").split("/")[0]}
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={COLORS.muted} />
+          </TouchableOpacity>
+        )}
+
+        {/* Source attribution */}
+        {event.source_url ? (
+          <TouchableOpacity
+            style={styles.sourceLink}
+            onPress={() => Linking.openURL(event.source_url!)}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="link-outline" size={14} color={COLORS.accent} />
+            <Text style={styles.sourceLinkText}>
+              View original on {event.source === "scraped" ? "venue website" : event.source === "ticketmaster" ? "Ticketmaster" : event.source === "seatgeek" ? "SeatGeek" : event.source === "municipal" ? "City of Boca Raton" : event.source}
+            </Text>
+            <Ionicons name="open-outline" size={12} color={COLORS.muted} />
+          </TouchableOpacity>
+        ) : (
+          <Text style={styles.sourceText}>
+            Source: {event.source === "scraped" ? "Venue website" : event.source === "municipal" ? "City of Boca Raton" : event.source}
+          </Text>
+        )}
       </ScrollView>
 
       {/* Bottom action bar */}
@@ -290,24 +345,30 @@ export default function EventDetail() {
             size={22}
             color={isSaved ? COLORS.success : COLORS.text}
           />
-          <Text
-            style={[
-              styles.saveButtonText,
-              isSaved && { color: COLORS.success },
-            ]}
-          >
+          <Text style={[styles.saveButtonText, isSaved && { color: COLORS.success }]}>
             {isSaved ? "Saved" : "Save"}
           </Text>
         </TouchableOpacity>
 
-        <TouchableOpacity
-          style={styles.directionsButton}
-          onPress={openDirections}
-          activeOpacity={0.8}
-        >
-          <Ionicons name="navigate" size={20} color="#fff" />
-          <Text style={styles.directionsText}>Take Me There</Text>
-        </TouchableOpacity>
+        {event.ticket_url ? (
+          <TouchableOpacity
+            style={styles.rsvpButton}
+            onPress={() => Linking.openURL(event.ticket_url!)}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="ticket" size={20} color="#fff" />
+            <Text style={styles.directionsText}>RSVP / Tickets</Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity
+            style={styles.directionsButton}
+            onPress={openDirections}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="navigate" size={20} color="#fff" />
+            <Text style={styles.directionsText}>Take Me There</Text>
+          </TouchableOpacity>
+        )}
       </View>
     </View>
   );
@@ -323,40 +384,50 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.bg,
     alignItems: "center",
     justifyContent: "center",
+    gap: 12,
   },
   errorText: {
     color: COLORS.muted,
     fontSize: 16,
+    fontWeight: "500",
+  },
+  backButton: {
+    backgroundColor: COLORS.accent,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: RADIUS.pill,
+  },
+  backButtonText: {
+    color: "#fff",
+    fontWeight: "600",
   },
   heroContainer: {
-    height: 280,
+    height: 300,
   },
   heroImage: {
     width: "100%",
     height: "100%",
   },
-  heroOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(10,10,15,0.3)",
-  },
   backBtn: {
     position: "absolute",
     top: 52,
     left: 16,
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "rgba(0,0,0,0.5)",
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: "rgba(0,0,0,0.4)",
     alignItems: "center",
     justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.1)",
   },
   heroTimeBadge: {
     position: "absolute",
     bottom: 16,
     left: 16,
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
     paddingVertical: 8,
-    borderRadius: 20,
+    borderRadius: RADIUS.pill,
   },
   heroTimeText: {
     color: "#fff",
@@ -373,24 +444,31 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     color: COLORS.text,
     marginBottom: 12,
+    letterSpacing: -0.3,
   },
   tagRow: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
-    marginBottom: 24,
+    marginBottom: 12,
   },
   tag: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: RADIUS.pill,
   },
   tagText: {
     fontSize: 13,
-    fontWeight: "600",
+    fontWeight: "700",
+  },
+  eventTags: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+    marginBottom: 20,
   },
   infoSection: {
     gap: 16,
@@ -402,9 +480,9 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   infoIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
+    width: 38,
+    height: 38,
+    borderRadius: RADIUS.sm,
     backgroundColor: COLORS.accent + "15",
     alignItems: "center",
     justifyContent: "center",
@@ -421,14 +499,14 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   busynessBar: {
-    height: 4,
-    borderRadius: 2,
+    height: 5,
+    borderRadius: 3,
     backgroundColor: COLORS.border,
     marginTop: 8,
   },
   busynessFill: {
-    height: 4,
-    borderRadius: 2,
+    height: 5,
+    borderRadius: 3,
   },
   descriptionSection: {
     marginBottom: 16,
@@ -467,7 +545,7 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingHorizontal: 20,
     paddingVertical: 14,
-    borderRadius: 14,
+    borderRadius: RADIUS.pill,
     borderWidth: 2,
     borderColor: COLORS.border,
   },
@@ -484,11 +562,63 @@ const styles = StyleSheet.create({
     gap: 8,
     backgroundColor: COLORS.accent,
     paddingVertical: 14,
-    borderRadius: 14,
+    borderRadius: RADIUS.pill,
+  },
+  rsvpButton: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: COLORS.success,
+    paddingVertical: 14,
+    borderRadius: RADIUS.pill,
   },
   directionsText: {
     color: "#fff",
     fontSize: 16,
     fontWeight: "700",
+  },
+  rsvpCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: COLORS.card,
+    padding: 14,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.accent + "30",
+    marginBottom: 16,
+  },
+  rsvpIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: RADIUS.sm,
+    backgroundColor: COLORS.accent + "15",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  rsvpTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: COLORS.accent,
+  },
+  rsvpUrl: {
+    fontSize: 12,
+    color: COLORS.muted,
+    marginTop: 1,
+  },
+  sourceLink: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 10,
+    marginTop: 8,
+  },
+  sourceLinkText: {
+    fontSize: 13,
+    color: COLORS.accent,
+    fontWeight: "500",
+    flex: 1,
   },
 });

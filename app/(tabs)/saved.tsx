@@ -13,7 +13,9 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Event } from "../../src/types";
 import { getEventTimeLabel } from "../../src/services/events";
 import { CATEGORY_MAP } from "../../src/constants/categories";
-import { COLORS } from "../../src/constants/theme";
+import { getEventImage } from "../../src/constants/images";
+import TagBadge from "../../src/components/TagBadge";
+import { COLORS, RADIUS, SPACING } from "../../src/constants/theme";
 
 export default function SavedScreen() {
   const router = useRouter();
@@ -37,10 +39,7 @@ export default function SavedScreen() {
   const removeSaved = async (eventId: string) => {
     const newEvents = savedEvents.filter((e) => e.id !== eventId);
     setSavedEvents(newEvents);
-    await AsyncStorage.setItem(
-      "@nearme_saved_events",
-      JSON.stringify(newEvents)
-    );
+    await AsyncStorage.setItem("@nearme_saved_events", JSON.stringify(newEvents));
     const ids = newEvents.map((e) => e.id);
     await AsyncStorage.setItem("@nearme_saved", JSON.stringify(ids));
   };
@@ -56,11 +55,7 @@ export default function SavedScreen() {
         activeOpacity={0.8}
       >
         <Image
-          source={{
-            uri:
-              item.image_url ||
-              "https://images.unsplash.com/photo-1501281668745-f7f57925c3b4?w=300",
-          }}
+          source={{ uri: getEventImage(item.image_url, item.category, item.subcategory, item.title, item.description) }}
           style={styles.cardImage}
         />
         <View style={styles.cardContent}>
@@ -73,20 +68,19 @@ export default function SavedScreen() {
             </Text>
             {category && (
               <View
-                style={[
-                  styles.categoryDot,
-                  { backgroundColor: category.color },
-                ]}
+                style={[styles.categoryDot, { backgroundColor: category.color }]}
               />
             )}
             {category && (
               <Text style={styles.categoryText}>{category.label}</Text>
             )}
           </View>
-          {item.venue && (
-            <Text style={styles.venueText} numberOfLines={1}>
-              {item.venue.name}
-            </Text>
+          {(item.tags || []).length > 0 && (
+            <View style={styles.cardTags}>
+              {(item.tags || []).slice(0, 2).map((tag) => (
+                <TagBadge key={tag} tag={tag} selected />
+              ))}
+            </View>
           )}
         </View>
         <TouchableOpacity
@@ -104,14 +98,18 @@ export default function SavedScreen() {
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Saved</Text>
-        <Text style={styles.headerCount}>
-          {savedEvents.length} event{savedEvents.length !== 1 ? "s" : ""}
-        </Text>
+        <View style={styles.headerCountBadge}>
+          <Text style={styles.headerCount}>
+            {savedEvents.length} event{savedEvents.length !== 1 ? "s" : ""}
+          </Text>
+        </View>
       </View>
 
       {savedEvents.length === 0 ? (
         <View style={styles.empty}>
-          <Ionicons name="heart-outline" size={56} color={COLORS.border} />
+          <View style={styles.emptyIcon}>
+            <Ionicons name="heart-outline" size={40} color={COLORS.accent} />
+          </View>
           <Text style={styles.emptyTitle}>No saved events yet</Text>
           <Text style={styles.emptySubtitle}>
             Swipe right on events you like{"\n"}and they'll show up here
@@ -138,20 +136,29 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "baseline",
+    alignItems: "center",
     paddingHorizontal: 20,
     paddingTop: 64,
     paddingBottom: 16,
   },
   headerTitle: {
-    fontSize: 26,
+    fontSize: 28,
     fontWeight: "800",
     color: COLORS.text,
+    letterSpacing: -0.5,
+  },
+  headerCountBadge: {
+    backgroundColor: COLORS.card,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: RADIUS.pill,
+    borderWidth: 1,
+    borderColor: COLORS.border,
   },
   headerCount: {
-    fontSize: 14,
+    fontSize: 13,
     color: COLORS.muted,
-    fontWeight: "500",
+    fontWeight: "600",
   },
   list: {
     padding: 16,
@@ -160,14 +167,16 @@ const styles = StyleSheet.create({
   card: {
     flexDirection: "row",
     backgroundColor: COLORS.card,
-    borderRadius: 14,
+    borderRadius: RADIUS.md,
     overflow: "hidden",
     borderWidth: 1,
     borderColor: COLORS.border,
   },
   cardImage: {
-    width: 90,
-    height: 90,
+    width: 95,
+    height: 95,
+    borderTopLeftRadius: RADIUS.md,
+    borderBottomLeftRadius: RADIUS.md,
   },
   cardContent: {
     flex: 1,
@@ -199,10 +208,10 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: COLORS.muted,
   },
-  venueText: {
-    fontSize: 12,
-    color: COLORS.muted,
-    marginTop: 2,
+  cardTags: {
+    flexDirection: "row",
+    gap: 4,
+    marginTop: 4,
   },
   removeBtn: {
     justifyContent: "center",
@@ -214,11 +223,19 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     padding: 32,
   },
+  emptyIcon: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: COLORS.accent + "15",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 16,
+  },
   emptyTitle: {
     fontSize: 18,
     fontWeight: "700",
     color: COLORS.text,
-    marginTop: 16,
   },
   emptySubtitle: {
     fontSize: 14,

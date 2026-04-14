@@ -6,22 +6,35 @@ import {
   TouchableOpacity,
   ScrollView,
   Alert,
+  TextInput,
+  ActivityIndicator,
+  Keyboard,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { CATEGORIES } from "../../src/constants/categories";
-import { COLORS } from "../../src/constants/theme";
+import { TAGS } from "../../src/constants/tags";
+import TagBadge from "../../src/components/TagBadge";
+import { useLocation, geocodeAddress, refreshLocation } from "../../src/hooks/useLocation";
+import { COLORS, RADIUS, SPACING } from "../../src/constants/theme";
 import { EventCategory } from "../../src/types";
 
 const RADIUS_OPTIONS = [1, 2, 5, 10, 25];
 
 export default function SettingsScreen() {
   const router = useRouter();
-  const [selectedCategories, setSelectedCategories] = useState<EventCategory[]>(
-    []
-  );
+  const location = useLocation();
+  const [selectedCategories, setSelectedCategories] = useState<EventCategory[]>([]);
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [radius, setRadius] = useState(5);
+  const [addressInput, setAddressInput] = useState("");
+  const [isGeocoding, setIsGeocoding] = useState(false);
+  const [customLocation, setCustomLocation] = useState<{
+    label: string;
+    lat: number;
+    lng: number;
+  } | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -29,28 +42,68 @@ export default function SettingsScreen() {
       if (prefsStr) {
         const prefs = JSON.parse(prefsStr);
         setSelectedCategories(prefs.categories || []);
+        setSelectedTags(prefs.tags || []);
         setRadius(prefs.radius || 5);
+        if (prefs.customLocation) {
+          setCustomLocation(prefs.customLocation);
+        }
       }
     })();
   }, []);
+
+  const savePrefs = async (updates: Record<string, any>) => {
+    const prefsStr = await AsyncStorage.getItem("@nearme_preferences");
+    const prefs = prefsStr ? JSON.parse(prefsStr) : {};
+    Object.assign(prefs, updates);
+    await AsyncStorage.setItem("@nearme_preferences", JSON.stringify(prefs));
+  };
 
   const toggleCategory = async (cat: EventCategory) => {
     const next = selectedCategories.includes(cat)
       ? selectedCategories.filter((c) => c !== cat)
       : [...selectedCategories, cat];
     setSelectedCategories(next);
-    const prefsStr = await AsyncStorage.getItem("@nearme_preferences");
-    const prefs = prefsStr ? JSON.parse(prefsStr) : {};
-    prefs.categories = next;
-    await AsyncStorage.setItem("@nearme_preferences", JSON.stringify(prefs));
+    await savePrefs({ categories: next });
+  };
+
+  const toggleTag = async (tag: string) => {
+    const next = selectedTags.includes(tag)
+      ? selectedTags.filter((t) => t !== tag)
+      : [...selectedTags, tag];
+    setSelectedTags(next);
+    await savePrefs({ tags: next });
   };
 
   const changeRadius = async (r: number) => {
     setRadius(r);
-    const prefsStr = await AsyncStorage.getItem("@nearme_preferences");
-    const prefs = prefsStr ? JSON.parse(prefsStr) : {};
-    prefs.radius = r;
-    await AsyncStorage.setItem("@nearme_preferences", JSON.stringify(prefs));
+    await savePrefs({ radius: r });
+  };
+
+  const setCustomAddress = async () => {
+    if (!addressInput.trim()) return;
+    Keyboard.dismiss();
+    setIsGeocoding(true);
+
+    const result = await geocodeAddress(addressInput.trim());
+    setIsGeocoding(false);
+
+    if (result) {
+      setCustomLocation(result);
+      setAddressInput("");
+      await savePrefs({ customLocation: result });
+      await refreshLocation();
+      Alert.alert("Location Set", `Events will now show near:\n${result.label}`);
+    } else {
+      Alert.alert("Not Found", "Couldn't find that address. Try adding city/state.");
+    }
+  };
+
+  const useCurrentLocation = async () => {
+    setCustomLocation(null);
+    setAddressInput("");
+    await savePrefs({ customLocation: null });
+    await refreshLocation();
+    Alert.alert("Using GPS", "Events will now show near your current location.");
   };
 
   const resetOnboarding = async () => {
@@ -71,13 +124,77 @@ export default function SettingsScreen() {
     );
   };
 
+  const displayLocation = customLocation
+    ? { name: customLocation.label, isCustom: true }
+    : { name: location.cityName, isCustom: false };
+
   return (
     <ScrollView
       style={styles.container}
       contentContainerStyle={{ paddingBottom: 120 }}
       showsVerticalScrollIndicator={false}
+      keyboardShouldPersistTaps="handled"
     >
       <Text style={styles.headerTitle}>Settings</Text>
+
+      {/* Location section */}
+      <Text style={styles.sectionTitle}>Your Location</Text>
+
+      <View style={styles.locationCard}>
+        <View style={styles.locationHeader}>
+          <View style={styles.locationIcon}>
+            <Ionicons
+              name={displayLocation.isCustom ? "pin" : "navigate"}
+              size={20}
+              color={COLORS.accent}
+            />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.locationName}>{displayLocation.name}</Text>
+            <Text style={styles.locationMode}>
+              {displayLocation.isCustom ? "Custom address" : "Current location"}
+            </Text>
+          </View>
+          {displayLocation.isCustom && (
+            <TouchableOpacity
+              style={styles.gpsBtn}
+              onPress={useCurrentLocation}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="navigate" size={16} color={COLORS.secondary} />
+              <Text style={styles.gpsBtnText}>Use GPS</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* Address input */}
+        <View style={styles.addressInputRow}>
+          <TextInput
+            style={styles.addressInput}
+            placeholder="Set a custom address..."
+            placeholderTextColor={COLORS.muted}
+            value={addressInput}
+            onChangeText={setAddressInput}
+            onSubmitEditing={setCustomAddress}
+            returnKeyType="search"
+          />
+          <TouchableOpacity
+            style={[
+              styles.addressBtn,
+              (!addressInput.trim() || isGeocoding) && { opacity: 0.4 },
+            ]}
+            onPress={setCustomAddress}
+            disabled={!addressInput.trim() || isGeocoding}
+            activeOpacity={0.7}
+          >
+            {isGeocoding ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Ionicons name="search" size={18} color="#fff" />
+            )}
+          </TouchableOpacity>
+        </View>
+      </View>
 
       {/* Radius section */}
       <Text style={styles.sectionTitle}>Search Radius</Text>
@@ -85,10 +202,7 @@ export default function SettingsScreen() {
         {RADIUS_OPTIONS.map((r) => (
           <TouchableOpacity
             key={r}
-            style={[
-              styles.radiusBtn,
-              radius === r && styles.radiusBtnActive,
-            ]}
+            style={[styles.radiusBtn, radius === r && styles.radiusBtnActive]}
             onPress={() => changeRadius(r)}
             activeOpacity={0.7}
           >
@@ -143,6 +257,23 @@ export default function SettingsScreen() {
         })}
       </View>
 
+      {/* Tags section */}
+      <Text style={styles.sectionTitle}>Filter by Tags</Text>
+      <Text style={styles.sectionSubtitle}>
+        Only show events matching these tags.
+      </Text>
+      <View style={styles.tagsGrid}>
+        {TAGS.map((tag) => (
+          <TagBadge
+            key={tag.id}
+            tag={tag.id}
+            selected={selectedTags.includes(tag.id)}
+            onPress={() => toggleTag(tag.id)}
+            size="md"
+          />
+        ))}
+      </View>
+
       {/* About section */}
       <Text style={styles.sectionTitle}>About</Text>
       <View style={styles.aboutCard}>
@@ -150,35 +281,6 @@ export default function SettingsScreen() {
           <Ionicons name="information-circle" size={20} color={COLORS.muted} />
           <Text style={styles.aboutText}>NearMe v1.0.0</Text>
         </View>
-        <View style={styles.aboutRow}>
-          <Ionicons name="location" size={20} color={COLORS.muted} />
-          <Text style={styles.aboutText}>Boca Raton, FL</Text>
-        </View>
-      </View>
-
-      {/* API Key Status */}
-      <Text style={styles.sectionTitle}>Data Sources</Text>
-      <View style={styles.aboutCard}>
-        {[
-          { name: "Google Places", key: "EXPO_PUBLIC_GOOGLE_PLACES_API_KEY" },
-          { name: "Ticketmaster", key: "TICKETMASTER_API_KEY" },
-          { name: "SeatGeek", key: "SEATGEEK_CLIENT_ID" },
-          { name: "Supabase", key: "EXPO_PUBLIC_SUPABASE_URL" },
-        ].map((source) => (
-          <View key={source.key} style={styles.aboutRow}>
-            <Ionicons
-              name="ellipse"
-              size={8}
-              color={COLORS.warm}
-            />
-            <Text style={styles.aboutText}>
-              {source.name}:{" "}
-              <Text style={{ color: COLORS.warm }}>
-                Using mock data
-              </Text>
-            </Text>
-          </View>
-        ))}
       </View>
 
       {/* Reset */}
@@ -202,10 +304,11 @@ const styles = StyleSheet.create({
     paddingTop: 64,
   },
   headerTitle: {
-    fontSize: 26,
+    fontSize: 28,
     fontWeight: "800",
     color: COLORS.text,
-    marginBottom: 28,
+    marginBottom: 20,
+    letterSpacing: -0.5,
   },
   sectionTitle: {
     fontSize: 18,
@@ -219,6 +322,76 @@ const styles = StyleSheet.create({
     color: COLORS.muted,
     marginBottom: 12,
   },
+  locationCard: {
+    backgroundColor: COLORS.card,
+    padding: 16,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    gap: 12,
+  },
+  locationHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  locationIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: RADIUS.sm,
+    backgroundColor: COLORS.accent + "15",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  locationName: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: COLORS.text,
+  },
+  locationMode: {
+    fontSize: 12,
+    color: COLORS.muted,
+    marginTop: 1,
+  },
+  gpsBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLORS.secondary + "15",
+    borderWidth: 1,
+    borderColor: COLORS.secondary + "40",
+  },
+  gpsBtnText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: COLORS.secondary,
+  },
+  addressInputRow: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  addressInput: {
+    flex: 1,
+    backgroundColor: COLORS.bg,
+    borderRadius: RADIUS.sm,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    color: COLORS.text,
+    fontSize: 14,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  addressBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: RADIUS.sm,
+    backgroundColor: COLORS.accent,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   radiusRow: {
     flexDirection: "row",
     gap: 8,
@@ -226,7 +399,7 @@ const styles = StyleSheet.create({
   radiusBtn: {
     flex: 1,
     paddingVertical: 12,
-    borderRadius: 12,
+    borderRadius: RADIUS.pill,
     backgroundColor: COLORS.card,
     alignItems: "center",
     borderWidth: 2,
@@ -255,7 +428,7 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingHorizontal: 14,
     paddingVertical: 10,
-    borderRadius: 12,
+    borderRadius: RADIUS.pill,
     backgroundColor: COLORS.card,
     borderWidth: 1.5,
     borderColor: COLORS.border,
@@ -265,9 +438,14 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: COLORS.muted,
   },
+  tagsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
   aboutCard: {
     backgroundColor: COLORS.card,
-    borderRadius: 14,
+    borderRadius: RADIUS.md,
     padding: 16,
     gap: 12,
     borderWidth: 1,
@@ -289,7 +467,7 @@ const styles = StyleSheet.create({
     gap: 8,
     marginTop: 32,
     paddingVertical: 14,
-    borderRadius: 14,
+    borderRadius: RADIUS.pill,
     borderWidth: 1.5,
     borderColor: COLORS.hot + "40",
     backgroundColor: COLORS.hot + "08",
