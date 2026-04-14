@@ -18,6 +18,7 @@ import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { COLORS, GRADIENTS, RADIUS } from "../src/constants/theme";
 import { fetchNearbyEvents, triggerLocationSync } from "../src/services/events";
+import { setFeedHandoff } from "../src/services/eventCache";
 import { getEventImage } from "../src/constants/images";
 import { useLocation } from "../src/hooks/useLocation";
 import { Event } from "../src/types";
@@ -159,6 +160,11 @@ export default function Onboarding() {
 
   // Only called on successful subscription/trial start
   const unlockApp = async () => {
+    // Save events fetched during building step so Discover can hydrate
+    // instantly — user should NEVER see "no events" right after paying.
+    if (matchedEvents.length > 0) {
+      await setFeedHandoff(matchedEvents);
+    }
     await AsyncStorage.setItem("@nearme_onboarded", "true");
     await AsyncStorage.setItem("@nearme_subscribed", "true");
     router.replace("/(tabs)");

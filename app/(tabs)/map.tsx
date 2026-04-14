@@ -47,7 +47,16 @@ export default function MapScreen() {
           location.lng,
           prefs?.radius || 5
         );
-        setEvents(data);
+        // Diversify by venue to match Discover tab's count
+        const counts = new Map<string, number>();
+        const diversified = data.filter((e) => {
+          const key = e.venue_id || e.address || e.title;
+          const c = counts.get(key) || 0;
+          if (c >= 2) return false;
+          counts.set(key, c + 1);
+          return true;
+        });
+        setEvents(diversified);
       })();
 
       // Center map on user location

@@ -10,6 +10,7 @@ import {
   Dimensions,
   Platform,
   ActivityIndicator,
+  Share,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -82,6 +83,32 @@ export default function EventDetail() {
         ? `maps:0,0?q=${event.lat},${event.lng}`
         : `geo:${event.lat},${event.lng}?q=${event.lat},${event.lng}`;
     Linking.openURL(url);
+  };
+
+  const shareEvent = async () => {
+    if (!event) return;
+    const startDate = new Date(event.start_time);
+    const dateStr = startDate.toLocaleDateString([], {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+    });
+    const timeStr = startDate.toLocaleTimeString([], {
+      hour: "numeric",
+      minute: "2-digit",
+    });
+    const venue = event.venue?.name || event.address?.split(",")[0] || "Boca Raton";
+
+    const message = `Check out "${event.title}" on NearMe:\n\n📅 ${dateStr} at ${timeStr}\n📍 ${venue}\n\nDiscover local events near you — download NearMe: https://mateo2lit.github.io/NearMe/`;
+
+    try {
+      await Share.share({
+        message,
+        title: event.title,
+      });
+    } catch (err) {
+      console.error("Share error:", err);
+    }
   };
 
   if (loading) {
@@ -332,9 +359,10 @@ export default function EventDetail() {
 
       {/* Bottom action bar */}
       <View style={styles.bottomBar}>
+        {/* Save — icon only, compact */}
         <TouchableOpacity
           style={[
-            styles.saveButton,
+            styles.iconButton,
             isSaved && { backgroundColor: COLORS.success + "20", borderColor: COLORS.success },
           ]}
           onPress={toggleSave}
@@ -345,11 +373,18 @@ export default function EventDetail() {
             size={22}
             color={isSaved ? COLORS.success : COLORS.text}
           />
-          <Text style={[styles.saveButtonText, isSaved && { color: COLORS.success }]}>
-            {isSaved ? "Saved" : "Save"}
-          </Text>
         </TouchableOpacity>
 
+        {/* Share — icon only */}
+        <TouchableOpacity
+          style={styles.iconButton}
+          onPress={shareEvent}
+          activeOpacity={0.8}
+        >
+          <Ionicons name="share-outline" size={22} color={COLORS.text} />
+        </TouchableOpacity>
+
+        {/* Primary CTA — RSVP or Take Me There */}
         {event.ticket_url ? (
           <TouchableOpacity
             style={styles.rsvpButton}
@@ -548,6 +583,15 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.pill,
     borderWidth: 2,
     borderColor: COLORS.border,
+  },
+  iconButton: {
+    width: 52,
+    height: 52,
+    borderRadius: RADIUS.pill,
+    borderWidth: 2,
+    borderColor: COLORS.border,
+    alignItems: "center",
+    justifyContent: "center",
   },
   saveButtonText: {
     fontSize: 15,

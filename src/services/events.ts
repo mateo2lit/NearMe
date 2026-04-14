@@ -1,11 +1,12 @@
 import { Event, EventCategory } from "../types";
 import { supabase } from "./supabase";
+import { getCachedEvents, setCachedEvents } from "./eventCache";
+import { markSyncStart, markSyncDone } from "../hooks/useSyncStatus";
 
 /**
  * Trigger a sync for the user's location.
  * If waitForCompletion, blocks until the sync finishes (30-60s).
  * Otherwise fires and forgets (background).
- * The edge function has a 2hr cooldown per area.
  */
 export async function triggerLocationSync(
   lat: number,
@@ -27,16 +28,29 @@ export async function triggerLocationSync(
   });
 
   if (!waitForCompletion) {
-    request.catch(() => {});
+    markSyncStart();
+    request
+      .then(async (res) => {
+        try {
+          const data = await res.json();
+          markSyncDone(data?.upserted || 0);
+        } catch {
+          markSyncDone(0);
+        }
+      })
+      .catch(() => markSyncDone(0));
     return { synced: false };
   }
 
   try {
+    markSyncStart();
     const res = await request;
     const data = await res.json();
+    markSyncDone(data?.upserted || 0);
     return { synced: !!data?.synced, events: data?.upserted };
   } catch (err) {
     console.error("[sync] error:", err);
+    markSyncDone(0);
     return { synced: false };
   }
 }
@@ -63,39 +77,54 @@ async function rpcDiscover(
   return (data || []).map((e: any) => ({ ...e, tags: e.tags || [] }));
 }
 
+/**
+ * Fetch events with auto-widening radius if no results, and cache the result.
+ * Use cachedOnly=true to return only cached data (no network).
+ */
 export async function fetchNearbyEvents(
   lat: number,
   lng: number,
   radiusMiles: number,
   categories?: EventCategory[],
-  tags?: string[]
+  tags?: string[],
+  opts?: { cachedOnly?: boolean }
 ): Promise<Event[]> {
   if (!supabase) return [];
 
-  // Initial fetch with user's requested radius
-  let events = await rpcDiscover(lat, lng, radiusMiles, categories, tags);
-  console.log(`[events] Initial fetch: ${events.length} events within ${radiusMiles}mi`);
+  if (opts?.cachedOnly) {
+    return (await getCachedEvents(lat, lng)) || [];
+  }
 
-  // If no events, trigger sync and WAIT for it, then re-fetch
+  // Initial fetch
+  let events = await rpcDiscover(lat, lng, radiusMiles, categories, tags);
+
   if (events.length === 0) {
-    console.log("[events] No events, triggering sync and waiting...");
-    // Sync uses wider radius (15mi min) to ensure we catch nearby stuff
+    // Trigger sync and wait
     const syncRadius = Math.max(radiusMiles, 15);
     await triggerLocationSync(lat, lng, syncRadius, true);
 
-    // Re-fetch no matter what — even on cooldown, events might have been
-    // added since last rpc call (another user may have synced)
+    // Re-fetch with original radius
     events = await rpcDiscover(lat, lng, radiusMiles, categories, tags);
-    console.log(`[events] After sync: ${events.length} events within ${radiusMiles}mi`);
 
-    // If still nothing, try expanding radius (data might be slightly outside user's preferred radius)
+    // Auto-widen if still empty
     if (events.length === 0) {
-      events = await rpcDiscover(lat, lng, 25, categories, tags);
-      console.log(`[events] Expanded 25mi fallback: ${events.length} events`);
+      events = await rpcDiscover(lat, lng, 30, categories, tags);
+    }
+    if (events.length === 0) {
+      events = await rpcDiscover(lat, lng, 50, categories, tags);
+    }
+    // Last resort: drop filters entirely to show ANY nearby event
+    if (events.length === 0) {
+      events = await rpcDiscover(lat, lng, 50);
     }
   } else {
-    // Fire-and-forget background sync to keep data fresh
+    // Background sync to keep data fresh
     triggerLocationSync(lat, lng, Math.max(radiusMiles, 15), false);
+  }
+
+  // Update cache
+  if (events.length > 0) {
+    setCachedEvents(lat, lng, events);
   }
 
   return events;

@@ -3,17 +3,20 @@ import {
   View,
   Text,
   StyleSheet,
-  ActivityIndicator,
   TouchableOpacity,
   FlatList,
   RefreshControl,
+  TextInput,
 } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import FeedCard from "../../src/components/FeedCard";
+import SkeletonCard from "../../src/components/SkeletonCard";
 import TagFilter from "../../src/components/TagFilter";
 import { fetchNearbyEvents } from "../../src/services/events";
+import { getFeedHandoff, clearFeedHandoff } from "../../src/services/eventCache";
 import { useLocation } from "../../src/hooks/useLocation";
+import { useSyncStatus } from "../../src/hooks/useSyncStatus";
 import { COLORS, RADIUS, SPACING } from "../../src/constants/theme";
 import { Event, EventCategory } from "../../src/types";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -21,12 +24,14 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 export default function DiscoverScreen() {
   const router = useRouter();
   const location = useLocation();
+  const syncStatus = useSyncStatus();
   const [events, setEvents] = useState<Event[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [tick, setTick] = useState(0);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const [topPicks, setTopPicks] = useState<Event[]>([]);
 
@@ -118,6 +123,39 @@ export default function DiscoverScreen() {
     }
   }, [location.lat, location.lng, selectedTags]);
 
+  // On first mount, check for handoff cache from onboarding to hydrate instantly.
+  // This is CRITICAL: post-paywall users must see events immediately.
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const handoff = await getFeedHandoff();
+      if (handoff && handoff.length > 0 && mounted) {
+        // Read prefs to compute top picks on the handoff events
+        const prefsStr = await AsyncStorage.getItem("@nearme_preferences");
+        const prefs = prefsStr ? JSON.parse(prefsStr) : null;
+        const diversified = diversifyByVenue(handoff);
+        if (prefs?.onboarding?.goals?.length) {
+          const scored = diversified
+            .map((e) => ({ event: e, score: scoreEvent(e, prefs.onboarding) }))
+            .filter((s) => s.score > 0)
+            .sort((a, b) => b.score - a.score);
+          const picks = scored.slice(0, 3).map((s) => s.event);
+          setTopPicks(picks);
+          const pickIds = new Set(picks.map((e) => e.id));
+          setEvents(diversified.filter((e) => !pickIds.has(e.id)));
+        } else {
+          setEvents(diversified);
+        }
+        setLoading(false);
+        // Clear handoff after use so subsequent loads fetch fresh
+        await clearFeedHandoff();
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   useEffect(() => {
     if (!location.loading) {
       setLoading(true);
@@ -189,17 +227,23 @@ export default function DiscoverScreen() {
     />
   );
 
-  if (loading || location.loading) {
+  // Apply search filter
+  const query = searchQuery.trim().toLowerCase();
+  const filterFn = (e: Event) => {
+    if (!query) return true;
     return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color={COLORS.accent} />
-        <Text style={styles.loadingText}>Finding what's nearby...</Text>
-        <Text style={styles.loadingSubtext}>
-          Scanning venues and events in your area{"\n"}(first load can take up to a minute)
-        </Text>
-      </View>
+      e.title?.toLowerCase().includes(query) ||
+      e.description?.toLowerCase().includes(query) ||
+      e.venue?.name?.toLowerCase().includes(query) ||
+      e.address?.toLowerCase().includes(query)
     );
-  }
+  };
+  const visibleEvents = events.filter(filterFn);
+  const visiblePicks = query ? [] : topPicks; // hide picks during search
+  const totalCount = topPicks.length + events.length; // consistent total
+
+  // Loading = show skeletons instead of blank screen
+  const showingSkeletons = (loading || location.loading) && events.length === 0;
 
   return (
     <View style={styles.container}>
@@ -213,54 +257,108 @@ export default function DiscoverScreen() {
           </View>
         </View>
         <View style={styles.counterBadge}>
-          <Text style={styles.counterText}>{events.length} events</Text>
+          <Text style={styles.counterText}>{totalCount} events</Text>
         </View>
       </View>
+
+      {/* Search bar */}
+      <View style={styles.searchWrap}>
+        <Ionicons name="search" size={16} color={COLORS.muted} style={styles.searchIcon} />
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search events, venues…"
+          placeholderTextColor={COLORS.muted}
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          returnKeyType="search"
+          clearButtonMode="while-editing"
+        />
+        {searchQuery.length > 0 && (
+          <TouchableOpacity onPress={() => setSearchQuery("")} style={styles.searchClear}>
+            <Ionicons name="close-circle" size={18} color={COLORS.muted} />
+          </TouchableOpacity>
+        )}
+      </View>
+
+      {/* Sync status banner */}
+      {syncStatus.status !== "idle" && (
+        <View style={styles.syncBanner}>
+          {syncStatus.status === "syncing" ? (
+            <>
+              <View style={styles.syncDot} />
+              <Text style={styles.syncBannerText}>Checking for new events…</Text>
+            </>
+          ) : syncStatus.count > 0 ? (
+            <>
+              <Ionicons name="checkmark-circle" size={14} color={COLORS.success} />
+              <Text style={styles.syncBannerText}>
+                Added {syncStatus.count} new event{syncStatus.count === 1 ? "" : "s"}
+              </Text>
+            </>
+          ) : null}
+        </View>
+      )}
 
       {/* Tag filter */}
       <View style={styles.tagFilterContainer}>
         <TagFilter selectedTags={selectedTags} onToggle={toggleTag} />
       </View>
 
-      {/* Feed */}
-      {events.length === 0 ? (
+      {/* Feed — skeletons, empty state, or events */}
+      {showingSkeletons ? (
+        <FlatList
+          data={[0, 1, 2, 3]}
+          keyExtractor={(i) => String(i)}
+          renderItem={() => (
+            <View style={{ marginBottom: 16 }}>
+              <SkeletonCard />
+            </View>
+          )}
+          contentContainerStyle={styles.feed}
+          showsVerticalScrollIndicator={false}
+        />
+      ) : visibleEvents.length === 0 && visiblePicks.length === 0 ? (
         <View style={styles.center}>
           <View style={styles.emptyIcon}>
-            <Ionicons name="search" size={40} color={COLORS.accent} />
+            <Ionicons name={query ? "search" : "radio"} size={40} color={COLORS.accent} />
           </View>
-          <Text style={styles.emptyTitle}>No events nearby</Text>
+          <Text style={styles.emptyTitle}>
+            {query ? "No matches" : "No events nearby"}
+          </Text>
           <Text style={styles.emptySubtitle}>
-            Try expanding your search radius{"\n"}or removing some filters
+            {query
+              ? `Nothing matches "${searchQuery}". Try a different keyword.`
+              : "Try expanding your search radius\nor removing some filters"}
           </Text>
           <TouchableOpacity
             style={styles.refreshBtn}
-            onPress={onRefresh}
+            onPress={query ? () => setSearchQuery("") : onRefresh}
             activeOpacity={0.8}
           >
-            <Ionicons name="refresh" size={18} color="#fff" />
-            <Text style={styles.refreshBtnText}>Refresh</Text>
+            <Ionicons name={query ? "close" : "refresh"} size={18} color="#fff" />
+            <Text style={styles.refreshBtnText}>{query ? "Clear search" : "Refresh"}</Text>
           </TouchableOpacity>
         </View>
       ) : (
         <FlatList
-          data={events}
+          data={visibleEvents}
           renderItem={renderCard}
           keyExtractor={(item) => item.id}
-          extraData={[savedIds, tick]}
+          extraData={[savedIds, tick, query]}
           contentContainerStyle={styles.feed}
           showsVerticalScrollIndicator={false}
           ListHeaderComponent={
-            topPicks.length > 0 ? (
+            visiblePicks.length > 0 ? (
               <View style={styles.picksSection}>
                 <View style={styles.picksHeader}>
                   <Ionicons name="sparkles" size={16} color={COLORS.accent} />
                   <Text style={styles.picksTitle}>Picked for you</Text>
                   <View style={styles.picksCountBadge}>
-                    <Text style={styles.picksCountText}>{topPicks.length}</Text>
+                    <Text style={styles.picksCountText}>{visiblePicks.length}</Text>
                   </View>
                 </View>
                 <Text style={styles.picksSubtitle}>Matched to your goals</Text>
-                {topPicks.map((pick) => (
+                {visiblePicks.map((pick) => (
                   <View key={pick.id} style={{ marginBottom: 12 }}>
                     <FeedCard
                       event={pick}
@@ -358,6 +456,57 @@ const styles = StyleSheet.create({
   },
   tagFilterContainer: {
     paddingVertical: SPACING.sm,
+  },
+  // Search bar
+  searchWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginHorizontal: SPACING.md,
+    marginTop: 8,
+    backgroundColor: COLORS.card,
+    borderRadius: RADIUS.pill,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    paddingHorizontal: 14,
+    height: 42,
+  },
+  searchIcon: {
+    marginRight: 8,
+  },
+  searchInput: {
+    flex: 1,
+    color: COLORS.text,
+    fontSize: 14,
+    fontWeight: "500",
+    paddingVertical: 0,
+  },
+  searchClear: {
+    padding: 2,
+    marginLeft: 4,
+  },
+  // Sync banner
+  syncBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginHorizontal: SPACING.md,
+    marginTop: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: COLORS.accent + "15",
+    borderRadius: RADIUS.pill,
+    alignSelf: "flex-start",
+  },
+  syncDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: COLORS.accent,
+  },
+  syncBannerText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: COLORS.accent,
   },
   feed: {
     paddingHorizontal: 16,

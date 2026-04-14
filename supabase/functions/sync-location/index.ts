@@ -21,6 +21,8 @@ const SG_CLIENT_ID = Deno.env.get("SEATGEEK_CLIENT_ID");
 const GOOGLE_API_KEY = Deno.env.get("GOOGLE_PLACES_API_KEY");
 const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
 const EVENTBRITE_TOKEN = Deno.env.get("EVENTBRITE_TOKEN");
+const BANDSINTOWN_APP_ID = Deno.env.get("BANDSINTOWN_APP_ID");
+const YELP_API_KEY = Deno.env.get("YELP_API_KEY");
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
@@ -266,6 +268,258 @@ async function fetchEventbrite(lat: number, lng: number, radiusMiles: number) {
   return events;
 }
 
+// ─── Bandsintown (music events) ──────────────────────────────
+
+async function fetchBandsintown(lat: number, lng: number, radiusMiles: number) {
+  if (!BANDSINTOWN_APP_ID) return [];
+  const events: any[] = [];
+  try {
+    // Bandsintown has no direct location search, but they have a location-based search via artists.
+    // Better approach: use their public events endpoint with location header.
+    // For now, use the simpler /events/search endpoint
+    const url = new URL("https://rest.bandsintown.com/events/search");
+    url.searchParams.set("app_id", BANDSINTOWN_APP_ID);
+    url.searchParams.set("location", `${lat},${lng}`);
+    url.searchParams.set("radius", String(radiusMiles));
+    url.searchParams.set("per_page", "50");
+
+    const res = await fetch(url.toString(), {
+      headers: { Accept: "application/json" },
+    });
+    if (!res.ok) {
+      console.log(`[bit] status ${res.status}`);
+      return [];
+    }
+    const data = await res.json();
+    const items = Array.isArray(data) ? data : data?.events || [];
+
+    for (const bit of items) {
+      const venue = bit.venue;
+      const eLat = venue?.latitude ? parseFloat(venue.latitude) : null;
+      const eLng = venue?.longitude ? parseFloat(venue.longitude) : null;
+      if (!eLat || !eLng) continue;
+
+      const title = bit.lineup?.[0] || bit.title || "Live Music";
+      const tags = generateTags({
+        category: "music", subcategory: "concert",
+        title, description: bit.description,
+        is_free: false, start_time: bit.datetime, ticket_url: bit.url,
+      });
+
+      events.push({
+        source: "bandsintown", source_id: `bit-${bit.id}`,
+        title: String(title),
+        description: bit.description || `Live music at ${venue?.name || "venue"}`,
+        category: "music", subcategory: "concert",
+        lat: eLat, lng: eLng,
+        address: `${venue?.name || ""} ${venue?.city || ""} ${venue?.region || ""}`.trim(),
+        image_url: bit.artist?.image_url || null,
+        start_time: bit.datetime, end_time: null,
+        is_recurring: false, recurrence_rule: null, is_free: false,
+        price_min: null, price_max: null,
+        ticket_url: bit.url, source_url: bit.url, tags,
+      });
+    }
+  } catch (err) {
+    console.error("[bit] error:", err);
+  }
+  console.log(`[bit] ${events.length}`);
+  return events;
+}
+
+// ─── Yelp Events ─────────────────────────────────────────────
+
+async function fetchYelpEvents(lat: number, lng: number, radiusMiles: number) {
+  if (!YELP_API_KEY) return [];
+  const events: any[] = [];
+  try {
+    const url = new URL("https://api.yelp.com/v3/events");
+    url.searchParams.set("latitude", String(lat));
+    url.searchParams.set("longitude", String(lng));
+    url.searchParams.set("radius", String(Math.min(radiusMiles * 1609, 40000))); // meters, max 40km
+    url.searchParams.set("limit", "50");
+    url.searchParams.set("sort_on", "popularity");
+
+    const res = await fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${YELP_API_KEY}` },
+    });
+    if (!res.ok) {
+      console.log(`[yelp] status ${res.status}`);
+      return [];
+    }
+    const data = await res.json();
+
+    for (const yp of data?.events || []) {
+      const loc = yp.location || {};
+      const eLat = yp.latitude ? parseFloat(yp.latitude) : null;
+      const eLng = yp.longitude ? parseFloat(yp.longitude) : null;
+      if (!eLat || !eLng) continue;
+
+      const categoryMap: Record<string, string> = {
+        "food-and-drink": "food",
+        music: "music",
+        nightlife: "nightlife",
+        "visual-arts": "arts",
+        "performing-arts": "arts",
+        film: "movies",
+        sports: "sports",
+        fitness: "fitness",
+      };
+      const cat = categoryMap[yp.category || ""] || "community";
+
+      const tags = generateTags({
+        category: cat, subcategory: yp.category || "event",
+        title: yp.name, description: yp.description,
+        is_free: yp.cost === 0 || yp.cost === null,
+        start_time: yp.time_start, ticket_url: yp.tickets_url || yp.event_site_url,
+      });
+
+      events.push({
+        source: "yelp", source_id: `yelp-${yp.id}`,
+        title: yp.name, description: yp.description || null,
+        category: cat, subcategory: yp.category || "event",
+        lat: eLat, lng: eLng,
+        address: loc.display_address?.join(", ") || "",
+        image_url: yp.image_url || null,
+        start_time: yp.time_start, end_time: yp.time_end || null,
+        is_recurring: false, recurrence_rule: null,
+        is_free: yp.cost === 0 || yp.cost === null,
+        price_min: yp.cost || null, price_max: yp.cost_max || null,
+        ticket_url: yp.tickets_url || yp.event_site_url || null,
+        source_url: yp.event_site_url || null,
+        tags,
+      });
+    }
+  } catch (err) {
+    console.error("[yelp] error:", err);
+  }
+  console.log(`[yelp] ${events.length}`);
+  return events;
+}
+
+// ─── Reddit local subreddits ─────────────────────────────────
+
+// Simple city → subreddit mapping. Add more over time.
+function subredditsForLocation(lat: number, lng: number): string[] {
+  const subs = [];
+  // Boca / South Florida
+  if (lat > 25.7 && lat < 26.8 && lng > -80.5 && lng < -79.8) {
+    subs.push("BocaRaton", "southflorida", "florida");
+  }
+  // Austin
+  else if (lat > 30.1 && lat < 30.5 && lng > -97.9 && lng < -97.5) {
+    subs.push("Austin", "texas");
+  }
+  // NYC
+  else if (lat > 40.5 && lat < 40.9 && lng > -74.1 && lng < -73.7) {
+    subs.push("nyc", "AskNYC");
+  }
+  // LA
+  else if (lat > 33.7 && lat < 34.3 && lng > -118.7 && lng < -118.1) {
+    subs.push("LosAngeles", "AskLosAngeles");
+  }
+  // Chicago
+  else if (lat > 41.6 && lat < 42.1 && lng > -87.9 && lng < -87.5) {
+    subs.push("chicago", "AskChicago");
+  }
+  return subs;
+}
+
+async function fetchRedditEvents(lat: number, lng: number) {
+  const subs = subredditsForLocation(lat, lng);
+  if (!subs.length || !ANTHROPIC_API_KEY) return [];
+
+  const events: any[] = [];
+  for (const sub of subs.slice(0, 2)) {
+    try {
+      const url = `https://www.reddit.com/r/${sub}/search.json?q=event+OR+tonight+OR+this+weekend&restrict_sr=1&sort=new&limit=15&t=week`;
+      const res = await fetch(url, {
+        headers: { "User-Agent": "NearMe-Bot/1.0" },
+      });
+      if (!res.ok) continue;
+      const data = await res.json();
+      const posts = data?.data?.children || [];
+
+      // Concat post titles+bodies for Claude to extract events
+      const postTexts = posts.slice(0, 10).map((p: any) => {
+        const d = p.data;
+        return `TITLE: ${d.title}\nBODY: ${(d.selftext || "").slice(0, 500)}\nURL: https://reddit.com${d.permalink}`;
+      }).join("\n---\n");
+
+      if (postTexts.length < 100) continue;
+
+      const claudeRes = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": ANTHROPIC_API_KEY!,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model: "claude-haiku-4-5-20251001",
+          max_tokens: 1500,
+          messages: [{
+            role: "user",
+            content: `Extract specific local events from these Reddit posts about r/${sub}. Only include real, upcoming events with clear dates/venues. Skip general discussion posts.
+
+Posts:
+${postTexts}
+
+Return a JSON array. Each event:
+- title (specific)
+- description (1 sentence)
+- category (music|sports|food|nightlife|arts|community|fitness|outdoors|movies)
+- subcategory
+- venue_name (if mentioned)
+- address_hint (any address/neighborhood info)
+- start_time (ISO 8601 if date/time clear, null if vague)
+- is_free (boolean)
+- source_url (the reddit permalink)
+
+Return ONLY the JSON array. If no real events, return [].`,
+          }],
+        }),
+      });
+      const cd = await claudeRes.json();
+      const content = cd.content?.[0]?.text || "[]";
+      const match = content.match(/\[[\s\S]*\]/);
+      if (!match) continue;
+      const extracted = JSON.parse(match[0]);
+      if (!Array.isArray(extracted)) continue;
+
+      for (const ev of extracted) {
+        if (!ev.title || !ev.start_time) continue;
+        const tags = generateTags({
+          category: ev.category || "community",
+          subcategory: ev.subcategory || "event",
+          title: ev.title, description: ev.description,
+          is_free: ev.is_free || false,
+          start_time: ev.start_time, ticket_url: ev.source_url,
+        });
+        events.push({
+          source: "reddit",
+          source_id: `rd-${sub}-${ev.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 50)}`,
+          title: ev.title, description: ev.description || null,
+          category: ev.category || "community",
+          subcategory: ev.subcategory || "event",
+          lat, lng, // use user's location since Reddit posts rarely have geo
+          address: ev.address_hint || ev.venue_name || "",
+          image_url: null,
+          start_time: ev.start_time, end_time: null,
+          is_recurring: false, recurrence_rule: null,
+          is_free: ev.is_free || false,
+          price_min: null, price_max: null,
+          ticket_url: null, source_url: ev.source_url || null, tags,
+        });
+      }
+    } catch (err) {
+      console.error(`[reddit:${sub}] error:`, err);
+    }
+  }
+  console.log(`[reddit] ${events.length}`);
+  return events;
+}
+
 // ─── Venue Website Scanner ───────────────────────────────────
 
 function extractSchemaOrgEvents(html: string) {
@@ -423,7 +677,7 @@ async function scanVenues(lat: number, lng: number, radiusMeters: number) {
     return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
   });
 
-  const toScan = nearby.slice(0, 15);
+  const toScan = nearby.slice(0, 30);
   console.log(`[scanner] ${toScan.length}/${nearby.length} venues`);
   const all: any[] = [];
 
@@ -613,18 +867,21 @@ serve(async (req: Request) => {
     // 1. Venues
     const venueCount = await syncVenues(lat, lng, radiusMiles * 1609.34);
 
-    // 2. Events from APIs in parallel
-    const [tm, sg, eb] = await Promise.all([
+    // 2. Events from APIs in parallel (6 sources)
+    const [tm, sg, eb, bit, yelp, reddit] = await Promise.all([
       fetchTicketmaster(lat, lng, radiusMiles),
       fetchSeatGeek(lat, lng, radiusMiles),
       fetchEventbrite(lat, lng, radiusMiles),
+      fetchBandsintown(lat, lng, radiusMiles),
+      fetchYelpEvents(lat, lng, radiusMiles),
+      fetchRedditEvents(lat, lng),
     ]);
 
-    // 3. Scan venue websites
+    // 3. Scan venue websites (Claude-powered)
     const scraped = await scanVenues(lat, lng, radiusMiles * 1609.34);
 
     // 4. Dedupe and upsert
-    const all = [...tm, ...sg, ...eb, ...scraped].filter((e) => e.start_time);
+    const all = [...tm, ...sg, ...eb, ...bit, ...yelp, ...reddit, ...scraped].filter((e) => e.start_time);
     const seen = new Set<string>();
     const unique = all.filter((e) => {
       const key = `${e.source}:${e.source_id}`;
@@ -656,6 +913,9 @@ serve(async (req: Request) => {
         ticketmaster: tm.length,
         seatgeek: sg.length,
         eventbrite: eb.length,
+        bandsintown: bit.length,
+        yelp: yelp.length,
+        reddit: reddit.length,
         scraped: scraped.length,
         upserted: unique.length,
         remaining_requests: rate.remaining,
