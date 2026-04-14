@@ -19,6 +19,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { COLORS, GRADIENTS, RADIUS } from "../src/constants/theme";
 import { fetchNearbyEvents, triggerLocationSync } from "../src/services/events";
 import { getEventImage } from "../src/constants/images";
+import { useLocation } from "../src/hooks/useLocation";
 import { Event } from "../src/types";
 
 const { width, height } = Dimensions.get("window");
@@ -91,6 +92,7 @@ const STEPS: StepKey[] = ["welcome", "goals", "vibe", "social", "schedule", "blo
 
 export default function Onboarding() {
   const router = useRouter();
+  const location = useLocation();
   const [step, setStep] = useState<StepKey>("welcome");
   const [goals, setGoals] = useState<string[]>([]);
   const [vibe, setVibe] = useState<string>("");
@@ -170,6 +172,8 @@ export default function Onboarding() {
         goals={goals}
         vibe={vibe}
         blocker={blocker}
+        lat={location.lat}
+        lng={location.lng}
         onDone={(events, count) => {
           setMatchedEvents(events);
           setMatchCount(count);
@@ -475,12 +479,16 @@ function BuildingStep({
   goals,
   vibe,
   blocker,
+  lat,
+  lng,
   onDone,
   savePreferences,
 }: {
   goals: string[];
   vibe: string;
   blocker: string;
+  lat: number;
+  lng: number;
   onDone: (events: Event[], count: number) => void;
   savePreferences: () => Promise<void>;
 }) {
@@ -535,22 +543,27 @@ function BuildingStep({
       );
     }
 
-    // Run real sync in parallel
+    // Run real sync using user's ACTUAL location (from useLocation hook)
     (async () => {
       try {
-        const radius = 15;
-        await triggerLocationSync(26.3587, -80.0831, radius, true);
-        const events = await fetchNearbyEvents(26.3587, -80.0831, radius);
+        await triggerLocationSync(lat, lng, 15, true);
+
+        // Try within 15 miles first, fall back to wider radius if nothing
+        let events = await fetchNearbyEvents(lat, lng, 15);
+        if (events.length === 0) {
+          events = await fetchNearbyEvents(lat, lng, 30);
+        }
+        if (events.length === 0) {
+          events = await fetchNearbyEvents(lat, lng, 50);
+        }
         fetchDone = true;
 
-        // Wait for minimum animation time AND real fetch done, then reveal
         const minTotal = taskElapsed + 1200; // min 8s total
         const elapsedNow = taskElapsed;
         const remainder = Math.max(0, minTotal - elapsedNow);
 
         setTimeout(() => {
           if (cancelled) return;
-          // Final step: complete the animation
           setCurrentTask(tasks.length);
           animateTo(1, 500);
           setTimeout(() => {
@@ -723,8 +736,8 @@ function TeaserStep({
     .sort((a, b) => b.score - a.score)
     .map((s) => s.event);
 
-  const totalMatches = Math.max(count, 12);
-  const lockedCount = totalMatches - 1;
+  // Real count — no fabrication
+  const totalMatches = events.length;
 
   const goalEmojis: Record<string, string> = {
     "meet-people": "🤝",
@@ -750,13 +763,26 @@ function TeaserStep({
             <Ionicons name="sparkles" size={14} color={COLORS.accent} />
             <Text style={styles.teaserBadgeText}>YOUR AI MATCHES</Text>
           </View>
-          <Text style={styles.teaserTitle}>
-            We found <Text style={{ color: COLORS.accent }}>{totalMatches}</Text>{"\n"}
-            events just for you
-          </Text>
-          <Text style={styles.teaserSubtitle}>
-            Perfectly matched to your goals and vibe. Here's a taste.
-          </Text>
+          {totalMatches > 0 ? (
+            <>
+              <Text style={styles.teaserTitle}>
+                Found <Text style={{ color: COLORS.accent }}>{totalMatches}</Text>{"\n"}
+                event{totalMatches === 1 ? "" : "s"} near you
+              </Text>
+              <Text style={styles.teaserSubtitle}>
+                Matched to your goals and vibe. Here's your top pick.
+              </Text>
+            </>
+          ) : (
+            <>
+              <Text style={styles.teaserTitle}>
+                Your feed is{"\n"}being built
+              </Text>
+              <Text style={styles.teaserSubtitle}>
+                We're gathering fresh events in your area right now.
+              </Text>
+            </>
+          )}
 
           {/* Goals bubble */}
           {goals.length > 0 && (
@@ -775,37 +801,45 @@ function TeaserStep({
           )}
         </View>
 
-        {/* Visible teaser card */}
-        {teaserEvent ? (
-          <TeaserCard event={teaserEvent} />
-        ) : (
-          <PlaceholderTeaserCard />
+        {/* Only show teaser if we have a real event */}
+        {teaserEvent && <TeaserCard event={teaserEvent} />}
+
+        {/* If no events found at all, show an honest message */}
+        {!teaserEvent && (
+          <View style={styles.noEventsCard}>
+            <View style={styles.noEventsIcon}>
+              <Ionicons name="radio" size={28} color={COLORS.accent} />
+            </View>
+            <Text style={styles.noEventsTitle}>Still syncing your area</Text>
+            <Text style={styles.noEventsText}>
+              Our AI is still gathering events for your location. Start your trial and your feed will fill up in a minute or two.
+            </Text>
+          </View>
         )}
 
-        {/* Locked cards */}
-        <View style={styles.lockedSection}>
-          <View style={styles.lockedDivider}>
-            <View style={styles.lockedLine} />
-            <View style={styles.lockedCountBadge}>
-              <Ionicons name="lock-closed" size={12} color={COLORS.accent} />
-              <Text style={styles.lockedCountText}>{lockedCount} MORE MATCHES</Text>
+        {/* Locked cards — only show if there ARE real events to lock */}
+        {remainingEvents.length > 0 && (
+          <View style={styles.lockedSection}>
+            <View style={styles.lockedDivider}>
+              <View style={styles.lockedLine} />
+              <View style={styles.lockedCountBadge}>
+                <Ionicons name="lock-closed" size={12} color={COLORS.accent} />
+                <Text style={styles.lockedCountText}>
+                  {remainingEvents.length} MORE MATCH{remainingEvents.length === 1 ? "" : "ES"}
+                </Text>
+              </View>
+              <View style={styles.lockedLine} />
             </View>
-            <View style={styles.lockedLine} />
-          </View>
 
-          <View style={styles.blurredStack}>
-            {remainingEvents.slice(0, 3).map((e, i) => (
-              <View key={e.id} style={[styles.blurredCardWrap, { opacity: 1 - i * 0.2 }]}>
-                <BlurredEventCard event={e} />
-              </View>
-            ))}
-            {remainingEvents.length < 3 && Array.from({ length: 3 - remainingEvents.length }).map((_, i) => (
-              <View key={`ph${i}`} style={[styles.blurredCardWrap, { opacity: 0.6 - i * 0.2 }]}>
-                <PlaceholderBlurredCard />
-              </View>
-            ))}
+            <View style={styles.blurredStack}>
+              {remainingEvents.slice(0, 3).map((e, i) => (
+                <View key={e.id} style={[styles.blurredCardWrap, { opacity: 1 - i * 0.2 }]}>
+                  <BlurredEventCard event={e} />
+                </View>
+              ))}
+            </View>
           </View>
-        </View>
+        )}
       </Animated.ScrollView>
 
       {/* Sticky bottom CTA */}
@@ -823,7 +857,13 @@ function TeaserStep({
             end={{ x: 1, y: 0 }}
           >
             <Ionicons name="lock-open" size={18} color="#fff" />
-            <Text style={styles.primaryBtnText}>Unlock all {totalMatches} matches</Text>
+            <Text style={styles.primaryBtnText}>
+              {totalMatches > 1
+                ? `Unlock all ${totalMatches} events`
+                : totalMatches === 1
+                ? "Unlock the full feed"
+                : "Continue"}
+            </Text>
           </LinearGradient>
         </TouchableOpacity>
         <Text style={styles.teaserBottomText}>
@@ -885,46 +925,11 @@ function TeaserCard({ event }: { event: Event }) {
   );
 }
 
-function PlaceholderTeaserCard() {
-  return (
-    <View style={styles.teaserCard}>
-      <View style={[styles.teaserCardImage, { backgroundColor: COLORS.cardAlt, alignItems: "center", justifyContent: "center" }]}>
-        <Text style={{ fontSize: 48 }}>🎉</Text>
-        <View style={styles.teaserMatchBadge}>
-          <Ionicons name="flash" size={12} color="#fff" />
-          <Text style={styles.teaserMatchText}>PERFECT MATCH</Text>
-        </View>
-        <View style={styles.teaserCardTitleWrap}>
-          <Text style={styles.teaserCardTitle} numberOfLines={2}>An event matched to your vibe</Text>
-        </View>
-      </View>
-      <View style={styles.teaserCardMeta}>
-        <View style={styles.teaserDateBlock}>
-          <Text style={styles.teaserDateDay}>TONIGHT</Text>
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.teaserMetaText}>Starts in 2 hours</Text>
-        </View>
-      </View>
-    </View>
-  );
-}
-
 function BlurredEventCard({ event }: { event: Event }) {
   const img = getEventImage(event.image_url, event.category, event.subcategory, event.title, event.description);
   return (
     <View style={styles.blurredCard}>
       <Image source={{ uri: img }} style={StyleSheet.absoluteFillObject} blurRadius={20} />
-      <View style={styles.blurredOverlay}>
-        <Ionicons name="lock-closed" size={22} color="rgba(255,255,255,0.9)" />
-      </View>
-    </View>
-  );
-}
-
-function PlaceholderBlurredCard() {
-  return (
-    <View style={[styles.blurredCard, { backgroundColor: COLORS.cardAlt }]}>
       <View style={styles.blurredOverlay}>
         <Ionicons name="lock-closed" size={22} color="rgba(255,255,255,0.9)" />
       </View>
@@ -1112,7 +1117,7 @@ function PaywallStep({ onSubscribe, onBack }: { onSubscribe: () => void; onBack:
             title="Weekly"
             price="$4.99"
             period="/week"
-            subtext="$259/year · 3-day free trial"
+            subtext="Just $21.62/mo · 3-day free trial"
           />
         </View>
 
@@ -1534,6 +1539,36 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     borderWidth: 1,
     borderColor: COLORS.border,
+  },
+  noEventsCard: {
+    padding: 24,
+    borderRadius: RADIUS.lg,
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    alignItems: "center",
+  },
+  noEventsIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: COLORS.accent + "15",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 14,
+  },
+  noEventsTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: COLORS.text,
+    marginBottom: 6,
+    letterSpacing: -0.3,
+  },
+  noEventsText: {
+    fontSize: 14,
+    color: COLORS.muted,
+    textAlign: "center",
+    lineHeight: 20,
   },
   teaserCard: {
     borderRadius: RADIUS.lg,
