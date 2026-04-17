@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useMemo } from "react";
 import {
   View, Text, StyleSheet, TouchableOpacity, FlatList, RefreshControl,
 } from "react-native";
-import { useRouter, useFocusEffect } from "expo-router";
+import { useRouter, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import FeedCard from "../../src/components/FeedCard";
@@ -84,6 +84,13 @@ export default function DiscoverScreen() {
   const [filter, setFilter] = useState<FilterValue>({ categories: [], tags: [], radiusMiles: 5 });
   const [showFilters, setShowFilters] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
+
+  const params = useLocalSearchParams<{ tag?: string }>();
+  useEffect(() => {
+    if (params.tag) {
+      setFilter((f) => ({ ...f, tags: Array.from(new Set([...f.tags, params.tag!])) }));
+    }
+  }, [params.tag]);
 
   const loadEvents = useCallback(async () => {
     const prefsStr = await AsyncStorage.getItem("@nearme_preferences");
