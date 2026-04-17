@@ -1,23 +1,19 @@
-import { useEffect, useState, useRef, useCallback } from "react";
-import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  Dimensions,
-  Platform,
-} from "react-native";
-import MapView, { Marker, PROVIDER_GOOGLE } from "react-native-maps";
+import { useEffect, useState, useRef } from "react";
+import { View, StyleSheet, TouchableOpacity, Text, ScrollView, Platform, Dimensions } from "react-native";
+import MapView, { Marker, PROVIDER_GOOGLE, Region } from "react-native-maps";
+import ClusteredMapView from "react-native-map-clustering";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { fetchNearbyEvents, applyHiddenFilter } from "../../src/services/events";
-import { getEventTimeLabel, formatDistance } from "../../src/services/events";
-import { useLocation } from "../../src/hooks/useLocation";
-import { CATEGORY_MAP } from "../../src/constants/categories";
-import { COLORS, RADIUS, BOCA_RATON } from "../../src/constants/theme";
-import { Event } from "../../src/types";
-import TagBadge from "../../src/components/TagBadge";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { fetchNearbyEvents, applyHiddenFilter } from "../../src/services/events";
+import { useLocation } from "../../src/hooks/useLocation";
+import { useWhenFilter, WhenFilter } from "../../src/hooks/useWhenFilter";
+import MapPin from "../../src/components/MapPin";
+import HeroCard from "../../src/components/HeroCard";
+import WhenSegmented from "../../src/components/WhenSegmented";
+import { COLORS, RADIUS, SPACING } from "../../src/constants/theme";
+import { Event } from "../../src/types";
+import { isTonight, isTomorrow, isThisWeekend } from "../../src/lib/time-windows";
 
 const { width } = Dimensions.get("window");
 
@@ -30,299 +26,169 @@ const mapDarkStyle = [
   { featureType: "poi", elementType: "geometry", stylers: [{ color: "#1a1a2e" }] },
 ];
 
+function matchesWhen(ev: Event, w: WhenFilter, now: Date): boolean {
+  if (w === "all") return true;
+  if (w === "tonight") return isTonight(ev.start_time, now);
+  if (w === "tomorrow") return isTomorrow(ev.start_time, now);
+  if (w === "weekend") return isThisWeekend(ev.start_time, now);
+  if (w === "week") {
+    const t = new Date(ev.start_time);
+    const end = new Date(now);
+    end.setDate(end.getDate() + 7);
+    return t >= now && t < end;
+  }
+  return true;
+}
+
 export default function MapScreen() {
   const router = useRouter();
   const location = useLocation();
+  const [when, setWhen] = useWhenFilter();
   const [events, setEvents] = useState<Event[]>([]);
-  const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
-  const mapRef = useRef<MapView>(null);
+  const [region, setRegion] = useState<Region | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const mapRef = useRef<any>(null);
+  const carouselRef = useRef<ScrollView>(null);
 
   useEffect(() => {
     if (!location.loading) {
       (async () => {
         const prefsStr = await AsyncStorage.getItem("@nearme_preferences");
         const prefs = prefsStr ? JSON.parse(prefsStr) : null;
-        const data = await fetchNearbyEvents(
-          location.lat,
-          location.lng,
-          prefs?.radius || 5
-        );
-        // Apply Settings hide filter
+        const data = await fetchNearbyEvents(location.lat, location.lng, prefs?.radius || 5);
         const visible = applyHiddenFilter(data, prefs?.hiddenCategories, prefs?.hiddenTags);
-        // Diversify by venue to match Discover tab's count
-        const counts = new Map<string, number>();
-        const diversified = visible.filter((e) => {
-          const key = e.venue_id || e.address || e.title;
-          const c = counts.get(key) || 0;
-          if (c >= 2) return false;
-          counts.set(key, c + 1);
-          return true;
-        });
-        setEvents(diversified);
+        setEvents(visible);
       })();
-
-      // Center map on user location
-      mapRef.current?.animateToRegion({
-        latitude: location.lat,
-        longitude: location.lng,
-        latitudeDelta: 0.06,
-        longitudeDelta: 0.06,
-      }, 500);
-    }
-  }, [location.loading, location.lat, location.lng]);
-
-  const getMarkerColor = (event: Event) => {
-    const cat = CATEGORY_MAP[event.category];
-    return cat?.color || COLORS.accent;
-  };
-
-  return (
-    <View style={styles.container}>
-      <MapView
-        ref={mapRef}
-        style={styles.map}
-        provider={Platform.OS === "android" ? PROVIDER_GOOGLE : undefined}
-        customMapStyle={mapDarkStyle}
-        initialRegion={{
+      if (!region) {
+        setRegion({
           latitude: location.lat,
           longitude: location.lng,
           latitudeDelta: 0.06,
           longitudeDelta: 0.06,
-        }}
-        showsUserLocation={!location.isCustom}
-        showsMyLocationButton={false}
-        onPress={() => setSelectedEvent(null)}
-      >
-        {/* User location marker (for custom address or as fallback) */}
-        {location.isCustom && (
-          <Marker
-            coordinate={{ latitude: location.lat, longitude: location.lng }}
-            anchor={{ x: 0.5, y: 0.5 }}
-          >
-            <View style={styles.userMarker}>
-              <View style={styles.userMarkerInner} />
-            </View>
-          </Marker>
-        )}
+        });
+      }
+    }
+  }, [location.loading, location.lat, location.lng]);
 
-        {events.map((event) => (
-          <Marker
-            key={event.id}
-            coordinate={{ latitude: event.lat, longitude: event.lng }}
-            onPress={(e) => {
-              e.stopPropagation();
-              setSelectedEvent(event);
-            }}
-            pinColor={getMarkerColor(event)}
-            stopPropagation
-          />
-        ))}
-      </MapView>
+  const now = new Date();
+  const visible = events.filter((e) => matchesWhen(e, when, now));
 
-      {/* Header overlay */}
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.headerTitle}>Nearby</Text>
-          <Text style={styles.headerLocation}>{location.cityName}</Text>
-        </View>
-        <View style={styles.countBadge}>
-          <Text style={styles.countText}>{events.length} events</Text>
-        </View>
-      </View>
+  const inViewport = region
+    ? visible.filter((e) => {
+        const latOK = Math.abs(e.lat - region.latitude) < region.latitudeDelta / 2;
+        const lngOK = Math.abs(e.lng - region.longitude) < region.longitudeDelta / 2;
+        return latOK && lngOK;
+      })
+    : visible;
 
-      {/* Recenter button */}
-      <TouchableOpacity
-        style={styles.recenterBtn}
-        onPress={() => {
-          mapRef.current?.animateToRegion({
+  const recenter = () => {
+    mapRef.current?.animateToRegion({
+      latitude: location.lat,
+      longitude: location.lng,
+      latitudeDelta: 0.06,
+      longitudeDelta: 0.06,
+    });
+  };
+
+  const onCardPress = (e: Event) => router.push(`/event/${e.id}`);
+
+  return (
+    <View style={styles.container}>
+      <ClusteredMapView
+        ref={mapRef}
+        style={StyleSheet.absoluteFillObject}
+        provider={Platform.OS === "android" ? PROVIDER_GOOGLE : undefined}
+        customMapStyle={mapDarkStyle}
+        initialRegion={
+          region || {
             latitude: location.lat,
             longitude: location.lng,
             latitudeDelta: 0.06,
             longitudeDelta: 0.06,
-          });
-        }}
-        activeOpacity={0.8}
+          }
+        }
+        onRegionChangeComplete={(r: Region) => setRegion(r)}
+        showsUserLocation
+        showsMyLocationButton={false}
+        clusterColor={COLORS.accent}
+        clusterTextColor="#fff"
       >
+        {visible.map((e) => (
+          <Marker
+            key={e.id}
+            coordinate={{ latitude: e.lat, longitude: e.lng }}
+            onPress={(evt) => {
+              evt.stopPropagation?.();
+              setSelectedId(e.id);
+              const idx = inViewport.findIndex((x) => x.id === e.id);
+              if (idx >= 0) {
+                carouselRef.current?.scrollTo({ x: idx * (160 + 10), animated: true });
+              }
+            }}
+            tracksViewChanges={false}
+          >
+            <MapPin category={e.category} selected={selectedId === e.id} />
+          </Marker>
+        ))}
+      </ClusteredMapView>
+
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Nearby</Text>
+        <Text style={styles.headerLoc}>{location.cityName}</Text>
+      </View>
+
+      <TouchableOpacity style={styles.recenter} onPress={recenter} accessibilityLabel="Recenter map">
         <Ionicons name="locate" size={20} color={COLORS.text} />
       </TouchableOpacity>
 
-      {/* Selected event card */}
-      {selectedEvent && (
-        <TouchableOpacity
-          style={styles.eventCard}
-          onPress={() => router.push(`/event/${selectedEvent.id}`)}
-          activeOpacity={0.9}
+      <View style={styles.bottomWrap}>
+        <View style={styles.whenWrap}>
+          <WhenSegmented value={when} onChange={setWhen} />
+        </View>
+        <ScrollView
+          ref={carouselRef}
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.carousel}
+          snapToInterval={170}
+          decelerationRate="fast"
         >
-          <View style={styles.eventCardContent}>
-            <View
-              style={[styles.eventDot, { backgroundColor: getMarkerColor(selectedEvent) }]}
-            />
-            <View style={styles.eventCardInfo}>
-              <Text style={styles.eventCardTitle} numberOfLines={1}>
-                {selectedEvent.title}
-              </Text>
-              <View style={styles.eventCardMeta}>
-                <Text
-                  style={[
-                    styles.eventCardTime,
-                    { color: getEventTimeLabel(selectedEvent).color },
-                  ]}
-                >
-                  {getEventTimeLabel(selectedEvent).label}
-                </Text>
-                {selectedEvent.distance != null && (
-                  <Text style={styles.eventCardDistance}>
-                    {formatDistance(selectedEvent.distance)}
-                  </Text>
-                )}
-              </View>
-              {(selectedEvent.tags || []).length > 0 && (
-                <View style={styles.eventCardTags}>
-                  {(selectedEvent.tags || []).slice(0, 2).map((tag) => (
-                    <TagBadge key={tag} tag={tag} selected />
-                  ))}
-                </View>
-              )}
-            </View>
-            <Ionicons name="chevron-forward" size={20} color={COLORS.muted} />
-          </View>
-        </TouchableOpacity>
-      )}
+          {inViewport.map((e) => (
+            <HeroCard key={e.id} event={e} onPress={() => onCardPress(e)} />
+          ))}
+        </ScrollView>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.bg,
-  },
-  map: {
-    flex: 1,
-  },
+  container: { flex: 1, backgroundColor: COLORS.bg },
   header: {
-    position: "absolute",
-    top: 60,
-    left: 20,
-    right: 20,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
+    position: "absolute", top: 60, left: 20,
   },
   headerTitle: {
-    fontSize: 26,
-    fontWeight: "800",
-    color: COLORS.text,
-    textShadowColor: "rgba(0,0,0,0.8)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 8,
+    fontSize: 24, fontWeight: "800", color: COLORS.text,
+    textShadowColor: "rgba(0,0,0,0.8)", textShadowRadius: 8,
   },
-  headerLocation: {
-    fontSize: 12,
-    fontWeight: "500",
-    color: COLORS.muted,
-    textShadowColor: "rgba(0,0,0,0.8)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
-    marginTop: 2,
+  headerLoc: {
+    fontSize: 12, fontWeight: "600", color: COLORS.muted, marginTop: 2,
+    textShadowColor: "rgba(0,0,0,0.8)", textShadowRadius: 4,
   },
-  countBadge: {
+  recenter: {
+    position: "absolute", bottom: 310, right: 20,
+    width: 46, height: 46, borderRadius: 23,
     backgroundColor: COLORS.card + "ee",
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    borderRadius: RADIUS.pill,
-    borderWidth: 1,
-    borderColor: COLORS.border,
+    alignItems: "center", justifyContent: "center",
+    borderWidth: 1, borderColor: COLORS.border,
   },
-  countText: {
-    color: COLORS.text,
-    fontSize: 13,
-    fontWeight: "600",
+  bottomWrap: {
+    position: "absolute", bottom: 100, left: 0, right: 0, gap: 10,
   },
-  recenterBtn: {
-    position: "absolute",
-    bottom: 180,
-    right: 20,
-    width: 46,
-    height: 46,
-    borderRadius: 23,
-    backgroundColor: COLORS.card + "ee",
-    alignItems: "center",
-    justifyContent: "center",
-    elevation: 4,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    borderWidth: 1,
-    borderColor: COLORS.border,
+  whenWrap: {
+    alignSelf: "flex-start", marginLeft: 0,
   },
-  eventCard: {
-    position: "absolute",
-    bottom: 100,
-    left: 16,
-    right: 16,
-    backgroundColor: COLORS.card,
-    borderRadius: RADIUS.md,
-    padding: 16,
-    elevation: 8,
-    shadowColor: COLORS.accent,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  eventCardContent: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  eventDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-  },
-  eventCardInfo: {
-    flex: 1,
-  },
-  eventCardTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: COLORS.text,
-  },
-  eventCardMeta: {
-    flexDirection: "row",
-    gap: 10,
-    marginTop: 4,
-  },
-  eventCardTime: {
-    fontSize: 13,
-    fontWeight: "600",
-  },
-  eventCardDistance: {
-    fontSize: 13,
-    color: COLORS.muted,
-  },
-  eventCardTags: {
-    flexDirection: "row",
-    gap: 4,
-    marginTop: 6,
-  },
-  userMarker: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: COLORS.accent + "30",
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 2,
-    borderColor: COLORS.accent,
-  },
-  userMarkerInner: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: COLORS.accent,
+  carousel: {
+    paddingHorizontal: SPACING.md, gap: 10,
   },
 });
