@@ -1,5 +1,6 @@
 import { View, Text, Image, StyleSheet, Dimensions, TouchableOpacity } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import * as Haptics from "expo-haptics";
 import { Event } from "../types";
 import { formatDistance } from "../services/events";
 import { CATEGORY_MAP } from "../constants/categories";
@@ -35,13 +36,18 @@ export default function FeedCard({ event, isSaved, onPress, onSave }: Props) {
   const distanceStr = event.distance != null ? formatDistance(event.distance) : null;
   const venueName = event.venue?.name || event.address?.split(",")[0] || "Nearby";
 
+  const handleSave = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    onSave();
+  };
+
   return (
     <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.95}>
       <View style={styles.imageWrap}>
         <Image source={{ uri: imageUri }} style={styles.image} />
         <TouchableOpacity
           style={[styles.saveBtn, isSaved && styles.saveBtnActive]}
-          onPress={onSave}
+          onPress={handleSave}
           activeOpacity={0.7}
           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           accessibilityLabel={isSaved ? "Unsave event" : "Save event"}
