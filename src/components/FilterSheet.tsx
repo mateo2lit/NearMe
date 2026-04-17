@@ -59,7 +59,11 @@ export default function FilterSheet({ visible, initial, liveCount, onClose, onAp
                 <Text style={styles.resetText}>Reset</Text>
               </TouchableOpacity>
             )}
-            <TouchableOpacity onPress={onClose}>
+            <TouchableOpacity
+              onPress={onClose}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              accessibilityLabel="Close filters"
+            >
               <Ionicons name="close" size={24} color={COLORS.text} />
             </TouchableOpacity>
           </View>

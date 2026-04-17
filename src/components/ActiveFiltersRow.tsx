@@ -28,7 +28,12 @@ export default function ActiveFiltersRow({ value, onPress }: Props) {
   const text = labels.slice(0, 3).join(" · ") + (labels.length > 3 ? ` +${labels.length - 3}` : "");
 
   return (
-    <TouchableOpacity style={styles.row} onPress={onPress} activeOpacity={0.8}>
+    <TouchableOpacity
+      style={styles.row}
+      onPress={onPress}
+      activeOpacity={0.8}
+      accessibilityLabel={`${activeCount} active filters. Tap to edit.`}
+    >
       <Ionicons name="options-outline" size={15} color={COLORS.accent} />
       <Text style={styles.text} numberOfLines={1}>{text}</Text>
       <View style={styles.countBadge}>

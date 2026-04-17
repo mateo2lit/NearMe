@@ -41,7 +41,11 @@ export default function SearchOverlay({
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <View style={styles.container}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+          <TouchableOpacity
+            onPress={onClose}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            accessibilityLabel="Close search"
+          >
             <Ionicons name="close" size={26} color={COLORS.text} />
           </TouchableOpacity>
           <View style={styles.searchWrap}>
@@ -56,7 +60,11 @@ export default function SearchOverlay({
               returnKeyType="search"
             />
             {!!query && (
-              <TouchableOpacity onPress={() => setQuery("")}>
+              <TouchableOpacity
+                onPress={() => setQuery("")}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                accessibilityLabel="Clear search"
+              >
                 <Ionicons name="close-circle" size={18} color={COLORS.muted} />
               </TouchableOpacity>
             )}
