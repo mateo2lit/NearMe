@@ -1,5 +1,8 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.103.0";
+import { runDiscovery, type RunMetrics } from "./runDiscovery.ts";
+import { makeAnthropicClient } from "../_shared/anthropic.ts";
+import * as V from "../_shared/validation.ts";
 
 export type DiscoverEvent =
   | { type: "status"; text: string }
@@ -64,19 +67,21 @@ export async function handleDiscoverRequest(req: DiscoverRequest): Promise<Respo
   });
 }
 
-// Live entry — runEvents wired to Anthropic in Task 12.
 serve(async (req) => {
   if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
   const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+  const anthropic = await makeAnthropicClient();
   const body = await req.json().catch(() => ({}));
+  const metrics: RunMetrics = {
+    events_emitted: 0, events_persisted: 0, rejections: [],
+    input_tokens: 0, output_tokens: 0, cached_input_tokens: 0,
+    web_searches: 0, cost_usd: 0,
+  };
   return handleDiscoverRequest({
     body,
     deps: {
       supabase,
-      runEvents: async function* () {
-        yield { type: "status", text: "Stub run — replaced in Task 12" };
-        yield { type: "done" };
-      },
+      runEvents: (b) => runDiscovery({ body: b as any, deps: { supabase, anthropic, validation: V }, metrics }),
       runWriter: async (row) => { await supabase.from("claude_runs").insert(row); },
     },
   });
