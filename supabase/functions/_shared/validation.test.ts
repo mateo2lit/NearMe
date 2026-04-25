@@ -1,5 +1,5 @@
 import { assertEquals } from "https://deno.land/std@0.177.0/testing/asserts.ts";
-import { validateEmitEventInput, auditGrounding, headProbe } from "./validation.ts";
+import { validateEmitEventInput, auditGrounding, headProbe, verifyContent } from "./validation.ts";
 
 const valid = {
   title: "Free Live Jazz Friday",
@@ -125,5 +125,66 @@ Deno.test("Layer 3 — fetch throws (network error) fails", async () => {
     const r = await headProbe("https://dead.example/x");
     assertEquals(r.ok, false);
     if (!r.ok) assertEquals(r.reason, "head");
+  } finally { restore(); }
+});
+
+const baseEvt = {
+  title: "Free Live Jazz Friday",
+  venue_name: "The Wick",
+  start_iso: "2026-04-25T20:00:00Z",
+};
+
+Deno.test("Layer 4 — title 3-word overlap + month name passes", async () => {
+  const restore = withMockFetch(async () =>
+    new Response("<html><body>Live Jazz Friday on April 25 with cocktails</body></html>", { status: 200 }));
+  try {
+    const r = await verifyContent("https://x.example/p", baseEvt);
+    assertEquals(r.ok, true);
+  } finally { restore(); }
+});
+
+Deno.test("Layer 4 — venue name + numeric date passes", async () => {
+  const restore = withMockFetch(async () =>
+    new Response("<html>Welcome to The Wick. Show on 4/25/2026.</html>", { status: 200 }));
+  try {
+    const r = await verifyContent("https://x.example/p", baseEvt);
+    assertEquals(r.ok, true);
+  } finally { restore(); }
+});
+
+Deno.test("Layer 4 — title match without date fails", async () => {
+  const restore = withMockFetch(async () =>
+    new Response("<html>Live Jazz Friday tickets, contact us</html>", { status: 200 }));
+  try {
+    const r = await verifyContent("https://x.example/p", baseEvt);
+    assertEquals(r.ok, false);
+    if (!r.ok) assertEquals(r.reason, "content");
+  } finally { restore(); }
+});
+
+Deno.test("Layer 4 — date without name fails", async () => {
+  const restore = withMockFetch(async () =>
+    new Response("<html>Random unrelated content. April 25 noted.</html>", { status: 200 }));
+  try {
+    const r = await verifyContent("https://x.example/p", baseEvt);
+    assertEquals(r.ok, false);
+  } finally { restore(); }
+});
+
+Deno.test("Layer 4 — within-7-days uses tonight/tomorrow tokens", async () => {
+  const tomorrow = new Date(Date.now() + 86400_000).toISOString();
+  const restore = withMockFetch(async () =>
+    new Response("<html>The Wick presents Live Jazz tomorrow night</html>", { status: 200 }));
+  try {
+    const r = await verifyContent("https://x.example/p", { ...baseEvt, start_iso: tomorrow });
+    assertEquals(r.ok, true);
+  } finally { restore(); }
+});
+
+Deno.test("Layer 4 — fetch error fails (timeout/network)", async () => {
+  const restore = withMockFetch(async () => { throw new TypeError("network"); });
+  try {
+    const r = await verifyContent("https://dead.example/p", baseEvt);
+    assertEquals(r.ok, false);
   } finally { restore(); }
 });

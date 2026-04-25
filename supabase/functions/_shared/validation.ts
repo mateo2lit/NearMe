@@ -125,3 +125,90 @@ export async function headProbe(sourceUrl: string): Promise<ValidationResult> {
     return { ok: false, reason: "head", detail: `${(err as Error).name}: ${(err as Error).message}` };
   }
 }
+
+const MONTHS = [
+  "january","february","march","april","may","june",
+  "july","august","september","october","november","december",
+];
+const WEEKDAYS = ["sunday","monday","tuesday","wednesday","thursday","friday","saturday"];
+
+function stripTags(html: string): string {
+  return html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, " ")
+             .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, " ")
+             .replace(/<[^>]+>/g, " ")
+             .replace(/\s+/g, " ");
+}
+
+function tokenizeTitle(title: string): string[] {
+  return title.toLowerCase().match(/[a-z][a-z'-]{2,}/g) || [];
+}
+
+function dateTokenMatches(text: string, startIso: string): boolean {
+  const d = new Date(startIso);
+  if (Number.isNaN(d.getTime())) return false;
+
+  const m = MONTHS[d.getUTCMonth()];
+  const day = d.getUTCDate();
+  const year = d.getUTCFullYear();
+  const wd = WEEKDAYS[d.getUTCDay()];
+
+  // ISO date e.g. "2026-04-25"
+  const iso = startIso.slice(0, 10);
+  if (text.includes(iso)) return true;
+
+  // "april 25"
+  if (text.includes(`${m} ${day}`)) return true;
+
+  // "4/25" or "4/25/2026"
+  const num = `${d.getUTCMonth() + 1}/${day}`;
+  if (text.includes(num) || text.includes(`${num}/${year}`)) return true;
+
+  // Within 7 days: accept tonight / tomorrow / weekday name
+  const daysAway = Math.round((d.getTime() - Date.now()) / 86400_000);
+  if (daysAway >= 0 && daysAway <= 7) {
+    if (text.includes("tonight")) return true;
+    if (daysAway === 1 && text.includes("tomorrow")) return true;
+    if (text.includes(wd)) return true;
+  }
+  return false;
+}
+
+interface ContentEventShape {
+  title: string;
+  venue_name: string;
+  start_iso: string;
+}
+
+/**
+ * Layer 4 — content verification.
+ * Fetches the source URL's HTML, strips tags, and verifies the page actually
+ * contains plausible name+date tokens for the event. Catches cases where Claude
+ * found a real URL that doesn't actually mention the specific event it claims to.
+ */
+export async function verifyContent(sourceUrl: string, evt: ContentEventShape): Promise<ValidationResult> {
+  let html: string;
+  try {
+    const res = await fetch(sourceUrl, { redirect: "follow", signal: AbortSignal.timeout(5000) });
+    if (res.status < 200 || res.status >= 400) {
+      return { ok: false, reason: "content", detail: `status ${res.status}` };
+    }
+    html = await res.text();
+  } catch (err) {
+    return { ok: false, reason: "content", detail: `${(err as Error).name}` };
+  }
+
+  const text = stripTags(html).toLowerCase();
+
+  const titleWords = tokenizeTitle(evt.title);
+  const titleHits = titleWords.filter((w) => text.includes(w)).length;
+  const titleMatch = titleHits >= 3 || (titleWords.length < 3 && titleHits === titleWords.length);
+  const venueMatch = !!evt.venue_name && text.includes(evt.venue_name.toLowerCase());
+
+  if (!titleMatch && !venueMatch) {
+    return { ok: false, reason: "content", detail: "name not found in page" };
+  }
+  if (!dateTokenMatches(text, evt.start_iso)) {
+    return { ok: false, reason: "content", detail: "date not found in page" };
+  }
+  return { ok: true } as ValidationResult;
+}
