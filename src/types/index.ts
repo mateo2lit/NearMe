@@ -40,6 +40,8 @@ export interface Event {
   attendance: number | null;
   source_url: string | null;
   tags: string[];
+  rank_score?: number;
+  blurb?: string;
   distance?: number; // computed, in miles
 }
 
@@ -72,7 +74,8 @@ export type EventSource =
   | "google_places"
   | "scraped"
   | "municipal"
-  | "community";
+  | "community"
+  | "claude";
 
 export type SwipeAction = "save" | "skip";
 
