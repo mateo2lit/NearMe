@@ -99,20 +99,27 @@ export async function handleDiscoverRequest(req: DiscoverRequest): Promise<Respo
 
 serve(async (req) => {
   if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
-  const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-  const anthropic = await makeAnthropicClient();
-  const body = await req.json().catch(() => ({}));
-  const metrics: RunMetrics = {
-    events_emitted: 0, events_persisted: 0, rejections: [],
-    input_tokens: 0, output_tokens: 0, cached_input_tokens: 0,
-    web_searches: 0, cost_usd: 0,
-  };
-  return handleDiscoverRequest({
-    body,
-    deps: {
-      supabase,
-      runEvents: (b) => runDiscovery({ body: b as any, deps: { supabase, anthropic, validation: V }, metrics }),
-      runWriter: async (row) => { await supabase.from("claude_runs").insert(row); },
-    },
-  });
+  try {
+    const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const anthropic = await makeAnthropicClient();
+    const body = await req.json().catch(() => ({}));
+    const metrics: RunMetrics = {
+      events_emitted: 0, events_persisted: 0, rejections: [],
+      input_tokens: 0, output_tokens: 0, cached_input_tokens: 0,
+      web_searches: 0, cost_usd: 0,
+    };
+    return handleDiscoverRequest({
+      body,
+      deps: {
+        supabase,
+        runEvents: (b) => runDiscovery({ body: b as any, deps: { supabase, anthropic, validation: V }, metrics }),
+        runWriter: async (row) => { await supabase.from("claude_runs").insert(row); },
+      },
+    });
+  } catch (err) {
+    return new Response(JSON.stringify({
+      error: "boot_failed",
+      message: (err as Error).message,
+    }), { status: 500, headers: { "Content-Type": "application/json" } });
+  }
 });

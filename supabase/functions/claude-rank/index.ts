@@ -131,20 +131,27 @@ export async function handleRankRequest(req: RankRequest): Promise<Response> {
 serve(async (req) => {
   if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
 
-  const supabase = createClient(
-    Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-  );
-  const anthropic = await makeAnthropicClient();
+  try {
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+    );
+    const anthropic = await makeAnthropicClient();
 
-  const body = await req.json().catch(() => ({}));
+    const body = await req.json().catch(() => ({}));
 
-  return handleRankRequest({
-    body,
-    deps: {
-      supabase,
-      anthropic,
-      runWriter: async (row) => { await supabase.from("claude_runs").insert(row); },
-    },
-  });
+    return handleRankRequest({
+      body,
+      deps: {
+        supabase,
+        anthropic,
+        runWriter: async (row) => { await supabase.from("claude_runs").insert(row); },
+      },
+    });
+  } catch (err) {
+    return new Response(JSON.stringify({
+      error: "boot_failed",
+      message: (err as Error).message,
+    }), { status: 500, headers: { "Content-Type": "application/json" } });
+  }
 });

@@ -31,17 +31,18 @@ export function calcCostUsd(model: Model, usage: UsageBreakdown): number {
 }
 
 // SDK loader — kept here so models and the import URL are tunable in one place.
+// Static import: Supabase Edge Runtime requires URLs to be resolved at deploy time (no dynamic imports).
+import Anthropic from "https://esm.sh/@anthropic-ai/sdk@0.30.1";
 export const ANTHROPIC_SDK_URL = "https://esm.sh/@anthropic-ai/sdk@0.30.1";
 export const SONNET_MODEL = "claude-sonnet-4-6";
 export const HAIKU_MODEL  = "claude-haiku-4-5-20251001";
 
 export async function loadAnthropic() {
-  const mod = await import(ANTHROPIC_SDK_URL);
-  return mod.default; // Anthropic class
+  return Anthropic;
 }
 
 export function makeAnthropicClient() {
   const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY not set in edge function env");
-  return loadAnthropic().then((Anthropic: any) => new Anthropic({ apiKey }));
+  return Promise.resolve(new Anthropic({ apiKey }));
 }
