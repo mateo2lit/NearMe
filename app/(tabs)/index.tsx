@@ -249,7 +249,10 @@ export default function DiscoverScreen() {
   const flatFeed = useMemo(() => {
     const base = whenFiltered.filter((e) => !rowIds.has(e.id));
     if (!claude.state.ranking.length) return base;
-    return applyRanking(base, claude.state.ranking);
+    const merged = applyRanking(base, claude.state.ranking);
+    const claudeOnes = merged.filter((e) => e.source === "claude");
+    const others = merged.filter((e) => e.source !== "claude");
+    return [...claudeOnes, ...others];
   }, [whenFiltered, rowIds, claude.state.ranking]);
 
   const allForSearch = [...picks, ...events];
