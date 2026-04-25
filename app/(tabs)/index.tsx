@@ -22,6 +22,10 @@ import { COLORS, RADIUS, SPACING } from "../../src/constants/theme";
 import { Event } from "../../src/types";
 import { buildDiscoveryRows } from "../../src/lib/rows";
 import { isTonight, isTomorrow, isThisWeekend } from "../../src/lib/time-windows";
+import { useClaudeRefresh, applyRanking } from "../../src/hooks/useClaudeRefresh";
+import { ClaudeRefreshOverlay } from "../../src/components/ClaudeRefreshOverlay";
+import { getOrCreateUserId } from "../../src/hooks/usePreferences";
+import { geohashEncode } from "../../src/lib/geohash";
 
 function matchesWhen(ev: Event, w: WhenFilter, now: Date): boolean {
   if (w === "all") return true;
@@ -84,6 +88,10 @@ export default function DiscoverScreen() {
   const [filter, setFilter] = useState<FilterValue>({ categories: [], tags: [], radiusMiles: 5 });
   const [showFilters, setShowFilters] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
+
+  const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL!;
+  const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!;
+  const claude = useClaudeRefresh({ supabaseUrl, anonKey });
 
   const params = useLocalSearchParams<{ tag?: string }>();
   useEffect(() => {
@@ -175,10 +183,18 @@ export default function DiscoverScreen() {
   }, []);
 
   const onRefresh = useCallback(async () => {
-    setRefreshing(true);
+    if (!location.lat || !location.lng) return;
+    const userId = await getOrCreateUserId();
+    await claude.start({
+      userId,
+      lat: location.lat,
+      lng: location.lng,
+      radiusMiles: filter.radiusMiles || 5,
+      geohash: geohashEncode(location.lat, location.lng, 5),
+      knownEventIds: events.map((e) => e.id),
+    });
     await loadEvents();
-    setRefreshing(false);
-  }, [loadEvents]);
+  }, [location.lat, location.lng, filter.radiusMiles, events, claude, loadEvents]);
 
   const toggleSave = async (event: Event) => {
     const newSaved = new Set(savedIds);
@@ -211,8 +227,15 @@ export default function DiscoverScreen() {
     () => buildDiscoveryRows(whenFiltered, now, whenPicks),
     [whenFiltered, whenPicks]
   );
-  const rowIds = new Set(rows.flatMap((r) => r.events.map((e) => e.id)));
-  const flatFeed = whenFiltered.filter((e) => !rowIds.has(e.id));
+  const rowIds = useMemo(
+    () => new Set(rows.flatMap((r) => r.events.map((e) => e.id))),
+    [rows]
+  );
+  const flatFeed = useMemo(() => {
+    const base = whenFiltered.filter((e) => !rowIds.has(e.id));
+    if (!claude.state.ranking.length) return base;
+    return applyRanking(base, claude.state.ranking);
+  }, [whenFiltered, rowIds, claude.state.ranking]);
 
   const allForSearch = [...picks, ...events];
   const liveCount = useCallback(
@@ -324,7 +347,11 @@ export default function DiscoverScreen() {
             ) : null
           }
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.accent} />
+            <RefreshControl
+              refreshing={claude.state.state === "phase1" || claude.state.state === "phase2"}
+              onRefresh={onRefresh}
+              tintColor={COLORS.accent}
+            />
           }
         />
       )}
@@ -344,6 +371,12 @@ export default function DiscoverScreen() {
         savedIds={savedIds}
         onPressEvent={(e) => { setShowSearch(false); router.push(`/event/${e.id}`); }}
         onToggleSave={toggleSave}
+      />
+
+      <ClaudeRefreshOverlay
+        state={claude.state.state}
+        status={claude.state.status}
+        foundCount={claude.state.foundEvents.length}
       />
     </View>
   );
