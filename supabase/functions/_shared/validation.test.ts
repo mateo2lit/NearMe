@@ -1,5 +1,5 @@
 import { assertEquals } from "https://deno.land/std@0.177.0/testing/asserts.ts";
-import { validateEmitEventInput, auditGrounding } from "./validation.ts";
+import { validateEmitEventInput, auditGrounding, headProbe } from "./validation.ts";
 
 const valid = {
   title: "Free Live Jazz Friday",
@@ -79,4 +79,51 @@ Deno.test("Layer 2 — case insensitive match passes", () => {
   const blob = "Visit ThEwIcK.COM for tickets";
   const r = auditGrounding("https://thewick.com/events/jazz-friday", blob);
   assertEquals(r.ok, true);
+});
+
+function withMockFetch(handler: (input: Request | URL | string, init?: RequestInit) => Promise<Response>) {
+  const orig = globalThis.fetch;
+  globalThis.fetch = handler as typeof fetch;
+  return () => { globalThis.fetch = orig; };
+}
+
+Deno.test("Layer 3 — 200 passes", async () => {
+  const restore = withMockFetch(async () => new Response(null, { status: 200 }));
+  try {
+    const r = await headProbe("https://example.com/x");
+    assertEquals(r.ok, true);
+  } finally { restore(); }
+});
+
+Deno.test("Layer 3 — 404 fails", async () => {
+  const restore = withMockFetch(async () => new Response(null, { status: 404 }));
+  try {
+    const r = await headProbe("https://example.com/missing");
+    assertEquals(r.ok, false);
+    if (!r.ok) assertEquals(r.reason, "head");
+  } finally { restore(); }
+});
+
+Deno.test("Layer 3 — 405 falls back to GET range and passes on 200", async () => {
+  let calls = 0;
+  const restore = withMockFetch(async (input, init) => {
+    calls++;
+    const method = (init?.method || "GET").toUpperCase();
+    if (method === "HEAD") return new Response(null, { status: 405 });
+    return new Response("ok", { status: 200 });
+  });
+  try {
+    const r = await headProbe("https://example.com/needs-range");
+    assertEquals(r.ok, true);
+    assertEquals(calls, 2);
+  } finally { restore(); }
+});
+
+Deno.test("Layer 3 — fetch throws (network error) fails", async () => {
+  const restore = withMockFetch(async () => { throw new TypeError("network"); });
+  try {
+    const r = await headProbe("https://dead.example/x");
+    assertEquals(r.ok, false);
+    if (!r.ok) assertEquals(r.reason, "head");
+  } finally { restore(); }
 });

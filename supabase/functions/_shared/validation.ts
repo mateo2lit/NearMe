@@ -96,3 +96,32 @@ export function auditGrounding(sourceUrl: string, searchResultsBlob: string): Va
   // value isn't reified here — caller already has the validated EmitEventInput
   return { ok: true } as ValidationResult;
 }
+
+/**
+ * Layer 3 — HEAD probe.
+ * Drops events whose source_url does not respond 200..399.
+ * Falls back to a 1-byte ranged GET when servers reject HEAD with 405.
+ */
+export async function headProbe(sourceUrl: string): Promise<ValidationResult> {
+  try {
+    const res = await fetch(sourceUrl, {
+      method: "HEAD",
+      redirect: "follow",
+      signal: AbortSignal.timeout(3000),
+    });
+    if (res.status >= 200 && res.status < 400) return { ok: true } as ValidationResult;
+    if (res.status === 405) {
+      const r2 = await fetch(sourceUrl, {
+        method: "GET",
+        redirect: "follow",
+        headers: { Range: "bytes=0-0" },
+        signal: AbortSignal.timeout(3000),
+      });
+      if (r2.status >= 200 && r2.status < 400) return { ok: true } as ValidationResult;
+      return { ok: false, reason: "head", detail: `range fallback ${r2.status}` };
+    }
+    return { ok: false, reason: "head", detail: `status ${res.status}` };
+  } catch (err) {
+    return { ok: false, reason: "head", detail: `${(err as Error).name}: ${(err as Error).message}` };
+  }
+}
