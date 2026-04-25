@@ -85,6 +85,16 @@ export interface CustomLocation {
   lng: number;
 }
 
+export interface OnboardingAnswers {
+  goals: string[];
+  vibe: string | null;
+  social: string | null;
+  schedule: string | null;
+  blocker: string | null;
+  budget: string | null;
+  happyHour: boolean;
+}
+
 export interface UserPreferences {
   categories: EventCategory[];
   tags: string[];
@@ -92,6 +102,9 @@ export interface UserPreferences {
   lat: number;
   lng: number;
   customLocation?: CustomLocation | null;
+  onboarding?: OnboardingAnswers;
+  hiddenCategories?: string[];
+  hiddenTags?: string[];
 }
 
 export interface CategoryOption {
