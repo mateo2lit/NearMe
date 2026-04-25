@@ -194,10 +194,9 @@ async function persistEvent(supabase: any, v: V.EmitEventInput): Promise<Record<
     source_url: v.source_url,
     tags: v.tags,
   };
-  // Dedupe by source_url: upsert on source_url conflict.
   const { data: upserted } = await supabase
     .from("events")
-    .upsert({ ...row }, { onConflict: "source_url", ignoreDuplicates: false });
+    .upsert({ ...row }, { onConflict: "source,source_id", ignoreDuplicates: false });
   return (Array.isArray(upserted) ? upserted[0] : upserted) ?? row;
 }
 
