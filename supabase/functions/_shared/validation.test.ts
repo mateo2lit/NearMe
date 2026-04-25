@@ -1,5 +1,5 @@
 import { assertEquals } from "https://deno.land/std@0.177.0/testing/asserts.ts";
-import { validateEmitEventInput, auditGrounding, headProbe, verifyContent } from "./validation.ts";
+import { validateEmitEventInput, auditGrounding, headProbe, verifyContent, geoSanity } from "./validation.ts";
 
 const valid = {
   title: "Free Live Jazz Friday",
@@ -187,4 +187,23 @@ Deno.test("Layer 4 — fetch error fails (timeout/network)", async () => {
     const r = await verifyContent("https://dead.example/p", baseEvt);
     assertEquals(r.ok, false);
   } finally { restore(); }
+});
+
+Deno.test("Geo — within radius passes", () => {
+  // Boca Raton (26.36, -80.13). Event at (26.40, -80.10) ~3 mi away. Radius 15mi.
+  const r = geoSanity({ lat: 26.40, lng: -80.10 }, { lat: 26.36, lng: -80.13 }, 15);
+  assertEquals(r.ok, true);
+});
+
+Deno.test("Geo — way outside radius fails", () => {
+  // Origin Boca, event in Tampa (~200 mi).
+  const r = geoSanity({ lat: 27.95, lng: -82.46 }, { lat: 26.36, lng: -80.13 }, 15);
+  assertEquals(r.ok, false);
+  if (!r.ok) assertEquals(r.reason, "geo");
+});
+
+Deno.test("Geo — slightly outside radius * 1.2 fails", () => {
+  // Just past 15 * 1.2 = 18 miles (26.63 is ~18.1 miles from 26.36)
+  const r = geoSanity({ lat: 26.63, lng: -80.13 }, { lat: 26.36, lng: -80.13 }, 15);
+  assertEquals(r.ok, false);
 });

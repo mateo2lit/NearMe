@@ -212,3 +212,27 @@ export async function verifyContent(sourceUrl: string, evt: ContentEventShape): 
   }
   return { ok: true } as ValidationResult;
 }
+
+const EARTH_RADIUS_MI = 3958.8;
+
+function haversineMiles(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * EARTH_RADIUS_MI * Math.asin(Math.sqrt(h));
+}
+
+export function geoSanity(
+  evt: { lat: number; lng: number },
+  origin: { lat: number; lng: number },
+  radiusMiles: number,
+): ValidationResult {
+  const d = haversineMiles(evt, origin);
+  if (d > radiusMiles * 1.2) {
+    return { ok: false, reason: "geo", detail: `${d.toFixed(1)}mi > ${(radiusMiles * 1.2).toFixed(1)}` };
+  }
+  return { ok: true } as ValidationResult;
+}
