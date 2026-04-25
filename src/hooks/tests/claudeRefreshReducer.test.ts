@@ -1,4 +1,4 @@
-import { initial, reduce } from "../claudeRefreshReducer";
+import { initial, reduce, type State } from "../claudeRefreshReducer";
 
 describe("claudeRefreshReducer", () => {
   it("starts idle", () => {
@@ -25,7 +25,7 @@ describe("claudeRefreshReducer", () => {
   });
 
   it("phase1 collects found events", () => {
-    let s = { ...initial, state: "phase1" as const };
+    let s: State = { ...initial, state: "phase1" };
     s = reduce(s, { type: "FOUND_EVENT", event: { id: "e1", title: "x" } as any });
     s = reduce(s, { type: "FOUND_EVENT", event: { id: "e2", title: "y" } as any });
     expect(s.foundEvents.length).toBe(2);

@@ -4,7 +4,7 @@ import { FoundForYouChip } from "../FoundForYouChip";
 
 describe("FoundForYouChip", () => {
   it("renders the label", () => {
-    let instance;
+    let instance!: renderer.ReactTestRenderer;
     act(() => {
       instance = renderer.create(<FoundForYouChip />);
     });
