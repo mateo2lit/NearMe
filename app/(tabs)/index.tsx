@@ -27,6 +27,8 @@ import { ClaudeRefreshOverlay } from "../../src/components/ClaudeRefreshOverlay"
 import { getOrCreateUserId } from "../../src/hooks/usePreferences";
 import { geohashEncode } from "../../src/lib/geohash";
 
+const FIRST_REFRESH_KEY = "@nearme_first_claude_refresh_done";
+
 function matchesWhen(ev: Event, w: WhenFilter, now: Date): boolean {
   if (w === "all") return true;
   if (w === "tonight") return isTonight(ev.start_time, now);
@@ -195,6 +197,19 @@ export default function DiscoverScreen() {
     });
     await loadEvents();
   }, [location.lat, location.lng, filter.radiusMiles, events, claude, loadEvents]);
+
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      (async () => {
+        const done = await AsyncStorage.getItem(FIRST_REFRESH_KEY);
+        if (done || cancelled || !location.lat) return;
+        await onRefresh();
+        await AsyncStorage.setItem(FIRST_REFRESH_KEY, "true");
+      })();
+      return () => { cancelled = true; };
+    }, [location.lat, onRefresh])
+  );
 
   const toggleSave = async (event: Event) => {
     const newSaved = new Set(savedIds);
