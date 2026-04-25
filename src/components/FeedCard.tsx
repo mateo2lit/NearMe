@@ -7,6 +7,7 @@ import { CATEGORY_MAP } from "../constants/categories";
 import { TAG_MAP } from "../constants/tags";
 import { getEventImage } from "../constants/images";
 import { COLORS, RADIUS } from "../constants/theme";
+import { FoundForYouChip } from "./FoundForYouChip";
 
 const { width } = Dimensions.get("window");
 const CARD_WIDTH = width - 32;
@@ -58,6 +59,7 @@ export default function FeedCard({ event, isSaved, onPress, onSave }: Props) {
             color={isSaved ? COLORS.hot : "#fff"}
           />
         </TouchableOpacity>
+        {event.source === "claude" && <FoundForYouChip />}
       </View>
 
       <View style={styles.info}>
@@ -67,6 +69,11 @@ export default function FeedCard({ event, isSaved, onPress, onSave }: Props) {
         <Text style={styles.title} numberOfLines={2}>
           {event.title}{venueName !== "Nearby" ? ` at ${venueName}` : ""}
         </Text>
+        {event.blurb ? (
+          <Text style={styles.blurb} numberOfLines={1} accessibilityLabel={`Why this matches you: ${event.blurb}`}>
+            {event.blurb}
+          </Text>
+        ) : null}
         {category && (
           <View style={styles.catRow}>
             <Ionicons name={category.icon as any} size={13} color={category.color} />
@@ -176,4 +183,5 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: COLORS.warm,
   },
+  blurb: { color: "#9090b0", fontSize: 12, marginTop: 4 },
 });
