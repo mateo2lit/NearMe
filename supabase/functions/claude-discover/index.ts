@@ -9,7 +9,8 @@ export type DiscoverEvent =
   | { type: "found"; event: Record<string, unknown> }
   | { type: "rejected"; reason: string; title?: string }
   | { type: "done" }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  | { type: "metrics"; metrics: any };
 
 interface DiscoverRequest {
   body: {
@@ -45,13 +46,42 @@ export async function handleDiscoverRequest(req: DiscoverRequest): Promise<Respo
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const enc = new TextEncoder();
+      const startedAt = new Date().toISOString();
+      let lastMetrics: any = null;
+      let status: "ok" | "partial" | "error" | "timeout" = "ok";
+      let errorMessage: string | null = null;
+
+      // Wall-clock cap: 90s
+      const wallClock = setTimeout(() => { status = "timeout"; controller.close(); }, 90_000);
+
       try {
         for await (const evt of deps.runEvents(body)) {
           controller.enqueue(enc.encode(sseFrame(evt)));
+          if (evt.type === "metrics") lastMetrics = (evt as any).metrics;
         }
       } catch (err) {
-        controller.enqueue(enc.encode(sseFrame({ type: "error", message: (err as Error).message })));
+        status = "error";
+        errorMessage = (err as Error).message;
+        controller.enqueue(enc.encode(sseFrame({ type: "error", message: errorMessage })));
       } finally {
+        clearTimeout(wallClock);
+        await deps.runWriter({
+          phase: "discover",
+          user_id: body.user_id,
+          geohash: body.geohash,
+          started_at: startedAt,
+          finished_at: new Date().toISOString(),
+          status,
+          events_emitted: lastMetrics?.events_emitted ?? 0,
+          events_persisted: lastMetrics?.events_persisted ?? 0,
+          rejections: lastMetrics?.rejections ?? [],
+          input_tokens: lastMetrics?.input_tokens ?? null,
+          output_tokens: lastMetrics?.output_tokens ?? null,
+          cached_input_tokens: lastMetrics?.cached_input_tokens ?? null,
+          web_searches: lastMetrics?.web_searches ?? null,
+          cost_usd: lastMetrics?.cost_usd ?? null,
+          error_message: errorMessage,
+        });
         controller.close();
       }
     },

@@ -164,6 +164,7 @@ export async function* runDiscovery(args: { body: RunBody; deps: RunDeps; metric
   });
 
   yield { type: "status", text: "Ranking picks for you…" };
+  yield { type: "metrics", metrics } as any;
   yield { type: "done" };
 }
 
