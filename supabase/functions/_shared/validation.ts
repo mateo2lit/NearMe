@@ -76,3 +76,23 @@ export function validateEmitEventInput(raw: unknown): ValidationResult {
 
   return { ok: true, value: e as unknown as EmitEventInput };
 }
+
+/**
+ * Layer 2 — prompt grounding audit.
+ * The emitted source_url's host MUST appear somewhere in the concatenated
+ * web_search results blob. Catches fabricated URLs that pass schema validation.
+ */
+export function auditGrounding(sourceUrl: string, searchResultsBlob: string): ValidationResult {
+  let host: string;
+  try {
+    host = new URL(sourceUrl).host.toLowerCase();
+  } catch {
+    return { ok: false, reason: "grounding", detail: "url parse" };
+  }
+  const haystack = searchResultsBlob.toLowerCase();
+  if (!haystack.includes(host)) {
+    return { ok: false, reason: "grounding", detail: `host "${host}" not in search results` };
+  }
+  // value isn't reified here — caller already has the validated EmitEventInput
+  return { ok: true } as ValidationResult;
+}

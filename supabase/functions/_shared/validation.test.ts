@@ -1,5 +1,5 @@
 import { assertEquals } from "https://deno.land/std@0.177.0/testing/asserts.ts";
-import { validateEmitEventInput } from "./validation.ts";
+import { validateEmitEventInput, auditGrounding } from "./validation.ts";
 
 const valid = {
   title: "Free Live Jazz Friday",
@@ -60,4 +60,23 @@ Deno.test("Layer 1 — non-https source_url drops", () => {
   const bad = { ...valid, source_url: "javascript:alert(1)" };
   const r = validateEmitEventInput(bad);
   assertEquals(r.ok, false);
+});
+
+Deno.test("Layer 2 — source URL host appears in search results passes", () => {
+  const blob = "Local jazz at thewick.com tonight, see https://thewick.com/events/jazz";
+  const r = auditGrounding("https://thewick.com/events/jazz-friday", blob);
+  assertEquals(r.ok, true);
+});
+
+Deno.test("Layer 2 — fabricated host fails", () => {
+  const blob = "Local jazz at thewick.com tonight";
+  const r = auditGrounding("https://made-up-fake-events.example/123", blob);
+  assertEquals(r.ok, false);
+  if (!r.ok) assertEquals(r.reason, "grounding");
+});
+
+Deno.test("Layer 2 — case insensitive match passes", () => {
+  const blob = "Visit ThEwIcK.COM for tickets";
+  const r = auditGrounding("https://thewick.com/events/jazz-friday", blob);
+  assertEquals(r.ok, true);
 });
