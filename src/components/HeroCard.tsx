@@ -13,7 +13,7 @@ interface Props {
 
 export default function HeroCard({ event, onPress }: Props) {
   const category = CATEGORY_MAP[event.category];
-  const imageUri = getEventImage(event.image_url, event.category, event.subcategory, event.title, event.description);
+  const imageUri = getEventImage(event.image_url, event.category, event.subcategory, event.title, event.description, event.tags);
 
   const startDate = effectiveStart(event);
   const dayName = startDate.toLocaleDateString([], { weekday: "short" }).toUpperCase();

@@ -51,23 +51,12 @@ function setStatus(status: Status, count = 0) {
   notify();
 }
 
-// Placeholder "scanning" rows shown in the banner while the server-side
-// sources are running. The labels intentionally read like an AI agent doing
-// work for the user — see project_ai_robot_voice memory. Counts are filled
-// in when the sync-location response arrives (see captureSyncProgress).
-const PROGRESS_PLACEHOLDERS: Array<{ source: string; label: string }> = [
-  { source: "big_venues",   label: "Scanning the big venues" },
-  { source: "live_music",   label: "Tuning into live music" },
-  { source: "community",    label: "Reading community boards" },
-  { source: "local",        label: "Checking local hotspots" },
-  { source: "claude_web",   label: "Hand-picking hidden gems" },
-];
-
 export function markSyncStart() {
+  // Don't pre-populate per-source rows. The multi-row banner is driven by the
+  // Claude SSE stream (claude-discover emits source_progress events as it
+  // works); the plain HTTP sync-location call doesn't stream, so a stack of
+  // "scanning" placeholders just looks cluttered with no real progress to show.
   currentContext = emptyContext();
-  for (const p of PROGRESS_PLACEHOLDERS) {
-    currentContext.sourceProgress[p.source] = { status: "scanning", label: p.label, count: 0 };
-  }
   setStatus("syncing");
 }
 
@@ -81,29 +70,6 @@ export function markSyncDone(newEventsCount: number) {
 
 export function setSyncContext(updates: Partial<Omit<SyncContext, "sourceProgress">>) {
   currentContext = { ...currentContext, ...updates };
-  notify();
-}
-
-// Translate the sync-location response into per-source progress rows. Sources
-// with 0 events don't get rendered (variety mode prefers focused signal).
-export function captureSyncProgress(data: any) {
-  const neighborhood = data?.neighborhood as string | undefined;
-  const channels: Array<{ source: string; label: string; count: number }> = [
-    { source: "big_venues",   label: "Big venues",                count: (data?.ticketmaster || 0) + (data?.seatgeek || 0) },
-    { source: "live_music",   label: "Live music",                count: data?.bandsintown || 0 },
-    { source: "community",    label: "Community events",          count: data?.eventbrite || 0 },
-    { source: "local",        label: "Local hotspots",            count: data?.yelp || 0 },
-    { source: "claude_web",   label: neighborhood
-                                        ? `Hidden gems in ${neighborhood}`
-                                        : "Hidden gems",          count: (data?.scraped || 0) + (data?.reddit || 0) },
-  ];
-  const next: Record<string, SourceProgress> = {};
-  for (const ch of channels) {
-    if (ch.count > 0) {
-      next[ch.source] = { status: "done", label: ch.label, count: ch.count };
-    }
-  }
-  currentContext = { ...currentContext, sourceProgress: next };
   notify();
 }
 

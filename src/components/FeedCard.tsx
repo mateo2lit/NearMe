@@ -44,7 +44,7 @@ export default function FeedCard({ event, isSaved, onPress, onSave }: Props) {
   const [realLoaded, setRealLoaded] = useState(false);
   const [realFailed, setRealFailed] = useState(false);
   const category = CATEGORY_MAP[event.category];
-  const fallbackUri = getEventImage(null, event.category, event.subcategory, event.title, event.description);
+  const fallbackUri = getEventImage(null, event.category, event.subcategory, event.title, event.description, event.tags);
   const realUri = !realFailed && event.image_url ? event.image_url : null;
 
   const startDate = effectiveStart(event);
@@ -119,7 +119,11 @@ export default function FeedCard({ event, isSaved, onPress, onSave }: Props) {
           return srcLabel ? <Text style={styles.sourceAttr}>{srcLabel}</Text> : null;
         })()}
         <Text style={styles.title} numberOfLines={2}>
-          {event.title}{venueName !== "Nearby" ? ` at ${venueName}` : ""}
+          {event.title}
+          {venueName !== "Nearby" &&
+          !event.title.toLowerCase().includes(venueName.toLowerCase())
+            ? ` at ${venueName}`
+            : ""}
         </Text>
         {event.blurb ? (
           <Text style={styles.blurb} numberOfLines={1} accessibilityLabel={`Why this matches you: ${event.blurb}`}>
