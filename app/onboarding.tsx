@@ -799,10 +799,25 @@ function scoreEventForGoals(event: Event, selectedGoalIds: string[]): number {
     score += 10;
   }
 
-  // Small bonus for happening soon
+  // Heavy recency bias — the app's promise is events happening soon, so
+  // a perfect match 2 weeks out is a worse teaser than a strong match tonight.
   if (event.start_time) {
-    const hoursUntil = (effectiveStart(event).getTime() - Date.now()) / 3600000;
-    if (hoursUntil > 0 && hoursUntil < 48) score += 1;
+    const daysUntil = (effectiveStart(event).getTime() - Date.now()) / 86_400_000;
+    if (daysUntil < 0) {
+      score = -1; // already past — never pick
+    } else if (daysUntil < 1) {
+      score += 20;
+    } else if (daysUntil < 2) {
+      score += 14;
+    } else if (daysUntil < 4) {
+      score += 8; // this weekend
+    } else if (daysUntil < 7) {
+      score += 3;
+    } else if (daysUntil < 14) {
+      score += 0;
+    } else {
+      score -= 5; // actively penalize far-future events
+    }
   }
 
   return score;
@@ -985,9 +1000,10 @@ function TeaserStep({
 
 function TeaserCard({ event }: { event: Event }) {
   const img = getEventImage(event.image_url, event.category, event.subcategory, event.title, event.description);
-  const startDate = new Date(event.start_time);
+  const startDate = effectiveStart(event);
   const dayName = startDate.toLocaleDateString([], { weekday: "short" }).toUpperCase();
   const dayNum = startDate.getDate();
+  const monthName = startDate.toLocaleDateString([], { month: "short" }).toUpperCase();
   const timeStr = startDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
   return (
@@ -1011,6 +1027,7 @@ function TeaserCard({ event }: { event: Event }) {
         <View style={styles.teaserDateBlock}>
           <Text style={styles.teaserDateDay}>{dayName}</Text>
           <Text style={styles.teaserDateNum}>{dayNum}</Text>
+          <Text style={styles.teaserDateMonth}>{monthName}</Text>
         </View>
         <View style={{ flex: 1 }}>
           <View style={styles.teaserMetaRow}>
@@ -1888,6 +1905,14 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     color: COLORS.text,
     marginTop: -2,
+    lineHeight: 20,
+  },
+  teaserDateMonth: {
+    fontSize: 9,
+    fontWeight: "700",
+    color: COLORS.accent,
+    letterSpacing: 0.5,
+    marginTop: -1,
   },
   teaserMetaRow: {
     flexDirection: "row",
