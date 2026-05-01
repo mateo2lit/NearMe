@@ -18,7 +18,9 @@ import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { COLORS, GRADIENTS, RADIUS } from "../src/constants/theme";
 import { fetchNearbyEvents, triggerLocationSync, effectiveStart } from "../src/services/events";
-import { setFeedHandoff } from "../src/services/eventCache";
+import { setFeedHandoff, getFeedHandoff } from "../src/services/eventCache";
+import { CelebrateStep } from "../src/components/CelebrateStep";
+import { getOrCreateUserId } from "../src/hooks/usePreferences";
 import { getEventImage } from "../src/constants/images";
 import { useLocation } from "../src/hooks/useLocation";
 import { Event } from "../src/types";
@@ -123,8 +125,8 @@ const HAPPY_HOUR_OPTIONS: Option[] = [
 
 // ─── Main Component ──────────────────────────────────────────
 
-type StepKey = "welcome" | "goals" | "vibe" | "social" | "schedule" | "blocker" | "budget" | "happy-hour" | "building" | "teaser" | "paywall";
-const STEPS: StepKey[] = ["welcome", "goals", "vibe", "social", "schedule", "blocker", "budget", "happy-hour", "building", "teaser", "paywall"];
+type StepKey = "welcome" | "goals" | "vibe" | "social" | "schedule" | "blocker" | "budget" | "happy-hour" | "building" | "teaser" | "paywall" | "celebrate";
+const STEPS: StepKey[] = ["welcome", "goals", "vibe", "social", "schedule", "blocker", "budget", "happy-hour", "building", "teaser", "paywall", "celebrate"];
 
 export default function Onboarding() {
   const router = useRouter();
@@ -139,6 +141,8 @@ export default function Onboarding() {
   const [happyHour, setHappyHour] = useState<string>("");
   const [matchedEvents, setMatchedEvents] = useState<Event[]>([]);
   const [matchCount, setMatchCount] = useState<number>(0);
+  const [celebrateEventCount, setCelebrateEventCount] = useState(0);
+  const [celebrateUserId, setCelebrateUserId] = useState<string>("");
 
   const stepIdx = STEPS.indexOf(step);
   const progress = stepIdx / (STEPS.length - 1);
@@ -204,6 +208,14 @@ export default function Onboarding() {
     }
     await AsyncStorage.setItem("@nearme_onboarded", "true");
     await AsyncStorage.setItem("@nearme_subscribed", "true");
+
+    const handoff = await getFeedHandoff();
+    setCelebrateEventCount(handoff?.length || 0);
+    setCelebrateUserId(await getOrCreateUserId());
+    setStep("celebrate");
+  };
+
+  const finishOnboarding = () => {
     router.replace("/(tabs)");
   };
 
@@ -237,6 +249,9 @@ export default function Onboarding() {
     );
   }
   if (step === "paywall") return <PaywallStep onSubscribe={unlockApp} onBack={goBack} />;
+  if (step === "celebrate") {
+    return <CelebrateStep eventCount={celebrateEventCount} userId={celebrateUserId} onDone={finishOnboarding} />;
+  }
 
   // Question steps share the same UI shell
   return (
