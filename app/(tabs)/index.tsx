@@ -28,6 +28,8 @@ import { isTonight, isTomorrow, isThisWeekend, effectiveStart } from "../../src/
 import { useClaudeRefresh, applyRanking } from "../../src/hooks/useClaudeRefresh";
 import { ClaudeRefreshOverlay } from "../../src/components/ClaudeRefreshOverlay";
 import { getOrCreateUserId } from "../../src/hooks/usePreferences";
+import { useRatingTriggers } from "../../src/hooks/useRatingTriggers";
+import { RatingPrompt } from "../../src/components/RatingPrompt";
 import { geohashEncode } from "../../src/lib/geohash";
 
 const FIRST_REFRESH_KEY = "@nearme_first_claude_refresh_done";
@@ -146,6 +148,12 @@ export default function DiscoverScreen() {
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL!;
   const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!;
   const claude = useClaudeRefresh({ supabaseUrl, anonKey });
+
+  const ratingTrigger = useRatingTriggers();
+  const [ratingUserId, setRatingUserId] = useState<string>("");
+  useEffect(() => {
+    getOrCreateUserId().then(setRatingUserId);
+  }, []);
 
   const params = useLocalSearchParams<{ tag?: string }>();
   useEffect(() => {
@@ -501,6 +509,11 @@ export default function DiscoverScreen() {
         state={claude.state.state}
         status={claude.state.status}
         foundCount={claude.state.foundEvents.length}
+      />
+      <RatingPrompt
+        visible={ratingTrigger.visible}
+        userId={ratingUserId}
+        onClose={ratingTrigger.dismiss}
       />
     </View>
   );
