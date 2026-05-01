@@ -1,4 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as StoreReview from "expo-store-review";
+import Constants from "expo-constants";
+import { supabase } from "./supabase";
 
 export const RatingState = {
   Pending: "pending",
@@ -98,4 +101,55 @@ export async function shouldFireDelayedReprompt(): Promise<boolean> {
   if (!Number.isFinite(dismissedAt)) return false;
 
   return Date.now() - dismissedAt >= FORTY_EIGHT_HOURS_MS;
+}
+
+/**
+ * Triggers the native iOS / Android in-app review dialog.
+ * iOS rate-limits to 3/year per user — the platform decides whether the
+ * dialog actually renders. We can't detect outcome; treat any path through
+ * here as "rated" for state purposes (caller marks state).
+ */
+export async function requestNativeReview(): Promise<void> {
+  try {
+    const available = await StoreReview.isAvailableAsync();
+    if (!available) return;
+    const hasAction = await StoreReview.hasAction();
+    if (!hasAction) return;
+    await StoreReview.requestReview();
+  } catch (err) {
+    console.warn("[rating] requestReview failed:", err);
+  }
+}
+
+/**
+ * Returns true if the native review dialog can be shown in this environment.
+ * Used by the prefilter to suppress itself on Web / unsupported simulators —
+ * no point asking if the user can't actually rate.
+ */
+export async function isNativeReviewAvailable(): Promise<boolean> {
+  try {
+    const available = await StoreReview.isAvailableAsync();
+    if (!available) return false;
+    return await StoreReview.hasAction();
+  } catch {
+    return false;
+  }
+}
+
+export async function submitFeedback(message: string, userId: string): Promise<boolean> {
+  if (!supabase || !message.trim()) return false;
+  const appVersion =
+    (Constants.expoConfig as any)?.version ||
+    (Constants as any).manifest?.version ||
+    null;
+  const { error } = await supabase.from("feedback").insert({
+    user_id: userId,
+    message: message.trim(),
+    app_version: appVersion,
+  });
+  if (error) {
+    console.warn("[rating] submitFeedback error:", error);
+    return false;
+  }
+  return true;
 }
