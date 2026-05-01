@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import {
-  View, Text, StyleSheet, TouchableOpacity, FlatList, RefreshControl, ActivityIndicator,
+  View, Text, StyleSheet, TouchableOpacity, FlatList, RefreshControl,
 } from "react-native";
 import { useRouter, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -13,12 +13,14 @@ import ActiveFiltersRow from "../../src/components/ActiveFiltersRow";
 import FilterSheet, { FilterValue } from "../../src/components/FilterSheet";
 import SearchOverlay from "../../src/components/SearchOverlay";
 import EmptyState from "../../src/components/EmptyState";
+import { SyncStatusBanner } from "../../src/components/SyncStatusBanner";
+import { BouncingDots } from "../../src/components/BouncingDots";
 import { fetchNearbyEvents, applyHiddenFilter, filterPastEvents, filterHappyHour, sortByStartTime, dedupeSameDayDuplicates } from "../../src/services/events";
 import { getFeedHandoff, clearFeedHandoff } from "../../src/services/eventCache";
 import { useLocation } from "../../src/hooks/useLocation";
 import { useSyncStatus } from "../../src/hooks/useSyncStatus";
 import { useWhenFilter, WhenFilter } from "../../src/hooks/useWhenFilter";
-import { COLORS, RADIUS, SPACING } from "../../src/constants/theme";
+import { COLORS, RADIUS } from "../../src/constants/theme";
 import { Event } from "../../src/types";
 import { buildDiscoveryRows } from "../../src/lib/rows";
 import { isTonight, isTomorrow, isThisWeekend, effectiveStart } from "../../src/lib/time-windows";
@@ -304,21 +306,15 @@ export default function DiscoverScreen() {
 
       <ActiveFiltersRow value={filter} onPress={() => setShowFilters(true)} />
 
-      {syncStatus.status !== "idle" && (
-        <View style={styles.syncBanner}>
-          {syncStatus.status === "syncing" ? (
-            <>
-              <View style={styles.syncDot} />
-              <Text style={styles.syncText}>Checking for new events…</Text>
-            </>
-          ) : syncStatus.count > 0 ? (
-            <>
-              <Ionicons name="checkmark-circle" size={14} color={COLORS.success} />
-              <Text style={styles.syncText}>Added {syncStatus.count} new event{syncStatus.count === 1 ? "" : "s"}</Text>
-            </>
-          ) : null}
-        </View>
-      )}
+      <SyncStatusBanner
+        syncing={
+          syncStatus.status === "syncing" ||
+          claude.state.state === "phase1" ||
+          claude.state.state === "phase2"
+        }
+        doneCount={syncStatus.status === "done" ? syncStatus.count : 0}
+        foundCount={claude.state.foundEvents.length}
+      />
 
       {showingSkeletons ? (
         <FlatList
@@ -381,10 +377,16 @@ export default function DiscoverScreen() {
             />
           }
           ListFooterComponent={
-            syncStatus.status === "syncing" ? (
+            syncStatus.status === "syncing" ||
+            claude.state.state === "phase1" ||
+            claude.state.state === "phase2" ? (
               <View style={styles.loadingFooter}>
-                <ActivityIndicator color={COLORS.accent} size="small" />
-                <Text style={styles.loadingFooterText}>Finding more events nearby…</Text>
+                <BouncingDots size={9} />
+                <Text style={styles.loadingFooterText}>
+                  {claude.state.foundEvents.length > 0
+                    ? `Adding ${claude.state.foundEvents.length} fresh picks…`
+                    : "Finding more events nearby…"}
+                </Text>
               </View>
             ) : null
           }
@@ -438,15 +440,6 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.card, alignItems: "center", justifyContent: "center",
     borderWidth: 1, borderColor: COLORS.border,
   },
-  syncBanner: {
-    flexDirection: "row", alignItems: "center", gap: 6,
-    marginHorizontal: SPACING.md, marginTop: 8,
-    paddingHorizontal: 12, paddingVertical: 6,
-    backgroundColor: COLORS.accent + "15",
-    borderRadius: RADIUS.pill, alignSelf: "flex-start",
-  },
-  syncDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: COLORS.accent },
-  syncText: { fontSize: 12, fontWeight: "600", color: COLORS.accent },
   feed: { paddingHorizontal: 16, paddingBottom: 24, gap: 16 },
   divider: { flexDirection: "row", alignItems: "center", gap: 10, marginVertical: 12 },
   dividerLine: { flex: 1, height: 1, backgroundColor: COLORS.border },
