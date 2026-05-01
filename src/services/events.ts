@@ -1,7 +1,7 @@
 import { Event, EventCategory } from "../types";
 import { supabase } from "./supabase";
 import { getCachedEvents, setCachedEvents } from "./eventCache";
-import { markSyncStart, markSyncDone } from "../hooks/useSyncStatus";
+import { markSyncStart, markSyncDone, setSyncContext, captureSyncProgress } from "../hooks/useSyncStatus";
 
 /**
  * Trigger a sync for the user's location.
@@ -27,12 +27,23 @@ export async function triggerLocationSync(
     body: JSON.stringify({ lat, lng, radius_miles: radiusMiles }),
   });
 
+  const captureContext = (data: any) => {
+    setSyncContext({
+      neighborhood: data?.neighborhood || null,
+      nearby: Array.isArray(data?.nearby_neighborhoods) ? data.nearby_neighborhoods : [],
+      wellCovered: Array.isArray(data?.well_covered_categories) ? data.well_covered_categories : [],
+      underRepresented: Array.isArray(data?.under_represented_categories) ? data.under_represented_categories : [],
+    });
+    captureSyncProgress(data);
+  };
+
   if (!waitForCompletion) {
     markSyncStart();
     request
       .then(async (res) => {
         try {
           const data = await res.json();
+          captureContext(data);
           markSyncDone(data?.upserted || 0);
         } catch {
           markSyncDone(0);
@@ -46,6 +57,7 @@ export async function triggerLocationSync(
     markSyncStart();
     const res = await request;
     const data = await res.json();
+    captureContext(data);
     markSyncDone(data?.upserted || 0);
     return { synced: !!data?.synced, events: data?.upserted };
   } catch (err) {
@@ -77,8 +89,24 @@ async function rpcDiscover(
   return (data || []).map((e: any) => ({ ...e, tags: e.tags || [] }));
 }
 
+const MIN_FEED_EVENTS = 20;
+
+function mergeUnique(base: Event[], extra: Event[]): Event[] {
+  const seen = new Set(base.map((e) => e.id));
+  const merged = [...base];
+  for (const e of extra) {
+    if (!seen.has(e.id)) {
+      seen.add(e.id);
+      merged.push(e);
+    }
+  }
+  return merged;
+}
+
 /**
- * Fetch events with auto-widening radius if no results, and cache the result.
+ * Fetch events with tiered fill. If the first query returns fewer than
+ * MIN_FEED_EVENTS, progressively widen the radius and drop filters, merging
+ * unique results so the user sees a packed feed rather than an empty one.
  * Use cachedOnly=true to return only cached data (no network).
  */
 export async function fetchNearbyEvents(
@@ -92,37 +120,50 @@ export async function fetchNearbyEvents(
   if (!supabase) return [];
 
   if (opts?.cachedOnly) {
-    return (await getCachedEvents(lat, lng)) || [];
+    return filterPastEvents((await getCachedEvents(lat, lng)) || []);
   }
 
-  // Initial fetch
-  let events = await rpcDiscover(lat, lng, radiusMiles, categories, tags);
+  const discover = async (...args: Parameters<typeof rpcDiscover>) =>
+    filterPastEvents(await rpcDiscover(...args));
 
-  if (events.length === 0) {
-    // Trigger sync and wait
-    const syncRadius = Math.max(radiusMiles, 15);
+  let events = await discover(lat, lng, radiusMiles, categories, tags);
+
+  // If sparse, trigger a sync + re-fetch before trying wider/looser queries
+  if (events.length < MIN_FEED_EVENTS) {
+    const syncRadius = Math.max(radiusMiles, 25);
     await triggerLocationSync(lat, lng, syncRadius, true);
-
-    // Re-fetch with original radius
-    events = await rpcDiscover(lat, lng, radiusMiles, categories, tags);
-
-    // Auto-widen if still empty
-    if (events.length === 0) {
-      events = await rpcDiscover(lat, lng, 30, categories, tags);
-    }
-    if (events.length === 0) {
-      events = await rpcDiscover(lat, lng, 50, categories, tags);
-    }
-    // Last resort: drop filters entirely to show ANY nearby event
-    if (events.length === 0) {
-      events = await rpcDiscover(lat, lng, 50);
-    }
+    const refetched = await discover(lat, lng, radiusMiles, categories, tags);
+    events = mergeUnique(events, refetched);
   } else {
-    // Background sync to keep data fresh
     triggerLocationSync(lat, lng, Math.max(radiusMiles, 15), false);
   }
 
-  // Update cache
+  // Tiered widening: radius first, then drop tags, then drop categories.
+  // 100mi tier exists for genuinely thin markets where 50mi still bottoms out.
+  const widerRadii = [Math.max(radiusMiles, 15), 30, 50, 100].filter(
+    (r) => r > radiusMiles
+  );
+
+  for (const r of widerRadii) {
+    if (events.length >= MIN_FEED_EVENTS) break;
+    const more = await discover(lat, lng, r, categories, tags);
+    events = mergeUnique(events, more);
+  }
+
+  // Drop tag filter
+  if (events.length < MIN_FEED_EVENTS && tags?.length) {
+    const more = await discover(lat, lng, 50, categories);
+    events = mergeUnique(events, more);
+  }
+
+  // Drop category filter — last resort to pack the feed with anything nearby.
+  // Widen to 100mi here too: this is the final pass before the user sees a
+  // sparse feed, so cast the widest possible net.
+  if (events.length < MIN_FEED_EVENTS && categories?.length) {
+    const more = await discover(lat, lng, 100);
+    events = mergeUnique(events, more);
+  }
+
   if (events.length > 0) {
     setCachedEvents(lat, lng, events);
   }
@@ -146,25 +187,176 @@ export async function fetchEventById(id: string): Promise<Event | null> {
   };
 }
 
+export { effectiveStart } from "../lib/time-windows";
+import { effectiveStart, effectiveEnd } from "../lib/time-windows";
+
+export function isEventPast(event: Event, now: Date = new Date()): boolean {
+  const start = effectiveStart(event).getTime();
+  if (start > now.getTime()) return false;
+  return effectiveEnd(event).getTime() <= now.getTime();
+}
+
+export function filterPastEvents(events: Event[], now: Date = new Date()): Event[] {
+  return events.filter((e) => !isEventPast(e, now));
+}
+
+export { sortByStartTime } from "../lib/time-windows";
+
+export function isHappyHourEvent(event: Event): boolean {
+  if (event.tags?.some((t) => t === "happy-hour" || t === "happy_hour")) return true;
+  const haystack = `${event.title} ${event.subcategory || ""}`.toLowerCase();
+  return haystack.includes("happy hour") || haystack.includes("happyhour");
+}
+
+export function filterHappyHour(events: Event[], enabled: boolean): Event[] {
+  if (enabled) return events;
+  return events.filter((e) => !isHappyHourEvent(e));
+}
+
 export function getEventTimeLabel(event: Event): { label: string; color: string } {
   const now = Date.now();
-  const start = new Date(event.start_time).getTime();
-  const end = event.end_time ? new Date(event.end_time).getTime() : null;
+  const start = effectiveStart(event).getTime();
+  const end = effectiveEnd(event).getTime();
 
-  if (end && end <= now) return { label: "Ended", color: "#9090b0" };
-  if (start <= now && (!end || end > now)) return { label: "HAPPENING NOW", color: "#ff6b6b" };
+  if (end <= now) return { label: "Ended", color: "#9090b0" };
+  if (start <= now && end > now) return { label: "HAPPENING NOW", color: "#ff6b6b" };
 
   const minsUntil = Math.round((start - now) / 60000);
   if (minsUntil <= 60) return { label: `Starts in ${minsUntil} min`, color: "#ffb347" };
 
   const hours = Math.round(minsUntil / 60);
-  return { label: `In ${hours}h`, color: "#00d4cd" };
+  if (hours < 24) return { label: `In ${hours}h`, color: "#00d4cd" };
+
+  const days = Math.round(hours / 24);
+  return { label: `In ${days}d`, color: "#00d4cd" };
 }
 
 export function formatDistance(miles: number): string {
   if (miles < 0.1) return "Right here";
   if (miles < 1) return `${(miles * 5280).toFixed(0)} ft`;
   return `${miles.toFixed(1)} mi`;
+}
+
+export { dedupeSameDayDuplicates } from "../lib/dedupe";
+
+// ─── Source / category balancing ─────────────────────────────────
+// At ≥20 events we're packed and can afford to trade volume for variety.
+// Below 20 these helpers are no-ops — pack-the-feed memory wins.
+
+const FEED_FLOOR = 20;
+
+function sortByStartTimeAscending(list: Event[]): Event[] {
+  return [...list].sort((a, b) => {
+    const aT = a.start_time ? new Date(a.start_time).getTime() : 0;
+    const bT = b.start_time ? new Date(b.start_time).getTime() : 0;
+    return aT - bT;
+  });
+}
+
+/**
+ * If the diversified feed has ≥2 events from a source in the candidate pool but
+ * contributes 0 from that source, restore up to 2 events from it. Drops a few
+ * tail entries from the dominant source to make room. Goal: every active source
+ * visible in the feed.
+ */
+export function balanceSources(diversified: Event[], pool: Event[]): Event[] {
+  if (diversified.length < FEED_FLOOR) return diversified;
+
+  const divSources = new Set<string>();
+  const divSourceCount = new Map<string, number>();
+  for (const e of diversified) {
+    const s = e.source || "unknown";
+    divSources.add(s);
+    divSourceCount.set(s, (divSourceCount.get(s) || 0) + 1);
+  }
+
+  const inDiv = new Set(diversified.map((e) => e.id));
+  const poolBySource = new Map<string, Event[]>();
+  for (const e of pool) {
+    const s = e.source || "unknown";
+    if (!poolBySource.has(s)) poolBySource.set(s, []);
+    poolBySource.get(s)!.push(e);
+  }
+
+  const additions: Event[] = [];
+  for (const [src, items] of poolBySource) {
+    if (items.length >= 2 && !divSources.has(src)) {
+      const fresh = items.filter((e) => !inDiv.has(e.id)).slice(0, 2);
+      additions.push(...fresh);
+    }
+  }
+  if (additions.length === 0) return diversified;
+
+  const sortedSources = [...divSourceCount.entries()].sort((a, b) => b[1] - a[1]);
+  const dominant = sortedSources[0];
+  if (!dominant || dominant[1] < 3) {
+    return sortByStartTimeAscending([...diversified, ...additions]);
+  }
+
+  let toDrop = Math.min(additions.length, dominant[1] - 2);
+  const filtered = diversified.filter((e) => {
+    if (toDrop > 0 && (e.source || "unknown") === dominant[0]) {
+      toDrop--;
+      return false;
+    }
+    return true;
+  });
+
+  return sortByStartTimeAscending([...filtered, ...additions]);
+}
+
+/**
+ * Ensure ≥minCategories distinct categories represented when feed is at floor.
+ * Drops from the dominant category tail to make room for under-represented ones.
+ */
+export function balanceCategories(diversified: Event[], pool: Event[], minCategories = 3): Event[] {
+  if (diversified.length < FEED_FLOOR) return diversified;
+
+  const catCount = new Map<string, number>();
+  for (const e of diversified) {
+    const c = e.category || "unknown";
+    catCount.set(c, (catCount.get(c) || 0) + 1);
+  }
+  if (catCount.size >= minCategories) return diversified;
+
+  const inDiv = new Set(diversified.map((e) => e.id));
+  const poolByCategory = new Map<string, Event[]>();
+  for (const e of pool) {
+    const c = e.category || "unknown";
+    if (!poolByCategory.has(c)) poolByCategory.set(c, []);
+    poolByCategory.get(c)!.push(e);
+  }
+
+  const additions: Event[] = [];
+  let projectedCategories = catCount.size;
+  for (const [cat, items] of poolByCategory) {
+    if (projectedCategories >= minCategories) break;
+    if (items.length >= 2 && !catCount.has(cat)) {
+      const fresh = items.filter((e) => !inDiv.has(e.id)).slice(0, 2);
+      if (fresh.length > 0) {
+        additions.push(...fresh);
+        projectedCategories++;
+      }
+    }
+  }
+  if (additions.length === 0) return diversified;
+
+  const sortedCats = [...catCount.entries()].sort((a, b) => b[1] - a[1]);
+  const dominant = sortedCats[0];
+  if (!dominant || dominant[1] < 3) {
+    return sortByStartTimeAscending([...diversified, ...additions]);
+  }
+
+  let toDrop = Math.min(additions.length, dominant[1] - 2);
+  const filtered = diversified.filter((e) => {
+    if (toDrop > 0 && (e.category || "unknown") === dominant[0]) {
+      toDrop--;
+      return false;
+    }
+    return true;
+  });
+
+  return sortByStartTimeAscending([...filtered, ...additions]);
 }
 
 /**

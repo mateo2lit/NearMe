@@ -17,11 +17,31 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { COLORS, GRADIENTS, RADIUS } from "../src/constants/theme";
-import { fetchNearbyEvents, triggerLocationSync } from "../src/services/events";
+import { fetchNearbyEvents, triggerLocationSync, effectiveStart } from "../src/services/events";
 import { setFeedHandoff } from "../src/services/eventCache";
 import { getEventImage } from "../src/constants/images";
 import { useLocation } from "../src/hooks/useLocation";
 import { Event } from "../src/types";
+import type { PurchasesOffering, PurchasesPackage } from "react-native-purchases";
+import {
+  getOfferings,
+  purchasePackage,
+  restorePurchases,
+  hasEntitlement,
+} from "../src/services/iap";
+
+function trialDaysFor(pkg: PurchasesPackage | null): number | null {
+  if (!pkg) return null;
+  const intro: any = (pkg.product as any).introPrice;
+  if (!intro || intro.price !== 0) return null;
+  const period = intro.period ?? intro.periodUnit;
+  const value = intro.periodNumberOfUnits ?? intro.periodValue ?? intro.cycles ?? 1;
+  const unit = (intro.periodUnit ?? intro.period?.unit ?? "").toString().toUpperCase();
+  if (unit === "DAY") return value;
+  if (unit === "WEEK") return value * 7;
+  if (unit === "MONTH") return value * 30;
+  return value;
+}
 
 const { width, height } = Dimensions.get("window");
 
@@ -86,10 +106,25 @@ const BLOCKERS: Option[] = [
   { id: "wrong-scene", label: "Can't find my scene", emoji: "🎯", description: "Our AI will get it right" },
 ];
 
+const HAPPY_HOUR_OPTIONS: Option[] = [
+  {
+    id: "show",
+    label: "Show happy hours",
+    emoji: "🍸",
+    description: "Bar specials, $2 off, 2-for-1, weekday wind-downs — all in the feed.",
+  },
+  {
+    id: "hide",
+    label: "Hide happy hours",
+    emoji: "🙅",
+    description: "Keep the feed focused on bigger events — concerts, singles nights, food events, sports.",
+  },
+];
+
 // ─── Main Component ──────────────────────────────────────────
 
-type StepKey = "welcome" | "goals" | "vibe" | "social" | "schedule" | "blocker" | "budget" | "building" | "teaser" | "paywall";
-const STEPS: StepKey[] = ["welcome", "goals", "vibe", "social", "schedule", "blocker", "budget", "building", "teaser", "paywall"];
+type StepKey = "welcome" | "goals" | "vibe" | "social" | "schedule" | "blocker" | "budget" | "happy-hour" | "building" | "teaser" | "paywall";
+const STEPS: StepKey[] = ["welcome", "goals", "vibe", "social", "schedule", "blocker", "budget", "happy-hour", "building", "teaser", "paywall"];
 
 export default function Onboarding() {
   const router = useRouter();
@@ -101,6 +136,7 @@ export default function Onboarding() {
   const [schedule, setSchedule] = useState<string>("");
   const [blocker, setBlocker] = useState<string>("");
   const [budget, setBudget] = useState<string>("");
+  const [happyHour, setHappyHour] = useState<string>("");
   const [matchedEvents, setMatchedEvents] = useState<Event[]>([]);
   const [matchCount, setMatchCount] = useState<number>(0);
 
@@ -153,7 +189,8 @@ export default function Onboarding() {
         radius: 10,
         lat: 26.3587,
         lng: -80.0831,
-        onboarding: { goals, vibe, social, schedule, blocker, budget },
+        happyHourEnabled: happyHour !== "hide",
+        onboarding: { goals, vibe, social, schedule, blocker, budget, happyHour },
       })
     );
   };
@@ -204,7 +241,7 @@ export default function Onboarding() {
   // Question steps share the same UI shell
   return (
     <View style={styles.container}>
-      <Header progress={progress} onBack={goBack} stepIdx={stepIdx} totalSteps={7} />
+      <Header progress={progress} onBack={goBack} stepIdx={stepIdx} totalSteps={8} />
 
       {step === "goals" && (
         <QuestionStep
@@ -275,13 +312,53 @@ export default function Onboarding() {
       {step === "budget" && (
         <QuestionStep
           title="What's your budget?"
-          subtitle="Last question — then our AI goes to work"
+          subtitle="One more question after this"
           options={BUDGETS}
           selected={budget ? [budget] : []}
           onChange={(arr) => setBudget(arr[0] || "")}
           onNext={goNext}
           canContinue={!!budget}
+          continueLabel="Continue"
+        />
+      )}
+
+      {step === "happy-hour" && (
+        <QuestionStep
+          title="Happy hours in your feed?"
+          subtitle="Bars publish a lot of these — up to you whether they belong in your feed."
+          options={HAPPY_HOUR_OPTIONS}
+          selected={happyHour ? [happyHour] : []}
+          onChange={(arr) => setHappyHour(arr[0] || "")}
+          onNext={goNext}
+          canContinue={!!happyHour}
           continueLabel="Build my feed"
+          contextBlock={
+            <>
+              <View style={styles.contextCard}>
+                <View style={styles.contextIconWrap}>
+                  <Ionicons name="time-outline" size={18} color={COLORS.accent} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.contextTitle}>Why we ask</Text>
+                  <Text style={styles.contextBody}>
+                    Recurring happy hours can take up a big chunk of nightlife listings. Hiding them keeps the feed focused on one-off events.
+                  </Text>
+                </View>
+              </View>
+              <View style={styles.contextCard}>
+                <View style={styles.contextIconWrap}>
+                  <Ionicons name="sparkles-outline" size={18} color={COLORS.accent} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.contextTitle}>Either way works</Text>
+                  <Text style={styles.contextBody}>
+                    Hidden events still exist — they just don't clutter Discover and the Map.
+                  </Text>
+                </View>
+              </View>
+            </>
+          }
+          footerNote="You can change this anytime in Settings."
         />
       )}
     </View>
@@ -410,9 +487,11 @@ interface QuestionStepProps {
   canContinue: boolean;
   continueLabel: string;
   multi?: boolean;
+  contextBlock?: React.ReactNode;
+  footerNote?: string;
 }
 
-function QuestionStep({ title, subtitle, options, selected, onChange, onNext, canContinue, continueLabel, multi }: QuestionStepProps) {
+function QuestionStep({ title, subtitle, options, selected, onChange, onNext, canContinue, continueLabel, multi, contextBlock, footerNote }: QuestionStepProps) {
   const toggle = (id: string) => {
     if (multi) {
       onChange(selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]);
@@ -428,6 +507,7 @@ function QuestionStep({ title, subtitle, options, selected, onChange, onNext, ca
         <Text style={styles.stepSubtitle}>{subtitle}</Text>
 
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 180 }}>
+          {contextBlock ? <View style={styles.contextWrap}>{contextBlock}</View> : null}
           <View style={styles.optionList}>
             {options.map((opt) => {
               const isSelected = selected.includes(opt.id);
@@ -454,6 +534,13 @@ function QuestionStep({ title, subtitle, options, selected, onChange, onNext, ca
               );
             })}
           </View>
+
+          {footerNote ? (
+            <View style={styles.footerNoteWrap}>
+              <Ionicons name="settings-outline" size={14} color={COLORS.muted} />
+              <Text style={styles.footerNoteText}>{footerNote}</Text>
+            </View>
+          ) : null}
         </ScrollView>
       </View>
 
@@ -504,11 +591,27 @@ function BuildingStep({
   const spinAnim = useRef(new Animated.Value(0)).current;
 
   // Dynamic task list based on user's actual answers
+  const goalLabels = goals
+    .map((id) => GOALS.find((g) => g.id === id)?.label)
+    .filter((s): s is string => Boolean(s));
+  const goalLine =
+    goalLabels.length === 0
+      ? "Reading your preferences"
+      : goalLabels.length === 1
+        ? `Honed in on ${goalLabels[0].toLowerCase()}`
+        : goalLabels.length === 2
+          ? `Balancing ${goalLabels[0].toLowerCase()} and ${goalLabels[1].toLowerCase()}`
+          : `Weighing your ${goalLabels.length} priorities`;
+  const vibeLabel = VIBES.find((v) => v.id === vibe)?.label.toLowerCase() || vibe || "custom";
+  const blockerLabel = BLOCKERS.find((b) => b.id === blocker)?.label.toLowerCase();
+
   const tasks = [
-    `Reading your ${goals.length} goals`,
-    "Connecting to local venues",
-    "Matching events to your preferences",
-    `Tuning for a ${vibe || "custom"} vibe`,
+    goalLine,
+    "Sweeping venues within 15 miles of you",
+    blockerLabel
+      ? `Solving for "${blockerLabel}"`
+      : "Matching events to your preferences",
+    `Calibrating for a ${vibeLabel} vibe`,
     "Ranking your top picks",
   ];
 
@@ -533,8 +636,9 @@ function BuildingStep({
       setProgress(target);
     };
 
-    // Schedule tasks to advance with natural pacing — slower on last step so it doesn't stall
-    const taskTimings = [1200, 1400, 1600, 1800]; // cumulative delays between tasks
+    // Schedule tasks to advance with varied pacing — non-monotonic so it
+    // feels like real computational work rather than a linear timer
+    const taskTimings = [1500, 800, 2100, 1100]; // delay BEFORE each transition
     let taskElapsed = 0;
     const taskTimers: any[] = [];
 
@@ -548,6 +652,18 @@ function BuildingStep({
         }, taskElapsed)
       );
     }
+
+    // While we're waiting for the fetch on the LAST task ("Ranking your top
+    // picks"), creep the progress bar from 80% toward 95% so the user doesn't
+    // feel stuck. When the fetch completes we jump to 100%.
+    const driftTimer = setTimeout(() => {
+      if (cancelled || fetchDone) return;
+      Animated.timing(progressAnim, {
+        toValue: 0.95,
+        duration: 4000,
+        useNativeDriver: false,
+      }).start();
+    }, taskElapsed);
 
     // Run real sync using user's ACTUAL location (from useLocation hook)
     (async () => {
@@ -564,9 +680,8 @@ function BuildingStep({
         }
         fetchDone = true;
 
-        const minTotal = taskElapsed + 1200; // min 8s total
-        const elapsedNow = taskElapsed;
-        const remainder = Math.max(0, minTotal - elapsedNow);
+        const minTotal = taskElapsed + 1200;
+        const remainder = Math.max(0, minTotal - taskElapsed);
 
         setTimeout(() => {
           if (cancelled) return;
@@ -591,6 +706,7 @@ function BuildingStep({
     return () => {
       cancelled = true;
       taskTimers.forEach(clearTimeout);
+      clearTimeout(driftTimer);
     };
   }, []);
 
@@ -696,10 +812,25 @@ function scoreEventForGoals(event: Event, selectedGoalIds: string[]): number {
     score += 10;
   }
 
-  // Small bonus for happening soon
+  // Heavy recency bias — the app's promise is events happening soon, so
+  // a perfect match 2 weeks out is a worse teaser than a strong match tonight.
   if (event.start_time) {
-    const hoursUntil = (new Date(event.start_time).getTime() - Date.now()) / 3600000;
-    if (hoursUntil > 0 && hoursUntil < 48) score += 1;
+    const daysUntil = (effectiveStart(event).getTime() - Date.now()) / 86_400_000;
+    if (daysUntil < 0) {
+      score = -1; // already past — never pick
+    } else if (daysUntil < 1) {
+      score += 20;
+    } else if (daysUntil < 2) {
+      score += 14;
+    } else if (daysUntil < 4) {
+      score += 8; // this weekend
+    } else if (daysUntil < 7) {
+      score += 3;
+    } else if (daysUntil < 14) {
+      score += 0;
+    } else {
+      score -= 5; // actively penalize far-future events
+    }
   }
 
   return score;
@@ -882,9 +1013,10 @@ function TeaserStep({
 
 function TeaserCard({ event }: { event: Event }) {
   const img = getEventImage(event.image_url, event.category, event.subcategory, event.title, event.description);
-  const startDate = new Date(event.start_time);
+  const startDate = effectiveStart(event);
   const dayName = startDate.toLocaleDateString([], { weekday: "short" }).toUpperCase();
   const dayNum = startDate.getDate();
+  const monthName = startDate.toLocaleDateString([], { month: "short" }).toUpperCase();
   const timeStr = startDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
   return (
@@ -908,6 +1040,7 @@ function TeaserCard({ event }: { event: Event }) {
         <View style={styles.teaserDateBlock}>
           <Text style={styles.teaserDateDay}>{dayName}</Text>
           <Text style={styles.teaserDateNum}>{dayNum}</Text>
+          <Text style={styles.teaserDateMonth}>{monthName}</Text>
         </View>
         <View style={{ flex: 1 }}>
           <View style={styles.teaserMetaRow}>
@@ -948,6 +1081,9 @@ function BlurredEventCard({ event }: { event: Event }) {
 function PaywallStep({ onSubscribe, onBack }: { onSubscribe: () => void; onBack: () => void }) {
   const [plan, setPlan] = useState<"yearly" | "weekly">("yearly");
   const [showClose, setShowClose] = useState(false);
+  const [offering, setOffering] = useState<PurchasesOffering | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [purchasing, setPurchasing] = useState(false);
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
@@ -970,21 +1106,82 @@ function PaywallStep({ onSubscribe, onBack }: { onSubscribe: () => void; onBack:
     return () => clearTimeout(timer);
   }, []);
 
-  const trialDays = plan === "yearly" ? 7 : 3;
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const current = await getOfferings();
+        if (!cancelled) setOffering(current);
+      } catch {
+        if (!cancelled) setOffering(null);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const annualPkg = offering?.annual ?? null;
+  const weeklyPkg = offering?.weekly ?? null;
+  const selectedPkg = plan === "yearly" ? annualPkg : weeklyPkg;
+
+  const annualPrice = annualPkg?.product.priceString ?? "$79.99";
+  const weeklyPrice = weeklyPkg?.product.priceString ?? "$4.99";
+  const annualPerMonth = annualPkg
+    ? `${annualPkg.product.currencyCode === "USD" ? "$" : ""}${(annualPkg.product.price / 12).toFixed(2)}/mo`
+    : "$6.67/mo";
+  const annualTrialDays = trialDaysFor(annualPkg) ?? 7;
+  const weeklyTrialDays = trialDaysFor(weeklyPkg) ?? 7;
+  const trialDays = plan === "yearly" ? annualTrialDays : weeklyTrialDays;
   const priceText = plan === "yearly"
-    ? `${trialDays} days free, then $49.99/year ($4.16/mo)`
-    : `${trialDays} days free, then $4.99/week`;
+    ? `${trialDays} days free, then ${annualPrice}/year (${annualPerMonth})`
+    : `${trialDays} days free, then ${weeklyPrice}/week`;
 
-  const handleSubscribe = () => {
-    const title = `Start ${trialDays}-Day Free Trial`;
-    const msg = plan === "yearly"
-      ? `No charge for ${trialDays} days. We'll remind you 2 days before your trial ends. After that, $49.99/year unless you cancel.\n\nCancel anytime in iPhone Settings.`
-      : `No charge for ${trialDays} days. We'll remind you 2 days before your trial ends. After that, $4.99/week unless you cancel.\n\nCancel anytime in iPhone Settings.`;
+  const handleSubscribe = async () => {
+    if (purchasing) return;
 
-    Alert.alert(title, msg, [
-      { text: "Cancel", style: "cancel" },
-      { text: "Start Trial", onPress: onSubscribe },
-    ]);
+    if (!selectedPkg) {
+      Alert.alert(
+        "Store unavailable",
+        "We couldn't load subscription options. Please check your connection and try again."
+      );
+      return;
+    }
+
+    setPurchasing(true);
+    const result = await purchasePackage(selectedPkg);
+    setPurchasing(false);
+
+    if (result.ok) {
+      if (hasEntitlement(result.info)) {
+        onSubscribe();
+      } else {
+        Alert.alert(
+          "Purchase incomplete",
+          "Your purchase didn't activate. Please try again or tap Restore."
+        );
+      }
+      return;
+    }
+
+    if (result.cancelled) return;
+
+    Alert.alert("Purchase failed", result.message ?? "Something went wrong. Please try again.");
+  };
+
+  const handleRestore = async () => {
+    try {
+      const { active } = await restorePurchases();
+      if (active) {
+        onSubscribe();
+      } else {
+        Alert.alert("Restore Purchases", "No active subscription found on this Apple ID.");
+      }
+    } catch (e: any) {
+      Alert.alert("Restore failed", e?.message ?? "Please try again.");
+    }
   };
 
   return (
@@ -1111,19 +1308,19 @@ function PaywallStep({ onSubscribe, onBack }: { onSubscribe: () => void; onBack:
             selected={plan === "yearly"}
             onSelect={() => setPlan("yearly")}
             title="Yearly"
-            price="$49.99"
+            price={annualPrice}
             period="/year"
-            subtext="Just $4.16/mo · 7-day free trial"
-            badge="MOST POPULAR · SAVE 81%"
+            subtext={`Just ${annualPerMonth} · ${annualTrialDays}-day free trial`}
+            badge="MOST POPULAR · SAVE 69%"
             highlighted
           />
           <PlanCard
             selected={plan === "weekly"}
             onSelect={() => setPlan("weekly")}
             title="Weekly"
-            price="$4.99"
+            price={weeklyPrice}
             period="/week"
-            subtext="Just $21.62/mo · 3-day free trial"
+            subtext={`${weeklyTrialDays}-day free trial`}
           />
         </View>
 
@@ -1151,14 +1348,25 @@ function PaywallStep({ onSubscribe, onBack }: { onSubscribe: () => void; onBack:
 
       <View style={styles.paywallBottomBar}>
         <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
-          <TouchableOpacity style={styles.primaryBtn} onPress={handleSubscribe} activeOpacity={0.85}>
+          <TouchableOpacity
+            style={styles.primaryBtn}
+            onPress={handleSubscribe}
+            activeOpacity={0.85}
+            disabled={loading || purchasing || !selectedPkg}
+          >
             <LinearGradient
               colors={GRADIENTS.accent as any}
               style={styles.btnGradient}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 0 }}
             >
-              <Text style={styles.primaryBtnText}>Start {trialDays}-Day Free Trial</Text>
+              <Text style={styles.primaryBtnText}>
+                {purchasing
+                  ? "Processing…"
+                  : loading
+                    ? "Loading…"
+                    : `Start ${trialDays}-Day Free Trial`}
+              </Text>
             </LinearGradient>
           </TouchableOpacity>
         </Animated.View>
@@ -1166,11 +1374,11 @@ function PaywallStep({ onSubscribe, onBack }: { onSubscribe: () => void; onBack:
         <Text style={styles.paywallPriceText}>{priceText}</Text>
 
         <View style={styles.paywallLinks}>
-          <TouchableOpacity activeOpacity={0.6} onPress={() => Alert.alert("Restore Purchases", "No previous purchase found.")}>
+          <TouchableOpacity activeOpacity={0.6} onPress={handleRestore}>
             <Text style={styles.paywallLink}>Restore</Text>
           </TouchableOpacity>
           <Text style={styles.paywallLinkDivider}>·</Text>
-          <TouchableOpacity activeOpacity={0.6} onPress={() => Linking.openURL("https://mateo2lit.github.io/NearMe/terms.html")}>
+          <TouchableOpacity activeOpacity={0.6} onPress={() => Linking.openURL("https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")}>
             <Text style={styles.paywallLink}>Terms</Text>
           </TouchableOpacity>
           <Text style={styles.paywallLinkDivider}>·</Text>
@@ -1178,6 +1386,17 @@ function PaywallStep({ onSubscribe, onBack }: { onSubscribe: () => void; onBack:
             <Text style={styles.paywallLink}>Privacy</Text>
           </TouchableOpacity>
         </View>
+
+        {__DEV__ && (
+          <TouchableOpacity
+            activeOpacity={0.7}
+            onPress={onSubscribe}
+            style={styles.devSkipBtn}
+          >
+            <Ionicons name="code-slash" size={12} color={COLORS.muted} />
+            <Text style={styles.devSkipText}>Dev: Skip paywall</Text>
+          </TouchableOpacity>
+        )}
       </View>
     </View>
   );
@@ -1353,6 +1572,54 @@ const styles = StyleSheet.create({
   },
   optionList: {
     gap: 10,
+  },
+  contextWrap: {
+    marginBottom: 14,
+    gap: 8,
+  },
+  contextCard: {
+    flexDirection: "row",
+    gap: 12,
+    padding: 14,
+    borderRadius: RADIUS.md,
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  contextIconWrap: {
+    width: 32, height: 32, borderRadius: 8,
+    alignItems: "center", justifyContent: "center",
+    backgroundColor: COLORS.accent + "18",
+  },
+  contextTitle: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: COLORS.text,
+  },
+  contextBody: {
+    fontSize: 12,
+    color: COLORS.muted,
+    marginTop: 2,
+    lineHeight: 16,
+  },
+  footerNoteWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    marginTop: 18,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    alignSelf: "center",
+  },
+  footerNoteText: {
+    fontSize: 12,
+    color: COLORS.muted,
+    fontWeight: "600",
   },
   optionCard: {
     flexDirection: "row",
@@ -1651,6 +1918,14 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     color: COLORS.text,
     marginTop: -2,
+    lineHeight: 20,
+  },
+  teaserDateMonth: {
+    fontSize: 9,
+    fontWeight: "700",
+    color: COLORS.accent,
+    letterSpacing: 0.5,
+    marginTop: -1,
   },
   teaserMetaRow: {
     flexDirection: "row",
@@ -2230,5 +2505,25 @@ const styles = StyleSheet.create({
   paywallLinkDivider: {
     fontSize: 12,
     color: COLORS.muted,
+  },
+  devSkipBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    alignSelf: "center",
+    marginTop: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: RADIUS.pill,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderStyle: "dashed",
+  },
+  devSkipText: {
+    fontSize: 11,
+    color: COLORS.muted,
+    fontWeight: "700",
+    letterSpacing: 0.3,
   },
 });

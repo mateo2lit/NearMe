@@ -40,7 +40,12 @@ export interface Event {
   attendance: number | null;
   source_url: string | null;
   tags: string[];
+  rank_score?: number;
+  blurb?: string;
   distance?: number; // computed, in miles
+  // Alternate showtimes from same-day duplicate events merged into this one.
+  // ISO strings, sorted ascending. Excludes the primary start_time.
+  additionalStartTimes?: string[];
 }
 
 export type EventCategory =
@@ -72,7 +77,8 @@ export type EventSource =
   | "google_places"
   | "scraped"
   | "municipal"
-  | "community";
+  | "community"
+  | "claude";
 
 export type SwipeAction = "save" | "skip";
 
@@ -82,6 +88,16 @@ export interface CustomLocation {
   lng: number;
 }
 
+export interface OnboardingAnswers {
+  goals: string[];
+  vibe: string | null;
+  social: string | null;
+  schedule: string | null;
+  blocker: string | null;
+  budget: string | null;
+  happyHour: boolean;
+}
+
 export interface UserPreferences {
   categories: EventCategory[];
   tags: string[];
@@ -89,6 +105,9 @@ export interface UserPreferences {
   lat: number;
   lng: number;
   customLocation?: CustomLocation | null;
+  onboarding?: OnboardingAnswers;
+  hiddenCategories?: string[];
+  hiddenTags?: string[];
 }
 
 export interface CategoryOption {

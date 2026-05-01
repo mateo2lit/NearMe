@@ -1,14 +1,16 @@
 import "../src/global.css";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { View, ActivityIndicator } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useRouter } from "expo-router";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { COLORS } from "../src/constants/theme";
+import { configureIap } from "../src/services/iap";
 
 export default function RootLayout() {
+  useEffect(() => {
+    configureIap().catch(() => {});
+  }, []);
+
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: COLORS.bg }}>
       <StatusBar style="light" />

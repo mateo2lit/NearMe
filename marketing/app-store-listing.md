@@ -82,7 +82,7 @@ NearMe aggregates from Ticketmaster, SeatGeek, local venue websites, city calend
 • Advanced filters & tags
 • AI-powered recommendations based on your taste
 
-Try it free for 7 days. Less than $1/week with the yearly plan. Cancel anytime.
+Try it free for 7 days. Less than $7/month with the yearly plan. Cancel anytime.
 
 **Why NearMe?**
 Because "I don't know, what do you want to do?" is a garbage plan. Open the app. Pick something. Go.

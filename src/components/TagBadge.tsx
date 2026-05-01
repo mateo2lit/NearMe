@@ -15,21 +15,13 @@ export default function TagBadge({ tag, selected, onPress, size = "sm" }: TagBad
   if (!info) return null;
 
   const isMd = size === "md";
-  // Selected: white bubble with colored text (high contrast against dark bg)
-  // Unselected: subtle cardAlt bubble with muted text
-  const bgColor = selected ? "#ffffff" : COLORS.cardAlt;
-  const borderColor = selected ? info.color : "transparent";
-  const textColor = selected ? info.color : COLORS.muted;
+  const bgColor = selected ? COLORS.accent : COLORS.cardAlt;
+  const textColor = selected ? "#fff" : COLORS.muted;
+  const iconColor = selected ? "#fff" : COLORS.muted;
 
   const content = (
-    <View
-      style={[
-        styles.badge,
-        isMd && styles.badgeMd,
-        { backgroundColor: bgColor, borderColor },
-      ]}
-    >
-      <Ionicons name={info.icon as any} size={isMd ? 14 : 11} color={textColor} />
+    <View style={[styles.badge, isMd && styles.badgeMd, { backgroundColor: bgColor }]}>
+      <Ionicons name={info.icon as any} size={isMd ? 14 : 11} color={iconColor} />
       <Text style={[styles.label, isMd && styles.labelMd, { color: textColor }]}>
         {info.label}
       </Text>
@@ -38,12 +30,11 @@ export default function TagBadge({ tag, selected, onPress, size = "sm" }: TagBad
 
   if (onPress) {
     return (
-      <TouchableOpacity onPress={onPress} activeOpacity={0.7}>
+      <TouchableOpacity onPress={onPress} activeOpacity={0.7} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
         {content}
       </TouchableOpacity>
     );
   }
-
   return content;
 }
 
@@ -55,7 +46,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: RADIUS.pill,
-    borderWidth: 1.5,
   },
   badgeMd: {
     paddingHorizontal: 12,
