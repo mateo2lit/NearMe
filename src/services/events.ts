@@ -103,9 +103,27 @@ function mergeUnique(base: Event[], extra: Event[]): Event[] {
 }
 
 /**
- * Fetch events with tiered fill. If the first query returns fewer than
- * MIN_FEED_EVENTS, progressively widen the radius and drop filters, merging
- * unique results so the user sees a packed feed rather than an empty one.
+ * The default radius before any user filtering. Pack-the-feed widening only
+ * kicks in for default values — once the user sets explicit filter values
+ * (smaller radius, specific tags or categories), we respect their choice and
+ * never silently broaden the search.
+ */
+const DEFAULT_RADIUS_MILES = 5;
+
+/**
+ * Fetch events. Two regimes:
+ *
+ * 1. **Default search** (no explicit user filters): pack-the-feed. If the first
+ *    query returns <20 events, progressively widen radius and drop filters
+ *    until we hit the floor. Memory: "always fill to ~20 events; loosen filters
+ *    before showing empty."
+ *
+ * 2. **Explicit search** (user picked a radius < default OR added tags or
+ *    categories): respect their choice as a hard constraint. No widening, no
+ *    filter dropping. If they ask for 1mi singles events and there are 3,
+ *    they see those 3 — not 30 events from 50mi away with the singles tag
+ *    silently dropped.
+ *
  * Use cachedOnly=true to return only cached data (no network).
  */
 export async function fetchNearbyEvents(
@@ -125,6 +143,14 @@ export async function fetchNearbyEvents(
   const discover = async (...args: Parameters<typeof rpcDiscover>) =>
     filterPastEvents(await rpcDiscover(...args));
 
+  // User has explicit filter intent if any of these are set. Any radius that
+  // isn't exactly the default counts — including a wider 25mi pick, since the
+  // user picked it deliberately and shouldn't get silently widened past it.
+  const hasExplicitFilter =
+    (categories?.length ?? 0) > 0 ||
+    (tags?.length ?? 0) > 0 ||
+    radiusMiles !== DEFAULT_RADIUS_MILES;
+
   let events = await discover(lat, lng, radiusMiles, categories, tags);
 
   // If sparse, trigger a sync + re-fetch before trying wider/looser queries
@@ -137,8 +163,16 @@ export async function fetchNearbyEvents(
     triggerLocationSync(lat, lng, Math.max(radiusMiles, 15), false);
   }
 
-  // Tiered widening: radius first, then drop tags, then drop categories.
-  // 100mi tier exists for genuinely thin markets where 50mi still bottoms out.
+  // RESPECT USER FILTERS: if user picked explicit categories/tags or a tight
+  // radius, don't silently widen or drop their filters. Show what's actually
+  // there at their radius+filters, even if that's <20 events.
+  if (hasExplicitFilter) {
+    if (events.length > 0) setCachedEvents(lat, lng, events);
+    return events;
+  }
+
+  // Default search: tiered widening to pack the feed. Only kicks in when the
+  // user has NOT applied any filters (default radius, no categories, no tags).
   const widerRadii = [Math.max(radiusMiles, 15), 30, 50, 100].filter(
     (r) => r > radiusMiles
   );
@@ -146,20 +180,6 @@ export async function fetchNearbyEvents(
   for (const r of widerRadii) {
     if (events.length >= MIN_FEED_EVENTS) break;
     const more = await discover(lat, lng, r, categories, tags);
-    events = mergeUnique(events, more);
-  }
-
-  // Drop tag filter
-  if (events.length < MIN_FEED_EVENTS && tags?.length) {
-    const more = await discover(lat, lng, 50, categories);
-    events = mergeUnique(events, more);
-  }
-
-  // Drop category filter — last resort to pack the feed with anything nearby.
-  // Widen to 100mi here too: this is the final pass before the user sees a
-  // sparse feed, so cast the widest possible net.
-  if (events.length < MIN_FEED_EVENTS && categories?.length) {
-    const more = await discover(lat, lng, 100);
     events = mergeUnique(events, more);
   }
 

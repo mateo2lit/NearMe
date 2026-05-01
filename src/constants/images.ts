@@ -14,9 +14,9 @@ const SUBCATEGORY_IMAGES: Record<string, string> = {
   softball:       "https://images.unsplash.com/photo-1529768167801-9173d94c2a42?w=600",
   golf:           "https://images.unsplash.com/photo-1535131749006-b7f58c99034b?w=600",
   swimming:       "https://images.unsplash.com/photo-1530549387789-4c1017266635?w=600",
-  surfing:        "https://images.unsplash.com/photo-1502680390548-bdbac40b3298?w=600",
+  surfing:        "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=600",
   bowling:        "https://images.unsplash.com/photo-1545232979-8bf68ee9b1af?w=600",
-  sports_event:   "https://images.unsplash.com/photo-1461896836934-bd45ba5386e7?w=600",
+  sports_event:   "https://images.unsplash.com/photo-1546519638-68e109498ffc?w=600",
 
   // Fitness
   yoga:           "https://images.unsplash.com/photo-1544367567-0f2fcb009e0b?w=600",
@@ -31,7 +31,7 @@ const SUBCATEGORY_IMAGES: Record<string, string> = {
   live_music:     "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600",
   jam_session:    "https://images.unsplash.com/photo-1415201364774-f6f0bb35f28f?w=600",
   open_mic:       "https://images.unsplash.com/photo-1478147427282-58a87a120781?w=600",
-  dj_set:         "https://images.unsplash.com/photo-1571266028243-3716f02d2d2e?w=600",
+  dj_set:         "https://images.unsplash.com/photo-1504609813442-a8924e83f76e?w=600",
   jazz:           "https://images.unsplash.com/photo-1415201364774-f6f0bb35f28f?w=600",
   karaoke:        "https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?w=600",
 
@@ -55,7 +55,7 @@ const SUBCATEGORY_IMAGES: Record<string, string> = {
   // Arts & Culture
   theater:        "https://images.unsplash.com/photo-1503095396549-807759245b35?w=600",
   gallery:        "https://images.unsplash.com/photo-1513364776144-60967b0f800f?w=600",
-  workshop:       "https://images.unsplash.com/photo-1452860606245-08f6e3ef2783?w=600",
+  workshop:       "https://images.unsplash.com/photo-1460661419201-fd4cecdf8a8b?w=600",
   magic_show:     "https://images.unsplash.com/photo-1503095396549-807759245b35?w=600",
   museum:         "https://images.unsplash.com/photo-1554907984-15263bfd63bd?w=600",
   painting:       "https://images.unsplash.com/photo-1460661419201-fd4cecdf8a8b?w=600",
@@ -63,12 +63,12 @@ const SUBCATEGORY_IMAGES: Record<string, string> = {
   // Outdoors
   hiking:         "https://images.unsplash.com/photo-1551632811-561732d1e306?w=600",
   kayaking:       "https://images.unsplash.com/photo-1472745942893-4b9f730c7668?w=600",
-  birding:        "https://images.unsplash.com/photo-1621631187870-78e30b703157?w=600",
-  fishing:        "https://images.unsplash.com/photo-1532015421-1d702f80b012?w=600",
+  birding:        "https://images.unsplash.com/photo-1441974231531-c6227db76b6e?w=600",
+  fishing:        "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=600",
   camping:        "https://images.unsplash.com/photo-1504280390367-361c6d9f38f4?w=600",
   beach:          "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=600",
   nature:         "https://images.unsplash.com/photo-1441974231531-c6227db76b6e?w=600",
-  paddleboard:    "https://images.unsplash.com/photo-1526188717906-ab4a2f949f44?w=600",
+  paddleboard:    "https://images.unsplash.com/photo-1472745942893-4b9f730c7668?w=600",
 
   // Movies
   screening:      "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=600",
@@ -88,7 +88,7 @@ const SUBCATEGORY_IMAGES: Record<string, string> = {
   networking:     "https://images.unsplash.com/photo-1515187029135-18ee286d815b?w=600",
   lecture:        "https://images.unsplash.com/photo-1475721027785-f74eccf877e2?w=600",
   class:          "https://images.unsplash.com/photo-1524178232363-1fb2b075b655?w=600",
-  kids:           "https://images.unsplash.com/photo-1587654780291-39c9404d7dd0?w=600",
+  kids:           "https://images.unsplash.com/photo-1533174072545-7a4b6ad7a6c3?w=600",
   social:         "https://images.unsplash.com/photo-1529156069898-49953e39b3ac?w=600",
   language:       "https://images.unsplash.com/photo-1543269865-cbf427effbad?w=600",
   festival:       "https://images.unsplash.com/photo-1533174072545-7a4b6ad7a6c3?w=600",
@@ -115,8 +115,10 @@ const KEYWORD_IMAGES: [string[], string][] = [
   [["speed dating", "speed-dating"], SUBCATEGORY_IMAGES.speed_dating],
   [["singles mixer", "singles night", "singles mingle", "singles event"], SUBCATEGORY_IMAGES.singles_mixer],
   [["matchmaking", "matchmaker"],    SUBCATEGORY_IMAGES.matchmaking],
-  [["date night", "couples night", "couples event", "for couples", "romantic"], SUBCATEGORY_IMAGES.date_night],
+  [["date night", "couples night", "couples event", "for couples", "couples and singles", "couples & singles", "romantic"], SUBCATEGORY_IMAGES.date_night],
+  [["single ladies", "ladies night"], SUBCATEGORY_IMAGES.singles_mixer],
   [["flirty", "flirt night", "flirt event"], SUBCATEGORY_IMAGES.singles_mixer],
+  [["girls night", "girls' night", "ladies' night"], SUBCATEGORY_IMAGES.social],
   [["paint and sip", "paint & sip", "wine and paint"], SUBCATEGORY_IMAGES.paint_sip],
   [["tasting", "wine tasting"],      SUBCATEGORY_IMAGES.tasting],
   [["pickleball"],          SUBCATEGORY_IMAGES.pickleball],
@@ -173,7 +175,7 @@ const KEYWORD_IMAGES: [string[], string][] = [
 const CATEGORY_IMAGES: Record<string, string> = {
   nightlife:  "https://images.unsplash.com/photo-1566737236500-c8ac43014a67?w=600",
   music:      "https://images.unsplash.com/photo-1501281668745-f7f57925c3b4?w=600",
-  sports:     "https://images.unsplash.com/photo-1461896836934-bd45ba5386e7?w=600",
+  sports:     "https://images.unsplash.com/photo-1546519638-68e109498ffc?w=600",
   food:       "https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=600",
   arts:       "https://images.unsplash.com/photo-1513364776144-60967b0f800f?w=600",
   outdoors:   "https://images.unsplash.com/photo-1441974231531-c6227db76b6e?w=600",
@@ -204,10 +206,11 @@ export function getEventImage(
 
   // Tag-based match — tags are normalized (e.g. "date-night", "singles") so
   // they're more reliable than fuzzy keyword matching against the title.
-  // Strongly-coded tags first — singles/date-night/couples should never fall
-  // through to a generic nightlife image just because no keyword matched.
+  // Priority: date-night first so compound events like "Couples & Single
+  // Ladies Night" land on the intimate-dining image instead of a singles
+  // mingling shot. Then couples, then singles for pure singles events.
   if (tags?.length) {
-    const priority = ["singles", "date-night", "couples"];
+    const priority = ["date-night", "couples", "singles"];
     for (const p of priority) {
       if (tags.includes(p) && TAG_IMAGES[p]) return TAG_IMAGES[p];
     }

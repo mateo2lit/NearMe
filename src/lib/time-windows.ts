@@ -74,16 +74,20 @@ function addDays(d: Date, days: number): Date {
   return x;
 }
 
-// "Tonight" = from now through 3:00 AM next day (covers late-night events)
+// "Tonight" = anything still happening or starting before 3 AM next day. This
+// includes events that already started but haven't ended yet (a happy hour at
+// 6-9pm should show at 7:30pm, even though it "started" before now).
 export function isTonight(event: EventLike, now: Date = new Date()): boolean {
-  const t = effectiveStart(event);
+  const start = effectiveStart(event);
+  const end = effectiveEnd(event);
   const cutoff = new Date(
     now.getFullYear(),
     now.getMonth(),
     now.getDate() + 1,
     3, 0, 0
   );
-  return t >= now && t <= cutoff;
+  // Event must end after now (still happening or upcoming) AND start before cutoff
+  return end > now && start <= cutoff;
 }
 
 export function isTomorrow(event: EventLike, now: Date = new Date()): boolean {
