@@ -82,4 +82,59 @@ describe("dedupeSameDayDuplicates", () => {
     const result = dedupeSameDayDuplicates(events, NOW);
     expect(result.length).toBe(1);
   });
+
+  it("merges '&' and 'and' variants ('Brews & Tunes' vs 'Brews and Tunes')", () => {
+    const events = [
+      make({ id: "a", title: "Brews and Tunes", address: "Prosperity Brewers", start_time: "2026-05-01T19:00:00" }),
+      make({ id: "b", title: "Brews & Tunes", address: "Prosperity Brewers", start_time: "2026-05-01T21:00:00" }),
+    ];
+    const result = dedupeSameDayDuplicates(events, NOW);
+    expect(result.length).toBe(1);
+    expect(result[0].additionalStartTimes!.length).toBe(1);
+  });
+
+  it("merges title with 'at <venue>' suffix into the bare title", () => {
+    const events = [
+      make({ id: "a", title: "Friday Live Music", address: "Prosperity Brewers", start_time: "2026-05-01T18:00:00" }),
+      make({ id: "b", title: "Friday Live Music at Prosperity Brewers", address: "Prosperity Brewers", start_time: "2026-05-01T20:00:00" }),
+    ];
+    const result = dedupeSameDayDuplicates(events, NOW);
+    expect(result.length).toBe(1);
+  });
+
+  it("merges across address formats sharing the same first segment", () => {
+    const events = [
+      make({ id: "a", title: "Show", address: "201 W Plaza Real" }),
+      make({ id: "b", title: "Show", address: "201 W Plaza Real, Boca Raton, FL 33432" }),
+    ];
+    const result = dedupeSameDayDuplicates(events, NOW);
+    expect(result.length).toBe(1);
+  });
+
+  it("merges via token-subset when one title is a longer variant", () => {
+    const events = [
+      make({ id: "a", title: "Live Music Night", address: "X", start_time: "2026-05-01T18:00:00" }),
+      make({ id: "b", title: "Big Live Music Night Show", address: "X", start_time: "2026-05-01T20:00:00" }),
+    ];
+    const result = dedupeSameDayDuplicates(events, NOW);
+    expect(result.length).toBe(1);
+  });
+
+  it("does not merge unrelated events at the same venue same day", () => {
+    const events = [
+      make({ id: "a", title: "Yoga Class", address: "Same Place" }),
+      make({ id: "b", title: "Trivia Night", address: "Same Place" }),
+    ];
+    const result = dedupeSameDayDuplicates(events, NOW);
+    expect(result.length).toBe(2);
+  });
+
+  it("ignores trailing punctuation when comparing titles", () => {
+    const events = [
+      make({ id: "a", title: "Live Music!", address: "X", start_time: "2026-05-01T18:00:00" }),
+      make({ id: "b", title: "Live Music", address: "X", start_time: "2026-05-01T20:00:00" }),
+    ];
+    const result = dedupeSameDayDuplicates(events, NOW);
+    expect(result.length).toBe(1);
+  });
 });
