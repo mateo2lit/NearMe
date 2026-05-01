@@ -591,11 +591,27 @@ function BuildingStep({
   const spinAnim = useRef(new Animated.Value(0)).current;
 
   // Dynamic task list based on user's actual answers
+  const goalLabels = goals
+    .map((id) => GOALS.find((g) => g.id === id)?.label.toLowerCase())
+    .filter((s): s is string => Boolean(s));
+  const primaryGoals =
+    goalLabels.length === 0
+      ? "your goals"
+      : goalLabels.length === 1
+        ? `"${goalLabels[0]}"`
+        : goalLabels.length === 2
+          ? `"${goalLabels[0]}" + "${goalLabels[1]}"`
+          : `"${goalLabels[0]}", "${goalLabels[1]}" +${goalLabels.length - 2} more`;
+  const vibeLabel = VIBES.find((v) => v.id === vibe)?.label.toLowerCase() || vibe || "custom";
+  const blockerLabel = BLOCKERS.find((b) => b.id === blocker)?.label.toLowerCase();
+
   const tasks = [
-    `Reading your ${goals.length} goals`,
-    "Connecting to local venues",
-    "Matching events to your preferences",
-    `Tuning for a ${vibe || "custom"} vibe`,
+    `Reading what matters: ${primaryGoals}`,
+    "Sweeping venues within 15 miles of you",
+    blockerLabel
+      ? `Solving for "${blockerLabel}"`
+      : "Matching events to your preferences",
+    `Calibrating for a ${vibeLabel} vibe`,
     "Ranking your top picks",
   ];
 

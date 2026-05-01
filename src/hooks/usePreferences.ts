@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as Crypto from "expo-crypto";
 import { EventCategory, UserPreferences } from "../types";
 import { BOCA_RATON, DEFAULT_RADIUS_MILES } from "../constants/theme";
 import { supabase } from "../services/supabase";
@@ -12,7 +13,7 @@ const ONBOARDED_KEY = "@nearme_onboarded";
 export async function getOrCreateUserId(): Promise<string> {
   let id = await AsyncStorage.getItem(USER_ID_KEY);
   if (!id) {
-    id = crypto.randomUUID();
+    id = Crypto.randomUUID();
     await AsyncStorage.setItem(USER_ID_KEY, id);
   }
   return id;
