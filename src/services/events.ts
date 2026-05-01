@@ -172,42 +172,8 @@ export async function fetchEventById(id: string): Promise<Event | null> {
   };
 }
 
-const DAY_MAP: Record<string, number> = {
-  sunday: 0, monday: 1, tuesday: 2, wednesday: 3,
-  thursday: 4, friday: 5, saturday: 6,
-};
-
-/**
- * For recurring events whose stored start_time is in the past, roll forward
- * to the next occurrence based on recurrence_rule ("every <weekday>") while
- * preserving the stored time-of-day. Non-recurring events return as-is.
- */
-export function effectiveStart(
-  event: Pick<Event, "start_time" | "is_recurring" | "recurrence_rule">
-): Date {
-  const original = new Date(event.start_time);
-  const now = Date.now();
-  if (!event.is_recurring || !event.recurrence_rule) return original;
-  if (original.getTime() >= now) return original;
-
-  const match = event.recurrence_rule.match(/every\s+(\w+)/i);
-  if (!match) return original;
-  const target = DAY_MAP[match[1].toLowerCase()];
-  if (target === undefined) return original;
-
-  const next = new Date();
-  let days = target - next.getDay();
-  if (days < 0) days += 7;
-  // If today is the target day but the time-of-day has already passed, push a week
-  if (days === 0) {
-    const today = new Date();
-    today.setHours(original.getHours(), original.getMinutes(), 0, 0);
-    if (today.getTime() < now) days = 7;
-  }
-  next.setDate(next.getDate() + days);
-  next.setHours(original.getHours(), original.getMinutes(), 0, 0);
-  return next;
-}
+export { effectiveStart } from "../lib/time-windows";
+import { effectiveStart } from "../lib/time-windows";
 
 const DEFAULT_DURATION_MS = 4 * 60 * 60 * 1000;
 

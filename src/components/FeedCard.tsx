@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { View, Text, Image, StyleSheet, Dimensions, TouchableOpacity } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
@@ -24,8 +25,11 @@ function tagDisplay(tag: string): string {
 }
 
 export default function FeedCard({ event, isSaved, onPress, onSave }: Props) {
+  const [imageFailed, setImageFailed] = useState(false);
   const category = CATEGORY_MAP[event.category];
-  const imageUri = getEventImage(event.image_url, event.category, event.subcategory, event.title, event.description);
+  const imageUri = imageFailed
+    ? getEventImage(null, event.category, event.subcategory, event.title, event.description)
+    : getEventImage(event.image_url, event.category, event.subcategory, event.title, event.description);
 
   const startDate = effectiveStart(event);
   const dateStr = startDate.toLocaleDateString([], {
@@ -45,7 +49,7 @@ export default function FeedCard({ event, isSaved, onPress, onSave }: Props) {
   return (
     <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.95}>
       <View style={styles.imageWrap}>
-        <Image source={{ uri: imageUri }} style={styles.image} />
+        <Image source={{ uri: imageUri }} onError={() => setImageFailed(true)} style={styles.image} />
         <TouchableOpacity
           style={[styles.saveBtn, isSaved && styles.saveBtnActive]}
           onPress={handleSave}

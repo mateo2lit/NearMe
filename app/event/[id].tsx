@@ -25,6 +25,7 @@ export default function EventDetail() {
   const [isSaved, setIsSaved] = useState(false);
   const [loading, setLoading] = useState(true);
   const [similar, setSimilar] = useState<Event[]>([]);
+  const [imageFailed, setImageFailed] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -144,7 +145,12 @@ export default function EventDetail() {
       <ScrollView contentContainerStyle={{ paddingBottom: 120 }} showsVerticalScrollIndicator={false}>
         <View style={styles.heroWrap}>
           <Image
-            source={{ uri: getEventImage(event.image_url, event.category, event.subcategory, event.title, event.description) }}
+            source={{
+              uri: imageFailed
+                ? getEventImage(null, event.category, event.subcategory, event.title, event.description)
+                : getEventImage(event.image_url, event.category, event.subcategory, event.title, event.description),
+            }}
+            onError={() => setImageFailed(true)}
             style={styles.heroImage}
           />
           <LinearGradient

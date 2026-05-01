@@ -13,7 +13,7 @@ import HeroCard from "../../src/components/HeroCard";
 import WhenSegmented from "../../src/components/WhenSegmented";
 import { COLORS, RADIUS, SPACING } from "../../src/constants/theme";
 import { Event } from "../../src/types";
-import { isTonight, isTomorrow, isThisWeekend } from "../../src/lib/time-windows";
+import { isTonight, isTomorrow, isThisWeekend, effectiveStart } from "../../src/lib/time-windows";
 
 const { width } = Dimensions.get("window");
 
@@ -28,11 +28,11 @@ const mapDarkStyle = [
 
 function matchesWhen(ev: Event, w: WhenFilter, now: Date): boolean {
   if (w === "all") return true;
-  if (w === "tonight") return isTonight(ev.start_time, now);
-  if (w === "tomorrow") return isTomorrow(ev.start_time, now);
-  if (w === "weekend") return isThisWeekend(ev.start_time, now);
+  if (w === "tonight") return isTonight(ev, now);
+  if (w === "tomorrow") return isTomorrow(ev, now);
+  if (w === "weekend") return isThisWeekend(ev, now);
   if (w === "week") {
-    const t = new Date(ev.start_time);
+    const t = effectiveStart(ev);
     const end = new Date(now);
     end.setDate(end.getDate() + 7);
     return t >= now && t < end;

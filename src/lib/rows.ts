@@ -30,7 +30,7 @@ const HAPPENING_SOON_HOURS = 6;
 const happeningNow: RowBuilder = (events, now) => {
   const filtered = sortByStartTime(
     events.filter((e) =>
-      isHappeningNowOrSoon(e.start_time, e.end_time, HAPPENING_SOON_HOURS, now)
+      isHappeningNowOrSoon(e, HAPPENING_SOON_HOURS, now)
     )
   );
   return filtered.length >= MIN_EVENTS_PER_ROW
@@ -40,7 +40,7 @@ const happeningNow: RowBuilder = (events, now) => {
 
 const freeTonight: RowBuilder = (events, now) => {
   const filtered = sortByStartTime(
-    events.filter((e) => e.is_free && isSameCalendarDay(e.start_time, now))
+    events.filter((e) => e.is_free && isSameCalendarDay(e, now))
   );
   return filtered.length >= MIN_EVENTS_PER_ROW
     ? { id: "free-tonight", title: "Free tonight", icon: "gift", events: filtered }
@@ -59,7 +59,7 @@ const withinOneMile: RowBuilder = (events) => {
 const thisWeekend: RowBuilder = (events, now) => {
   const dow = now.getDay();
   if (dow === 0 || dow === 6) return null;
-  const filtered = sortByStartTime(events.filter((e) => isThisWeekend(e.start_time, now)));
+  const filtered = sortByStartTime(events.filter((e) => isThisWeekend(e, now)));
   return filtered.length >= MIN_EVENTS_PER_ROW
     ? { id: "this-weekend", title: "This weekend", icon: "calendar", events: filtered }
     : null;
