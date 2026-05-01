@@ -1103,7 +1103,7 @@ function PaywallStep({ onSubscribe, onBack }: { onSubscribe: () => void; onBack:
     ? `${annualPkg.product.currencyCode === "USD" ? "$" : ""}${(annualPkg.product.price / 12).toFixed(2)}/mo`
     : "$6.67/mo";
   const annualTrialDays = trialDaysFor(annualPkg) ?? 7;
-  const weeklyTrialDays = trialDaysFor(weeklyPkg) ?? 3;
+  const weeklyTrialDays = trialDaysFor(weeklyPkg) ?? 7;
   const trialDays = plan === "yearly" ? annualTrialDays : weeklyTrialDays;
   const priceText = plan === "yearly"
     ? `${trialDays} days free, then ${annualPrice}/year (${annualPerMonth})`
