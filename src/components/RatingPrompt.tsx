@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   Modal, View, Text, TextInput, TouchableOpacity, StyleSheet, Pressable,
 } from "react-native";
@@ -20,13 +20,34 @@ export function RatingPrompt({ visible, userId, onClose }: Props) {
   const [mode, setMode] = useState<Mode>("prefilter");
   const [feedback, setFeedback] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const thanksTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Reset transient state every time the modal becomes visible so a re-fire
+  // (e.g. streak after a prior dismissal) starts in prefilter mode, not in
+  // whatever state it was last closed in.
+  useEffect(() => {
+    if (visible) {
+      setMode("prefilter");
+      setFeedback("");
+      setSubmitting(false);
+    }
+  }, [visible]);
+
+  // Clean up the thanks-mode auto-dismiss timer on unmount.
+  useEffect(() => {
+    return () => {
+      if (thanksTimerRef.current) clearTimeout(thanksTimerRef.current);
+    };
+  }, []);
 
   if (!visible) return null;
 
   const handleClose = async () => {
+    if (thanksTimerRef.current) {
+      clearTimeout(thanksTimerRef.current);
+      thanksTimerRef.current = null;
+    }
     await markDismissed();
-    setMode("prefilter");
-    setFeedback("");
     onClose();
   };
 
@@ -48,10 +69,10 @@ export function RatingPrompt({ visible, userId, onClose }: Props) {
     if (ok) {
       await markFeedbackSent();
       setMode("thanks");
-      setTimeout(() => {
+      if (thanksTimerRef.current) clearTimeout(thanksTimerRef.current);
+      thanksTimerRef.current = setTimeout(() => {
+        thanksTimerRef.current = null;
         onClose();
-        setMode("prefilter");
-        setFeedback("");
       }, 1500);
     }
     // On failure, stay in feedback mode so user can retry.
