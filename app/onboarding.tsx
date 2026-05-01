@@ -1027,7 +1027,7 @@ function TeaserStep({
 }
 
 function TeaserCard({ event }: { event: Event }) {
-  const img = getEventImage(event.image_url, event.category, event.subcategory, event.title, event.description);
+  const img = getEventImage(event.image_url, event.category, event.subcategory, event.title, event.description, event.tags);
   const startDate = effectiveStart(event);
   const dayName = startDate.toLocaleDateString([], { weekday: "short" }).toUpperCase();
   const dayNum = startDate.getDate();
@@ -1080,7 +1080,7 @@ function TeaserCard({ event }: { event: Event }) {
 }
 
 function BlurredEventCard({ event }: { event: Event }) {
-  const img = getEventImage(event.image_url, event.category, event.subcategory, event.title, event.description);
+  const img = getEventImage(event.image_url, event.category, event.subcategory, event.title, event.description, event.tags);
   return (
     <View style={styles.blurredCard}>
       <Image source={{ uri: img }} style={StyleSheet.absoluteFillObject} blurRadius={20} />

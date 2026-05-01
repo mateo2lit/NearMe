@@ -74,10 +74,12 @@ const SUBCATEGORY_IMAGES: Record<string, string> = {
   screening:      "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=600",
   outdoor_movie:  "https://images.unsplash.com/photo-1517604931442-7e0c8ed2963c?w=600",
 
-  // Dating / singles
+  // Dating / singles / couples
   speed_dating:   "https://images.unsplash.com/photo-1522202176988-66273c2fd55f?w=600",
   singles_mixer:  "https://images.unsplash.com/photo-1529333166437-7750a6dd5a70?w=600",
   matchmaking:    "https://images.unsplash.com/photo-1522202176988-66273c2fd55f?w=600",
+  date_night:     "https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=600", // intimate dinner table
+  couples:        "https://images.unsplash.com/photo-1518621736915-f3b1c41bfd00?w=600", // couple silhouette
   paint_sip:      "https://images.unsplash.com/photo-1460661419201-fd4cecdf8a8b?w=600",
   tasting:        "https://images.unsplash.com/photo-1510812431401-41d2bd2722f3?w=600",
 
@@ -93,11 +95,28 @@ const SUBCATEGORY_IMAGES: Record<string, string> = {
   charity:        "https://images.unsplash.com/photo-1559027615-cd4628902d4a?w=600",
 };
 
+// Tag-based matching (event tags from generateTags). Tags are more reliable than
+// title-keyword matching because they're normalized — checked BEFORE keyword.
+const TAG_IMAGES: Record<string, string> = {
+  "singles":        SUBCATEGORY_IMAGES.singles_mixer,
+  "date-night":     SUBCATEGORY_IMAGES.date_night,
+  "couples":        SUBCATEGORY_IMAGES.couples,
+  "21+":            SUBCATEGORY_IMAGES.happy_hour,
+  "live-music":     SUBCATEGORY_IMAGES.live_music,
+  "happy-hour":     SUBCATEGORY_IMAGES.happy_hour,
+  "trivia":         SUBCATEGORY_IMAGES.trivia,
+  "karaoke":        SUBCATEGORY_IMAGES.karaoke,
+  "outdoor":        SUBCATEGORY_IMAGES.nature,
+  "active":         SUBCATEGORY_IMAGES.running,
+};
+
 // Keyword-based matching (checked against title + description)
 const KEYWORD_IMAGES: [string[], string][] = [
   [["speed dating", "speed-dating"], SUBCATEGORY_IMAGES.speed_dating],
   [["singles mixer", "singles night", "singles mingle", "singles event"], SUBCATEGORY_IMAGES.singles_mixer],
   [["matchmaking", "matchmaker"],    SUBCATEGORY_IMAGES.matchmaking],
+  [["date night", "couples night", "couples event", "for couples", "romantic"], SUBCATEGORY_IMAGES.date_night],
+  [["flirty", "flirt night", "flirt event"], SUBCATEGORY_IMAGES.singles_mixer],
   [["paint and sip", "paint & sip", "wine and paint"], SUBCATEGORY_IMAGES.paint_sip],
   [["tasting", "wine tasting"],      SUBCATEGORY_IMAGES.tasting],
   [["pickleball"],          SUBCATEGORY_IMAGES.pickleball],
@@ -165,21 +184,36 @@ const CATEGORY_IMAGES: Record<string, string> = {
 
 /**
  * Get the best matching image for an event.
- * Priority: event.image_url > subcategory match > keyword match > category fallback
+ * Priority: event.image_url > subcategory match > tag match > keyword match > category fallback
  */
 export function getEventImage(
   imageUrl: string | null,
   category: string,
   subcategory?: string,
   title?: string,
-  description?: string
+  description?: string,
+  tags?: string[],
 ): string {
   // Use the event's own image if it has one
   if (imageUrl) return imageUrl;
 
-  // Try subcategory match
+  // Try subcategory match (most specific signal)
   if (subcategory && SUBCATEGORY_IMAGES[subcategory]) {
     return SUBCATEGORY_IMAGES[subcategory];
+  }
+
+  // Tag-based match — tags are normalized (e.g. "date-night", "singles") so
+  // they're more reliable than fuzzy keyword matching against the title.
+  // Strongly-coded tags first — singles/date-night/couples should never fall
+  // through to a generic nightlife image just because no keyword matched.
+  if (tags?.length) {
+    const priority = ["singles", "date-night", "couples"];
+    for (const p of priority) {
+      if (tags.includes(p) && TAG_IMAGES[p]) return TAG_IMAGES[p];
+    }
+    for (const tag of tags) {
+      if (TAG_IMAGES[tag]) return TAG_IMAGES[tag];
+    }
   }
 
   // Try keyword matching against title + description

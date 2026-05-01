@@ -35,6 +35,32 @@ const VENUE_TYPES = [
   "art_gallery", "museum",
 ];
 
+// Adult / strip-club venues should never reach the feed. Filter both on initial
+// venue sync (so they're not stored) and on scan-time as a backstop for any
+// already-stored entries. Detection is conservative — only obvious markers.
+const ADULT_NAME_PATTERN = /\b(strip\s*club|topless|gentlemen'?s?\s*club|adult\s+(?:club|entertainment)|nude\s+(?:dance|dancers)|exotic\s+dance|exotic\s+club)\b/i;
+const ADULT_NAME_BLOCKLIST = new Set<string>([
+  "diamond dolls",
+  "tootsie's cabaret",
+  "tootsies cabaret",
+  "hustler club",
+  "pure platinum",
+  "the office gentlemens club",
+  "club madonna",
+  "scarlett's cabaret",
+  "scarletts cabaret",
+  "rachel's",
+  "rachels gentlemens club",
+]);
+
+function isAdultVenue(name: string | null | undefined, types?: string[]): boolean {
+  if (types?.includes("adult_entertainment_club")) return true;
+  if (!name) return false;
+  const lc = name.trim().toLowerCase();
+  if (ADULT_NAME_BLOCKLIST.has(lc)) return true;
+  return ADULT_NAME_PATTERN.test(name);
+}
+
 // ─── Venue Sync ──────────────────────────────────────────────
 
 async function syncVenues(lat: number, lng: number, radiusMeters: number) {
@@ -62,9 +88,11 @@ async function syncVenues(lat: number, lng: number, radiusMeters: number) {
       const data = await response.json();
       if (data.places) {
         for (const place of data.places) {
+          const name = place.displayName?.text;
+          if (isAdultVenue(name, place.types || [])) continue;
           allVenues.push({
             google_place_id: place.id,
-            name: place.displayName.text,
+            name,
             lat: place.location.latitude,
             lng: place.location.longitude,
             address: place.formattedAddress,
@@ -767,7 +795,11 @@ async function scanVenues(
 
   const degPerMile = 1 / 69;
   const radiusMiles = radiusMeters / 1609.34;
+  // Distance filter + adult-venue backstop. The ingestion-time filter in
+  // syncVenues catches new entries; this re-filter catches legacy rows already
+  // sitting in the DB so existing strip clubs stop getting scanned.
   const nearby = venues.filter((v: any) =>
+    !isAdultVenue(v.name) &&
     Math.abs(v.lat - lat) < degPerMile * radiusMiles &&
     Math.abs(v.lng - lng) < degPerMile * radiusMiles
   );

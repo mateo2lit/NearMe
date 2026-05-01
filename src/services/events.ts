@@ -1,7 +1,7 @@
 import { Event, EventCategory } from "../types";
 import { supabase } from "./supabase";
 import { getCachedEvents, setCachedEvents } from "./eventCache";
-import { markSyncStart, markSyncDone, setSyncContext, captureSyncProgress } from "../hooks/useSyncStatus";
+import { markSyncStart, markSyncDone, setSyncContext } from "../hooks/useSyncStatus";
 
 /**
  * Trigger a sync for the user's location.
@@ -34,7 +34,6 @@ export async function triggerLocationSync(
       wellCovered: Array.isArray(data?.well_covered_categories) ? data.well_covered_categories : [],
       underRepresented: Array.isArray(data?.under_represented_categories) ? data.under_represented_categories : [],
     });
-    captureSyncProgress(data);
   };
 
   if (!waitForCompletion) {

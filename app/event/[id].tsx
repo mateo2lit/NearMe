@@ -147,7 +147,7 @@ export default function EventDetail() {
         <View style={styles.heroWrap}>
           <Image
             source={{
-              uri: getEventImage(null, event.category, event.subcategory, event.title, event.description),
+              uri: getEventImage(null, event.category, event.subcategory, event.title, event.description, event.tags),
             }}
             style={styles.heroImage}
           />
