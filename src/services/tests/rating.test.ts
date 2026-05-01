@@ -8,6 +8,7 @@ import {
   recordSessionDay,
   shouldFireStreakPrompt,
   markStreakShown,
+  shouldFireDelayedReprompt,
 } from "../rating";
 
 describe("rating state", () => {
@@ -127,5 +128,41 @@ describe("session days + streak", () => {
     await markStreakShown();
     const ts = await AsyncStorage.getItem("@nearme_rating_streak_shown");
     expect(ts).toBeTruthy();
+  });
+});
+
+describe("delayed re-fire", () => {
+  beforeEach(async () => {
+    await AsyncStorage.clear();
+  });
+
+  it("returns false if never dismissed", async () => {
+    expect(await shouldFireDelayedReprompt()).toBe(false);
+  });
+
+  it("returns false if dismissed less than 48h ago", async () => {
+    const recent = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+    await AsyncStorage.setItem("@nearme_rating_dismissed_at", recent);
+    expect(await shouldFireDelayedReprompt()).toBe(false);
+  });
+
+  it("returns true if dismissed ≥48h ago and state is pending", async () => {
+    const stale = new Date(Date.now() - 49 * 3600 * 1000).toISOString();
+    await AsyncStorage.setItem("@nearme_rating_dismissed_at", stale);
+    expect(await shouldFireDelayedReprompt()).toBe(true);
+  });
+
+  it("returns false if state is rated, even if dismissed long ago", async () => {
+    const stale = new Date(Date.now() - 49 * 3600 * 1000).toISOString();
+    await AsyncStorage.setItem("@nearme_rating_dismissed_at", stale);
+    await markRated();
+    expect(await shouldFireDelayedReprompt()).toBe(false);
+  });
+
+  it("returns false if state is feedback_sent", async () => {
+    const stale = new Date(Date.now() - 49 * 3600 * 1000).toISOString();
+    await AsyncStorage.setItem("@nearme_rating_dismissed_at", stale);
+    await markFeedbackSent();
+    expect(await shouldFireDelayedReprompt()).toBe(false);
   });
 });

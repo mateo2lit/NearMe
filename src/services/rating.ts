@@ -84,3 +84,18 @@ export async function shouldFireStreakPrompt(): Promise<boolean> {
 export async function markStreakShown(): Promise<void> {
   await AsyncStorage.setItem(KEY_STREAK_SHOWN, new Date().toISOString());
 }
+
+const FORTY_EIGHT_HOURS_MS = 48 * 3600 * 1000;
+
+export async function shouldFireDelayedReprompt(): Promise<boolean> {
+  const state = await getRatingState();
+  if (state !== RatingState.Pending) return false;
+
+  const dismissedRaw = await AsyncStorage.getItem(KEY_DISMISSED_AT);
+  if (!dismissedRaw) return false;
+
+  const dismissedAt = new Date(dismissedRaw).getTime();
+  if (!Number.isFinite(dismissedAt)) return false;
+
+  return Date.now() - dismissedAt >= FORTY_EIGHT_HOURS_MS;
+}
