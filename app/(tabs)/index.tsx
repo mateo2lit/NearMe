@@ -13,7 +13,7 @@ import ActiveFiltersRow from "../../src/components/ActiveFiltersRow";
 import FilterSheet, { FilterValue } from "../../src/components/FilterSheet";
 import SearchOverlay from "../../src/components/SearchOverlay";
 import EmptyState from "../../src/components/EmptyState";
-import { fetchNearbyEvents, applyHiddenFilter } from "../../src/services/events";
+import { fetchNearbyEvents, applyHiddenFilter, filterPastEvents, filterHappyHour, sortByStartTime } from "../../src/services/events";
 import { getFeedHandoff, clearFeedHandoff } from "../../src/services/eventCache";
 import { useLocation } from "../../src/hooks/useLocation";
 import { useSyncStatus } from "../../src/hooks/useSyncStatus";
@@ -116,7 +116,9 @@ export default function DiscoverScreen() {
       categories.length ? categories : undefined,
       tags
     );
-    const filtered = applyHiddenFilter(data, prefs?.hiddenCategories, prefs?.hiddenTags);
+    const happyHourEnabled = prefs?.happyHourEnabled ?? true;
+    const hidden = applyHiddenFilter(data, prefs?.hiddenCategories, prefs?.hiddenTags);
+    const filtered = filterHappyHour(hidden, happyHourEnabled);
     const diversified = diversifyByVenue(filtered);
 
     const goals: string[] = prefs?.onboarding?.goals || [];
@@ -142,7 +144,10 @@ export default function DiscoverScreen() {
       if (handoff && handoff.length > 0 && alive) {
         const prefsStr = await AsyncStorage.getItem("@nearme_preferences");
         const prefs = prefsStr ? JSON.parse(prefsStr) : null;
-        const filteredHandoff = applyHiddenFilter(handoff, prefs?.hiddenCategories, prefs?.hiddenTags);
+        const fresh = filterPastEvents(handoff);
+        const happyHourEnabled = prefs?.happyHourEnabled ?? true;
+        const hidden = applyHiddenFilter(fresh, prefs?.hiddenCategories, prefs?.hiddenTags);
+        const filteredHandoff = filterHappyHour(hidden, happyHourEnabled);
         const diversified = diversifyByVenue(filteredHandoff);
         const goals: string[] = prefs?.onboarding?.goals || [];
         if (goals.length) {
@@ -248,7 +253,7 @@ export default function DiscoverScreen() {
   );
   const flatFeed = useMemo(() => {
     const base = whenFiltered.filter((e) => !rowIds.has(e.id));
-    if (!claude.state.ranking.length) return base;
+    if (!claude.state.ranking.length) return sortByStartTime(base);
     const merged = applyRanking(base, claude.state.ranking);
     const claudeOnes = merged.filter((e) => e.source === "claude");
     const others = merged.filter((e) => e.source !== "claude");

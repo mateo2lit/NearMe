@@ -5,7 +5,7 @@ import ClusteredMapView from "react-native-map-clustering";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { fetchNearbyEvents, applyHiddenFilter } from "../../src/services/events";
+import { fetchNearbyEvents, applyHiddenFilter, filterHappyHour, sortByStartTime } from "../../src/services/events";
 import { useLocation } from "../../src/hooks/useLocation";
 import { useWhenFilter, WhenFilter } from "../../src/hooks/useWhenFilter";
 import MapPin from "../../src/components/MapPin";
@@ -56,7 +56,9 @@ export default function MapScreen() {
         const prefsStr = await AsyncStorage.getItem("@nearme_preferences");
         const prefs = prefsStr ? JSON.parse(prefsStr) : null;
         const data = await fetchNearbyEvents(location.lat, location.lng, prefs?.radius || 5);
-        const visible = applyHiddenFilter(data, prefs?.hiddenCategories, prefs?.hiddenTags);
+        const happyHourEnabled = prefs?.happyHourEnabled ?? true;
+        const hidden = applyHiddenFilter(data, prefs?.hiddenCategories, prefs?.hiddenTags);
+        const visible = filterHappyHour(hidden, happyHourEnabled);
         setEvents(visible);
       })();
       if (!region) {
@@ -73,13 +75,15 @@ export default function MapScreen() {
   const now = new Date();
   const visible = events.filter((e) => matchesWhen(e, when, now));
 
-  const inViewport = region
-    ? visible.filter((e) => {
-        const latOK = Math.abs(e.lat - region.latitude) < region.latitudeDelta / 2;
-        const lngOK = Math.abs(e.lng - region.longitude) < region.longitudeDelta / 2;
-        return latOK && lngOK;
-      })
-    : visible;
+  const inViewport = sortByStartTime(
+    region
+      ? visible.filter((e) => {
+          const latOK = Math.abs(e.lat - region.latitude) < region.latitudeDelta / 2;
+          const lngOK = Math.abs(e.lng - region.longitude) < region.longitudeDelta / 2;
+          return latOK && lngOK;
+        })
+      : visible
+  );
 
   const recenter = () => {
     mapRef.current?.animateToRegion({
@@ -137,27 +141,30 @@ export default function MapScreen() {
         <Text style={styles.headerLoc}>{location.cityName}</Text>
       </View>
 
+      <View style={styles.topWhenWrap} pointerEvents="box-none">
+        <WhenSegmented value={when} onChange={setWhen} />
+      </View>
+
       <TouchableOpacity style={styles.recenter} onPress={recenter} accessibilityLabel="Recenter map">
         <Ionicons name="locate" size={20} color={COLORS.text} />
       </TouchableOpacity>
 
-      <View style={styles.bottomWrap}>
-        <View style={styles.whenWrap}>
-          <WhenSegmented value={when} onChange={setWhen} />
+      {inViewport.length > 0 && (
+        <View style={styles.bottomWrap}>
+          <ScrollView
+            ref={carouselRef}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.carousel}
+            snapToInterval={170}
+            decelerationRate="fast"
+          >
+            {inViewport.map((e) => (
+              <HeroCard key={e.id} event={e} onPress={() => onCardPress(e)} />
+            ))}
+          </ScrollView>
         </View>
-        <ScrollView
-          ref={carouselRef}
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.carousel}
-          snapToInterval={170}
-          decelerationRate="fast"
-        >
-          {inViewport.map((e) => (
-            <HeroCard key={e.id} event={e} onPress={() => onCardPress(e)} />
-          ))}
-        </ScrollView>
-      </View>
+      )}
     </View>
   );
 }
@@ -176,17 +183,17 @@ const styles = StyleSheet.create({
     textShadowColor: "rgba(0,0,0,0.8)", textShadowRadius: 4,
   },
   recenter: {
-    position: "absolute", bottom: 310, right: 20,
+    position: "absolute", bottom: 120, right: 20,
     width: 46, height: 46, borderRadius: 23,
     backgroundColor: COLORS.card + "ee",
     alignItems: "center", justifyContent: "center",
     borderWidth: 1, borderColor: COLORS.border,
   },
-  bottomWrap: {
-    position: "absolute", bottom: 100, left: 0, right: 0, gap: 10,
+  topWhenWrap: {
+    position: "absolute", top: 100, left: 0, right: 0,
   },
-  whenWrap: {
-    alignSelf: "flex-start", marginLeft: 0,
+  bottomWrap: {
+    position: "absolute", bottom: 100, left: 0, right: 0,
   },
   carousel: {
     paddingHorizontal: SPACING.md, gap: 10,

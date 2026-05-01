@@ -8,6 +8,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Event } from "../../src/types";
 import { CATEGORY_MAP } from "../../src/constants/categories";
 import { getEventImage } from "../../src/constants/images";
+import { effectiveStart } from "../../src/services/events";
 import EmptyState from "../../src/components/EmptyState";
 import { COLORS, RADIUS, SPACING } from "../../src/constants/theme";
 
@@ -19,11 +20,11 @@ function groupEvents(events: Event[], mode: SavedMode, now: Date): Section[] {
   const upcoming: Event[] = [];
   const past: Event[] = [];
   for (const e of events) {
-    if (e.start_time && new Date(e.start_time) < now) past.push(e);
+    if (e.start_time && effectiveStart(e) < now) past.push(e);
     else upcoming.push(e);
   }
-  upcoming.sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
-  past.sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
+  upcoming.sort((a, b) => effectiveStart(a).getTime() - effectiveStart(b).getTime());
+  past.sort((a, b) => effectiveStart(b).getTime() - effectiveStart(a).getTime());
 
   if (mode === "past") return past.length ? [{ title: "PAST", data: past }] : [];
   if (mode === "all") return [
@@ -41,7 +42,7 @@ function groupEvents(events: Event[], mode: SavedMode, now: Date): Section[] {
   const nextWeek: Event[] = [];
   const later: Event[] = [];
   for (const e of upcoming) {
-    const d = new Date(e.start_time);
+    const d = effectiveStart(e);
     if (d < endOfThisWeek) thisWeek.push(e);
     else if (d < endOfNextWeek) nextWeek.push(e);
     else later.push(e);
@@ -148,7 +149,7 @@ export default function SavedScreen() {
         }}
         renderItem={({ item }) => {
           const category = CATEGORY_MAP[item.category];
-          const startDate = new Date(item.start_time);
+          const startDate = effectiveStart(item);
           const day = startDate.toLocaleDateString([], { weekday: "short" }).toUpperCase();
           const soon = startDate.getTime() - Date.now() < 24 * 3600_000 && startDate.getTime() > Date.now();
           return (

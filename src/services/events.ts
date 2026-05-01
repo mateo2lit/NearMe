@@ -77,8 +77,24 @@ async function rpcDiscover(
   return (data || []).map((e: any) => ({ ...e, tags: e.tags || [] }));
 }
 
+const MIN_FEED_EVENTS = 20;
+
+function mergeUnique(base: Event[], extra: Event[]): Event[] {
+  const seen = new Set(base.map((e) => e.id));
+  const merged = [...base];
+  for (const e of extra) {
+    if (!seen.has(e.id)) {
+      seen.add(e.id);
+      merged.push(e);
+    }
+  }
+  return merged;
+}
+
 /**
- * Fetch events with auto-widening radius if no results, and cache the result.
+ * Fetch events with tiered fill. If the first query returns fewer than
+ * MIN_FEED_EVENTS, progressively widen the radius and drop filters, merging
+ * unique results so the user sees a packed feed rather than an empty one.
  * Use cachedOnly=true to return only cached data (no network).
  */
 export async function fetchNearbyEvents(
@@ -92,37 +108,47 @@ export async function fetchNearbyEvents(
   if (!supabase) return [];
 
   if (opts?.cachedOnly) {
-    return (await getCachedEvents(lat, lng)) || [];
+    return filterPastEvents((await getCachedEvents(lat, lng)) || []);
   }
 
-  // Initial fetch
-  let events = await rpcDiscover(lat, lng, radiusMiles, categories, tags);
+  const discover = async (...args: Parameters<typeof rpcDiscover>) =>
+    filterPastEvents(await rpcDiscover(...args));
 
-  if (events.length === 0) {
-    // Trigger sync and wait
-    const syncRadius = Math.max(radiusMiles, 15);
+  let events = await discover(lat, lng, radiusMiles, categories, tags);
+
+  // If sparse, trigger a sync + re-fetch before trying wider/looser queries
+  if (events.length < MIN_FEED_EVENTS) {
+    const syncRadius = Math.max(radiusMiles, 25);
     await triggerLocationSync(lat, lng, syncRadius, true);
-
-    // Re-fetch with original radius
-    events = await rpcDiscover(lat, lng, radiusMiles, categories, tags);
-
-    // Auto-widen if still empty
-    if (events.length === 0) {
-      events = await rpcDiscover(lat, lng, 30, categories, tags);
-    }
-    if (events.length === 0) {
-      events = await rpcDiscover(lat, lng, 50, categories, tags);
-    }
-    // Last resort: drop filters entirely to show ANY nearby event
-    if (events.length === 0) {
-      events = await rpcDiscover(lat, lng, 50);
-    }
+    const refetched = await discover(lat, lng, radiusMiles, categories, tags);
+    events = mergeUnique(events, refetched);
   } else {
-    // Background sync to keep data fresh
     triggerLocationSync(lat, lng, Math.max(radiusMiles, 15), false);
   }
 
-  // Update cache
+  // Tiered widening: radius first, then drop tags, then drop categories
+  const widerRadii = [Math.max(radiusMiles, 15), 30, 50].filter(
+    (r) => r > radiusMiles
+  );
+
+  for (const r of widerRadii) {
+    if (events.length >= MIN_FEED_EVENTS) break;
+    const more = await discover(lat, lng, r, categories, tags);
+    events = mergeUnique(events, more);
+  }
+
+  // Drop tag filter
+  if (events.length < MIN_FEED_EVENTS && tags?.length) {
+    const more = await discover(lat, lng, 50, categories);
+    events = mergeUnique(events, more);
+  }
+
+  // Drop category filter — last resort to pack the feed with anything nearby
+  if (events.length < MIN_FEED_EVENTS && categories?.length) {
+    const more = await discover(lat, lng, 50);
+    events = mergeUnique(events, more);
+  }
+
   if (events.length > 0) {
     setCachedEvents(lat, lng, events);
   }
@@ -146,19 +172,89 @@ export async function fetchEventById(id: string): Promise<Event | null> {
   };
 }
 
+const DAY_MAP: Record<string, number> = {
+  sunday: 0, monday: 1, tuesday: 2, wednesday: 3,
+  thursday: 4, friday: 5, saturday: 6,
+};
+
+/**
+ * For recurring events whose stored start_time is in the past, roll forward
+ * to the next occurrence based on recurrence_rule ("every <weekday>") while
+ * preserving the stored time-of-day. Non-recurring events return as-is.
+ */
+export function effectiveStart(
+  event: Pick<Event, "start_time" | "is_recurring" | "recurrence_rule">
+): Date {
+  const original = new Date(event.start_time);
+  const now = Date.now();
+  if (!event.is_recurring || !event.recurrence_rule) return original;
+  if (original.getTime() >= now) return original;
+
+  const match = event.recurrence_rule.match(/every\s+(\w+)/i);
+  if (!match) return original;
+  const target = DAY_MAP[match[1].toLowerCase()];
+  if (target === undefined) return original;
+
+  const next = new Date();
+  let days = target - next.getDay();
+  if (days < 0) days += 7;
+  // If today is the target day but the time-of-day has already passed, push a week
+  if (days === 0) {
+    const today = new Date();
+    today.setHours(original.getHours(), original.getMinutes(), 0, 0);
+    if (today.getTime() < now) days = 7;
+  }
+  next.setDate(next.getDate() + days);
+  next.setHours(original.getHours(), original.getMinutes(), 0, 0);
+  return next;
+}
+
+const DEFAULT_DURATION_MS = 4 * 60 * 60 * 1000;
+
+export function isEventPast(event: Event, now: Date = new Date()): boolean {
+  const start = effectiveStart(event).getTime();
+  if (start > now.getTime()) return false;
+  const end = event.end_time
+    ? new Date(event.end_time).getTime()
+    : start + DEFAULT_DURATION_MS;
+  return end <= now.getTime();
+}
+
+export function filterPastEvents(events: Event[], now: Date = new Date()): Event[] {
+  return events.filter((e) => !isEventPast(e, now));
+}
+
+export { sortByStartTime } from "../lib/time-windows";
+
+export function isHappyHourEvent(event: Event): boolean {
+  if (event.tags?.some((t) => t === "happy-hour" || t === "happy_hour")) return true;
+  const haystack = `${event.title} ${event.subcategory || ""}`.toLowerCase();
+  return haystack.includes("happy hour") || haystack.includes("happyhour");
+}
+
+export function filterHappyHour(events: Event[], enabled: boolean): Event[] {
+  if (enabled) return events;
+  return events.filter((e) => !isHappyHourEvent(e));
+}
+
 export function getEventTimeLabel(event: Event): { label: string; color: string } {
   const now = Date.now();
-  const start = new Date(event.start_time).getTime();
-  const end = event.end_time ? new Date(event.end_time).getTime() : null;
+  const start = effectiveStart(event).getTime();
+  const end = event.end_time
+    ? new Date(event.end_time).getTime()
+    : start + DEFAULT_DURATION_MS;
 
-  if (end && end <= now) return { label: "Ended", color: "#9090b0" };
-  if (start <= now && (!end || end > now)) return { label: "HAPPENING NOW", color: "#ff6b6b" };
+  if (end <= now) return { label: "Ended", color: "#9090b0" };
+  if (start <= now && end > now) return { label: "HAPPENING NOW", color: "#ff6b6b" };
 
   const minsUntil = Math.round((start - now) / 60000);
   if (minsUntil <= 60) return { label: `Starts in ${minsUntil} min`, color: "#ffb347" };
 
   const hours = Math.round(minsUntil / 60);
-  return { label: `In ${hours}h`, color: "#00d4cd" };
+  if (hours < 24) return { label: `In ${hours}h`, color: "#00d4cd" };
+
+  const days = Math.round(hours / 24);
+  return { label: `In ${days}d`, color: "#00d4cd" };
 }
 
 export function formatDistance(miles: number): string {

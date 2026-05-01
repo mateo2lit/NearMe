@@ -9,6 +9,7 @@ import {
   TextInput,
   ActivityIndicator,
   Keyboard,
+  Switch,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -37,6 +38,7 @@ export default function SettingsScreen() {
   } | null>(null);
   const [hiddenCategories, setHiddenCategories] = useState<EventCategory[]>([]);
   const [hiddenTags, setHiddenTags] = useState<string[]>([]);
+  const [happyHourEnabled, setHappyHourEnabled] = useState(true);
 
   useEffect(() => {
     (async () => {
@@ -48,6 +50,7 @@ export default function SettingsScreen() {
         setRadius(prefs.radius || 5);
         setHiddenCategories(prefs.hiddenCategories || []);
         setHiddenTags(prefs.hiddenTags || []);
+        setHappyHourEnabled(prefs.happyHourEnabled ?? true);
         if (prefs.customLocation) {
           setCustomLocation(prefs.customLocation);
         }
@@ -97,6 +100,11 @@ export default function SettingsScreen() {
   const changeRadius = async (r: number) => {
     setRadius(r);
     await savePrefs({ radius: r });
+  };
+
+  const toggleHappyHour = async (v: boolean) => {
+    setHappyHourEnabled(v);
+    await savePrefs({ happyHourEnabled: v });
   };
 
   const setCustomAddress = async () => {
@@ -292,6 +300,23 @@ export default function SettingsScreen() {
             size="md"
           />
         ))}
+      </View>
+
+      {/* Happy Hour toggle */}
+      <Text style={styles.sectionTitle}>Happy Hours</Text>
+      <View style={styles.toggleRow}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.toggleTitle}>Show happy hour events</Text>
+          <Text style={styles.toggleSubtitle}>
+            Turn off to hide happy hours from your feed and map.
+          </Text>
+        </View>
+        <Switch
+          value={happyHourEnabled}
+          onValueChange={toggleHappyHour}
+          trackColor={{ false: COLORS.border, true: COLORS.accent }}
+          thumbColor="#fff"
+        />
       </View>
 
       {/* Hide Events section */}
@@ -502,6 +527,27 @@ const styles = StyleSheet.create({
   },
   radiusBtnTextActive: {
     color: COLORS.accent,
+  },
+  toggleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: COLORS.card,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  toggleTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: COLORS.text,
+  },
+  toggleSubtitle: {
+    fontSize: 12,
+    color: COLORS.muted,
+    marginTop: 2,
   },
   categoriesGrid: {
     flexDirection: "row",

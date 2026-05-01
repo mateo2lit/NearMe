@@ -7,7 +7,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { fetchEventById, formatDistance } from "../../src/services/events";
+import { fetchEventById, formatDistance, effectiveStart } from "../../src/services/events";
 import { CATEGORY_MAP } from "../../src/constants/categories";
 import { TAG_MAP } from "../../src/constants/tags";
 import { getEventImage } from "../../src/constants/images";
@@ -93,7 +93,7 @@ export default function EventDetail() {
 
   const shareEvent = async () => {
     if (!event) return;
-    const start = new Date(event.start_time);
+    const start = effectiveStart(event);
     const dateStr = start.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
     const timeStr = start.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
     const venue = event.venue?.name || event.address?.split(",")[0] || "Nearby";
@@ -121,7 +121,7 @@ export default function EventDetail() {
   }
 
   const category = CATEGORY_MAP[event.category];
-  const start = new Date(event.start_time);
+  const start = effectiveStart(event);
   const end = event.end_time ? new Date(event.end_time) : null;
   const dayStr = start.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" }).toUpperCase();
   const timeStr = start.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });

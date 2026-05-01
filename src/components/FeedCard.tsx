@@ -2,7 +2,7 @@ import { View, Text, Image, StyleSheet, Dimensions, TouchableOpacity } from "rea
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { Event } from "../types";
-import { formatDistance } from "../services/events";
+import { formatDistance, effectiveStart } from "../services/events";
 import { CATEGORY_MAP } from "../constants/categories";
 import { TAG_MAP } from "../constants/tags";
 import { getEventImage } from "../constants/images";
@@ -27,7 +27,7 @@ export default function FeedCard({ event, isSaved, onPress, onSave }: Props) {
   const category = CATEGORY_MAP[event.category];
   const imageUri = getEventImage(event.image_url, event.category, event.subcategory, event.title, event.description);
 
-  const startDate = new Date(event.start_time);
+  const startDate = effectiveStart(event);
   const dateStr = startDate.toLocaleDateString([], {
     weekday: "short", month: "short", day: "numeric",
   }).toUpperCase();

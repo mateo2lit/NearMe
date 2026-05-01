@@ -1,3 +1,10 @@
+export function sortByStartTime<T extends { start_time: string }>(events: T[]): T[] {
+  return [...events].sort(
+    (a, b) =>
+      new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
+  );
+}
+
 function startOfDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
@@ -49,6 +56,32 @@ export function isWithinNextHours(
   const t = new Date(startTime);
   const cutoff = new Date(now.getTime() + hours * 3600_000);
   return t >= now && t <= cutoff;
+}
+
+const ASSUMED_DURATION_MS = 3 * 3600_000;
+
+export function isHappeningNow(
+  startTime: string,
+  endTime: string | null,
+  now: Date = new Date()
+): boolean {
+  const start = new Date(startTime).getTime();
+  const end = endTime ? new Date(endTime).getTime() : start + ASSUMED_DURATION_MS;
+  const n = now.getTime();
+  return start <= n && end > n;
+}
+
+export function isHappeningNowOrSoon(
+  startTime: string,
+  endTime: string | null,
+  soonHours: number,
+  now: Date = new Date()
+): boolean {
+  const start = new Date(startTime).getTime();
+  const n = now.getTime();
+  if (start > n) return start <= n + soonHours * 3600_000;
+  const end = endTime ? new Date(endTime).getTime() : start + ASSUMED_DURATION_MS;
+  return end > n;
 }
 
 export function isSameCalendarDay(

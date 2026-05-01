@@ -4,6 +4,7 @@ import { Event } from "../types";
 import { CATEGORY_MAP } from "../constants/categories";
 import { getEventImage } from "../constants/images";
 import { COLORS, RADIUS } from "../constants/theme";
+import { effectiveStart } from "../services/events";
 
 interface Props {
   event: Event;
@@ -14,7 +15,7 @@ export default function HeroCard({ event, onPress }: Props) {
   const category = CATEGORY_MAP[event.category];
   const imageUri = getEventImage(event.image_url, event.category, event.subcategory, event.title, event.description);
 
-  const startDate = new Date(event.start_time);
+  const startDate = effectiveStart(event);
   const dayName = startDate.toLocaleDateString([], { weekday: "short" }).toUpperCase();
   const timeStr = startDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
