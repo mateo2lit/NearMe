@@ -54,7 +54,7 @@ export function effectiveStart(event: EventLike): Date {
   return next;
 }
 
-function effectiveEnd(event: EventLike): Date {
+export function effectiveEnd(event: EventLike): Date {
   const start = effectiveStart(event);
   return new Date(start.getTime() + rawDuration(event));
 }

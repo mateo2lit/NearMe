@@ -25,10 +25,11 @@ function tagDisplay(tag: string): string {
 }
 
 export default function FeedCard({ event, isSaved, onPress, onSave }: Props) {
-  const [imageFailed, setImageFailed] = useState(false);
+  const [realLoaded, setRealLoaded] = useState(false);
+  const [realFailed, setRealFailed] = useState(false);
   const category = CATEGORY_MAP[event.category];
   const fallbackUri = getEventImage(null, event.category, event.subcategory, event.title, event.description);
-  const realUri = !imageFailed && event.image_url ? event.image_url : null;
+  const realUri = !realFailed && event.image_url ? event.image_url : null;
 
   const startDate = effectiveStart(event);
   const dateStr = startDate.toLocaleDateString([], {
@@ -52,8 +53,18 @@ export default function FeedCard({ event, isSaved, onPress, onSave }: Props) {
         {realUri ? (
           <Image
             source={{ uri: realUri }}
-            onError={() => setImageFailed(true)}
-            style={[styles.image, StyleSheet.absoluteFillObject]}
+            onLoad={(e) => {
+              const w = e.nativeEvent?.source?.width || 0;
+              const h = e.nativeEvent?.source?.height || 0;
+              if (w >= 100 && h >= 100) setRealLoaded(true);
+              else setRealFailed(true);
+            }}
+            onError={() => setRealFailed(true)}
+            style={[
+              styles.image,
+              StyleSheet.absoluteFillObject,
+              { opacity: realLoaded ? 1 : 0 },
+            ]}
           />
         ) : null}
         <TouchableOpacity

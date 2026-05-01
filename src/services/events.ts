@@ -173,17 +173,12 @@ export async function fetchEventById(id: string): Promise<Event | null> {
 }
 
 export { effectiveStart } from "../lib/time-windows";
-import { effectiveStart } from "../lib/time-windows";
-
-const DEFAULT_DURATION_MS = 4 * 60 * 60 * 1000;
+import { effectiveStart, effectiveEnd } from "../lib/time-windows";
 
 export function isEventPast(event: Event, now: Date = new Date()): boolean {
   const start = effectiveStart(event).getTime();
   if (start > now.getTime()) return false;
-  const end = event.end_time
-    ? new Date(event.end_time).getTime()
-    : start + DEFAULT_DURATION_MS;
-  return end <= now.getTime();
+  return effectiveEnd(event).getTime() <= now.getTime();
 }
 
 export function filterPastEvents(events: Event[], now: Date = new Date()): Event[] {
@@ -206,9 +201,7 @@ export function filterHappyHour(events: Event[], enabled: boolean): Event[] {
 export function getEventTimeLabel(event: Event): { label: string; color: string } {
   const now = Date.now();
   const start = effectiveStart(event).getTime();
-  const end = event.end_time
-    ? new Date(event.end_time).getTime()
-    : start + DEFAULT_DURATION_MS;
+  const end = effectiveEnd(event).getTime();
 
   if (end <= now) return { label: "Ended", color: "#9090b0" };
   if (start <= now && end > now) return { label: "HAPPENING NOW", color: "#ff6b6b" };

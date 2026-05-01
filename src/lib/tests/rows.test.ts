@@ -58,7 +58,7 @@ describe("buildDiscoveryRows", () => {
     expect(rows.find((r) => r.id === "happening-now")).toBeDefined();
   });
 
-  it("caps row count at 4", () => {
+  it("caps row count at 6", () => {
     const events = Array.from({ length: 30 }, (_, i) =>
       make({
         id: `x${i}`,
@@ -68,6 +68,28 @@ describe("buildDiscoveryRows", () => {
       })
     );
     const rows = buildDiscoveryRows(events, NOW);
-    expect(rows.length).toBeLessThanOrEqual(4);
+    expect(rows.length).toBeLessThanOrEqual(6);
+  });
+
+  it("builds goal-specific rows when goals are passed", () => {
+    const events = Array.from({ length: 4 }, (_, i) =>
+      make({
+        id: `g${i}`,
+        category: "fitness",
+        start_time: "2026-04-18T10:00:00",
+      })
+    );
+    const rows = buildDiscoveryRows(events, NOW, [], ["get-active"]);
+    const active = rows.find((r) => r.id === "goal-get-active");
+    expect(active).toBeDefined();
+    expect(active!.events.length).toBe(4);
+  });
+
+  it("excludes rows listed in hiddenRowIds", () => {
+    const events = Array.from({ length: 4 }, (_, i) =>
+      make({ id: `f${i}`, is_free: true, start_time: "2026-04-16T21:00:00" })
+    );
+    const rows = buildDiscoveryRows(events, NOW, [], [], ["free-tonight"]);
+    expect(rows.find((r) => r.id === "free-tonight")).toBeUndefined();
   });
 });

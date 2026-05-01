@@ -90,6 +90,8 @@ export default function DiscoverScreen() {
   const [filter, setFilter] = useState<FilterValue>({ categories: [], tags: [], radiusMiles: 5 });
   const [showFilters, setShowFilters] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
+  const [goals, setGoals] = useState<string[]>([]);
+  const [hiddenRowIds, setHiddenRowIds] = useState<string[]>([]);
 
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL!;
   const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!;
@@ -121,10 +123,12 @@ export default function DiscoverScreen() {
     const filtered = filterHappyHour(hidden, happyHourEnabled);
     const diversified = diversifyByVenue(filtered);
 
-    const goals: string[] = prefs?.onboarding?.goals || [];
-    if (goals.length) {
+    const userGoals: string[] = prefs?.onboarding?.goals || [];
+    setGoals(userGoals);
+    setHiddenRowIds(prefs?.hiddenRowIds || []);
+    if (userGoals.length) {
       const scored = diversified
-        .map((e) => ({ e, s: scoreEvent(e, goals) }))
+        .map((e) => ({ e, s: scoreEvent(e, userGoals) }))
         .filter((x) => x.s > 0)
         .sort((a, b) => b.s - a.s);
       const top = scored.slice(0, 6).map((x) => x.e);
@@ -149,10 +153,12 @@ export default function DiscoverScreen() {
         const hidden = applyHiddenFilter(fresh, prefs?.hiddenCategories, prefs?.hiddenTags);
         const filteredHandoff = filterHappyHour(hidden, happyHourEnabled);
         const diversified = diversifyByVenue(filteredHandoff);
-        const goals: string[] = prefs?.onboarding?.goals || [];
-        if (goals.length) {
+        const userGoals: string[] = prefs?.onboarding?.goals || [];
+        setGoals(userGoals);
+        setHiddenRowIds(prefs?.hiddenRowIds || []);
+        if (userGoals.length) {
           const scored = diversified
-            .map((e) => ({ e, s: scoreEvent(e, goals) }))
+            .map((e) => ({ e, s: scoreEvent(e, userGoals) }))
             .filter((x) => x.s > 0)
             .sort((a, b) => b.s - a.s);
           const top = scored.slice(0, 6).map((x) => x.e);
@@ -244,8 +250,8 @@ export default function DiscoverScreen() {
     [picks, whenFilter]
   );
   const rows = useMemo(
-    () => buildDiscoveryRows(whenFiltered, now, whenPicks),
-    [whenFiltered, whenPicks]
+    () => buildDiscoveryRows(whenFiltered, now, whenPicks, goals, hiddenRowIds),
+    [whenFiltered, whenPicks, goals, hiddenRowIds]
   );
   const rowIds = useMemo(
     () => new Set(rows.flatMap((r) => r.events.map((e) => e.id))),

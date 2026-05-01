@@ -25,7 +25,8 @@ export default function EventDetail() {
   const [isSaved, setIsSaved] = useState(false);
   const [loading, setLoading] = useState(true);
   const [similar, setSimilar] = useState<Event[]>([]);
-  const [imageFailed, setImageFailed] = useState(false);
+  const [realLoaded, setRealLoaded] = useState(false);
+  const [realFailed, setRealFailed] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -150,11 +151,21 @@ export default function EventDetail() {
             }}
             style={styles.heroImage}
           />
-          {!imageFailed && event.image_url ? (
+          {!realFailed && event.image_url ? (
             <Image
               source={{ uri: event.image_url }}
-              onError={() => setImageFailed(true)}
-              style={[styles.heroImage, StyleSheet.absoluteFillObject]}
+              onLoad={(e) => {
+                const w = e.nativeEvent?.source?.width || 0;
+                const h = e.nativeEvent?.source?.height || 0;
+                if (w >= 100 && h >= 100) setRealLoaded(true);
+                else setRealFailed(true);
+              }}
+              onError={() => setRealFailed(true)}
+              style={[
+                styles.heroImage,
+                StyleSheet.absoluteFillObject,
+                { opacity: realLoaded ? 1 : 0 },
+              ]}
             />
           ) : null}
           <LinearGradient
