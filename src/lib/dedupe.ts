@@ -1,6 +1,11 @@
 import { Event } from "../types";
 import { effectiveStart, effectiveEnd } from "./time-windows";
 
+// Toggle EXPO_PUBLIC_DEDUPE_DEBUG=1 to log every collapse the fuzzy dedupe
+// performs, so we can confirm it isn't merging legitimate distinct events
+// (e.g. concert series with different artists at the same venue).
+const DEDUPE_DEBUG = process.env.EXPO_PUBLIC_DEDUPE_DEBUG === "1";
+
 const STOPWORDS = new Set([
   "the", "at", "in", "on", "of", "a", "an", "and", "with", "to", "for", "by", "&",
 ]);
@@ -116,6 +121,13 @@ export function dedupeSameDayDuplicates(
   const nowMs = now.getTime();
   return groups.map((list) => {
     if (list.length === 1) return list[0];
+    if (DEDUPE_DEBUG) {
+      console.log(
+        `[dedupe] collapsed ${list.length}→1 on ${dayKey(list[0])} @ ${venueKey(list[0])}: ${list
+          .map((e) => `"${e.title}"`)
+          .join(" / ")}`,
+      );
+    }
     list.sort((a, b) => effectiveStart(a).getTime() - effectiveStart(b).getTime());
     const upcoming = list.filter((e) => effectiveEnd(e).getTime() > nowMs);
     const primary = upcoming.length > 0 ? upcoming[0] : list[list.length - 1];

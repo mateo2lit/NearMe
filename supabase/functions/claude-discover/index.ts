@@ -8,6 +8,7 @@ export type DiscoverEvent =
   | { type: "status"; text: string }
   | { type: "found"; event: Record<string, unknown> }
   | { type: "rejected"; reason: string; title?: string }
+  | { type: "source_progress"; source: string; status: "scanning" | "done"; label: string; count: number }
   | { type: "done" }
   | { type: "error"; message: string }
   | { type: "metrics"; metrics: any };

@@ -1,6 +1,7 @@
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import {
   View, Text, StyleSheet, TouchableOpacity, FlatList, RefreshControl,
+  Animated, Easing, AccessibilityInfo,
 } from "react-native";
 import { useRouter, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -15,7 +16,7 @@ import SearchOverlay from "../../src/components/SearchOverlay";
 import EmptyState from "../../src/components/EmptyState";
 import { SyncStatusBanner } from "../../src/components/SyncStatusBanner";
 import { BouncingDots } from "../../src/components/BouncingDots";
-import { fetchNearbyEvents, applyHiddenFilter, filterPastEvents, filterHappyHour, sortByStartTime, dedupeSameDayDuplicates } from "../../src/services/events";
+import { fetchNearbyEvents, applyHiddenFilter, filterPastEvents, filterHappyHour, sortByStartTime, dedupeSameDayDuplicates, balanceSources, balanceCategories } from "../../src/services/events";
 import { getFeedHandoff, clearFeedHandoff } from "../../src/services/eventCache";
 import { useLocation } from "../../src/hooks/useLocation";
 import { useSyncStatus } from "../../src/hooks/useSyncStatus";
@@ -68,7 +69,43 @@ function scoreEvent(event: Event, goals: string[]): number {
   return score;
 }
 
-function diversifyByVenue(list: Event[], maxPerVenue = 2): Event[] {
+// Drop-in animation for newly-arrived events (D5). Mounts at translateY=12,
+// opacity=0 and animates to rest. Reduced-motion users get an instant render.
+function AnimatedFeedRow({
+  children,
+  animate,
+}: {
+  children: React.ReactNode;
+  animate: boolean;
+}) {
+  const value = useRef(new Animated.Value(animate ? 0 : 1)).current;
+  const reduceMotion = useRef(false);
+
+  useEffect(() => {
+    AccessibilityInfo.isReduceMotionEnabled().then((v) => {
+      reduceMotion.current = v;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!animate) return;
+    Animated.timing(value, {
+      toValue: 1,
+      duration: reduceMotion.current ? 0 : 320,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [animate, value]);
+
+  const translateY = value.interpolate({ inputRange: [0, 1], outputRange: [12, 0] });
+  return (
+    <Animated.View style={{ opacity: value, transform: [{ translateY }] }}>
+      {children}
+    </Animated.View>
+  );
+}
+
+function applyVenueCap(list: Event[], maxPerVenue: number): Event[] {
   const counts = new Map<string, number>();
   return list.filter((e) => {
     const key = e.venue_id || e.address || e.title;
@@ -77,6 +114,17 @@ function diversifyByVenue(list: Event[], maxPerVenue = 2): Event[] {
     counts.set(key, c + 1);
     return true;
   });
+}
+
+// Two-mode venue diversification:
+//   variety mode (cap=3): preferred when supply is ≥ target
+//   volume  mode (cap=8): fallback when tight cap drops us below target
+// Pack-the-feed memory: floor of ~20 events trumps variety. Above the floor,
+// tighten to keep clusters in check.
+function diversifyByVenue(list: Event[], targetCount = 20): Event[] {
+  const tight = applyVenueCap(list, 3);
+  if (tight.length >= targetCount) return tight;
+  return applyVenueCap(list, 8);
 }
 
 export default function DiscoverScreen() {
@@ -123,7 +171,10 @@ export default function DiscoverScreen() {
     const hidden = applyHiddenFilter(data, prefs?.hiddenCategories, prefs?.hiddenTags);
     const filteredHH = filterHappyHour(hidden, happyHourEnabled);
     const deduped = dedupeSameDayDuplicates(filteredHH);
-    const diversified = diversifyByVenue(deduped, 6);
+    const diversified = balanceCategories(
+      balanceSources(diversifyByVenue(deduped), deduped),
+      deduped,
+    );
 
     const userGoals: string[] = prefs?.onboarding?.goals || [];
     setGoals(userGoals);
@@ -155,7 +206,10 @@ export default function DiscoverScreen() {
         const hidden = applyHiddenFilter(fresh, prefs?.hiddenCategories, prefs?.hiddenTags);
         const filteredHandoff = filterHappyHour(hidden, happyHourEnabled);
         const deduped = dedupeSameDayDuplicates(filteredHandoff);
-        const diversified = diversifyByVenue(deduped, 6);
+        const diversified = balanceCategories(
+          balanceSources(diversifyByVenue(deduped), deduped),
+          deduped,
+        );
         const userGoals: string[] = prefs?.onboarding?.goals || [];
         setGoals(userGoals);
         setHiddenRowIds(prefs?.hiddenRowIds || []);
@@ -207,9 +261,12 @@ export default function DiscoverScreen() {
       radiusMiles: filter.radiusMiles || 5,
       geohash: geohashEncode(location.lat, location.lng, 5),
       knownEventIds: events.map((e) => e.id),
+      neighborhood: syncStatus.context.neighborhood,
+      wellCovered: syncStatus.context.wellCovered,
+      underRepresented: syncStatus.context.underRepresented,
     });
     await loadEvents();
-  }, [location.lat, location.lng, filter.radiusMiles, events, claude, loadEvents]);
+  }, [location.lat, location.lng, filter.radiusMiles, events, claude, loadEvents, syncStatus.context]);
 
   useFocusEffect(
     useCallback(() => {
@@ -280,6 +337,26 @@ export default function DiscoverScreen() {
 
   const showingSkeletons = (loading || location.loading) && events.length === 0;
 
+  // Track newly-arrived event IDs so AnimatedFeedRow only animates those
+  // (otherwise the initial 20-event render would all animate at once).
+  const newIdsRef = useRef<Set<string>>(new Set());
+  const prevIdsRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    const currentIds = new Set(flatFeed.map((e) => e.id));
+    if (prevIdsRef.current.size > 0) {
+      const fresh = new Set<string>();
+      currentIds.forEach((id) => {
+        if (!prevIdsRef.current.has(id)) fresh.add(id);
+      });
+      newIdsRef.current = fresh;
+    }
+    prevIdsRef.current = currentIds;
+    // Clear after animation duration so subsequent re-renders don't reanimate
+    const t = setTimeout(() => { newIdsRef.current = new Set(); }, 400);
+    return () => clearTimeout(t);
+  }, [flatFeed]);
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
@@ -336,12 +413,14 @@ export default function DiscoverScreen() {
         <FlatList
           data={flatFeed}
           renderItem={({ item }) => (
-            <FeedCard
-              event={item}
-              isSaved={savedIds.has(item.id)}
-              onPress={() => router.push(`/event/${item.id}`)}
-              onSave={() => toggleSave(item)}
-            />
+            <AnimatedFeedRow animate={newIdsRef.current.has(item.id)}>
+              <FeedCard
+                event={item}
+                isSaved={savedIds.has(item.id)}
+                onPress={() => router.push(`/event/${item.id}`)}
+                onSave={() => toggleSave(item)}
+              />
+            </AnimatedFeedRow>
           )}
           keyExtractor={(item) => item.id}
           extraData={[savedIds]}
@@ -381,11 +460,19 @@ export default function DiscoverScreen() {
             claude.state.state === "phase1" ||
             claude.state.state === "phase2" ? (
               <View style={styles.loadingFooter}>
-                <BouncingDots size={9} />
+                <Text style={styles.loadingFooterRobot}>🤖</Text>
                 <Text style={styles.loadingFooterText}>
                   {claude.state.foundEvents.length > 0
-                    ? `Adding ${claude.state.foundEvents.length} fresh picks…`
-                    : "Finding more events nearby…"}
+                    ? `Still finding more — ${claude.state.foundEvents.length} fresh pick${claude.state.foundEvents.length === 1 ? "" : "s"} added`
+                    : "Still finding more for you…"}
+                </Text>
+                <BouncingDots size={7} />
+              </View>
+            ) : syncStatus.status === "done" && syncStatus.count > 0 ? (
+              <View style={styles.loadingFooter}>
+                <Ionicons name="checkmark-circle" size={14} color={COLORS.success} />
+                <Text style={[styles.loadingFooterText, { color: COLORS.success }]}>
+                  Found {syncStatus.count} more for you
                 </Text>
               </View>
             ) : null
@@ -449,4 +536,5 @@ const styles = StyleSheet.create({
     gap: 10, paddingVertical: 24,
   },
   loadingFooterText: { color: COLORS.muted, fontSize: 13, fontWeight: "600" },
+  loadingFooterRobot: { fontSize: 16, lineHeight: 18 },
 });

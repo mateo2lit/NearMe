@@ -4,7 +4,9 @@ import { Event } from "../types";
 const CACHE_KEY = "@nearme_event_cache";
 const FEED_CACHE_KEY = "@nearme_feed_cache";
 const MAX_AREAS = 3;
-const TTL_MS = 10 * 60 * 1000; // 10 minutes
+const TTL_MS = 10 * 60 * 1000; // 10 minutes for healthy (≥20 events) caches
+const THIN_TTL_MS = 3 * 60 * 1000; // sub-floor caches expire faster so reopens refetch
+const MIN_HEALTHY_FEED = 20;
 
 interface CachedArea {
   key: string; // rounded "lat,lng"
@@ -25,7 +27,9 @@ export async function getCachedEvents(lat: number, lng: number): Promise<Event[]
     const key = gridKey(lat, lng);
     const hit = areas.find((a) => a.key === key);
     if (!hit) return null;
-    if (Date.now() - hit.cachedAt > TTL_MS) return null;
+    const age = Date.now() - hit.cachedAt;
+    const ttl = hit.events.length < MIN_HEALTHY_FEED ? THIN_TTL_MS : TTL_MS;
+    if (age > ttl) return null;
     return hit.events;
   } catch {
     return null;

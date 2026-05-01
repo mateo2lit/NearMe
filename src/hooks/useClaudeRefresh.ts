@@ -3,6 +3,7 @@ import { AppState } from "react-native";
 import { initial, reduce, State } from "./claudeRefreshReducer";
 import { fetchClaudeRanking } from "../services/claudeRank";
 import { supabase } from "../services/supabase";
+import { setSourceProgress } from "./useSyncStatus";
 import { Event } from "../types";
 
 interface StartArgs {
@@ -12,6 +13,11 @@ interface StartArgs {
   radiusMiles: number;
   geohash: string;
   knownEventIds: string[];
+  // Context produced by the prior sync-location run, used to localize the
+  // discovery prompt and bias toward under-represented categories.
+  neighborhood?: string | null;
+  wellCovered?: string[];
+  underRepresented?: string[];
 }
 
 interface UseClaudeRefreshArgs {
@@ -66,6 +72,9 @@ export function useClaudeRefresh(args: UseClaudeRefreshArgs) {
           body: JSON.stringify({
             user_id: s.userId, lat: s.lat, lng: s.lng,
             radius_miles: s.radiusMiles, geohash: s.geohash,
+            neighborhood: s.neighborhood ?? undefined,
+            well_covered_categories: s.wellCovered ?? undefined,
+            under_represented_categories: s.underRepresented ?? undefined,
           }),
         });
         if (!res.ok || !res.body) {
@@ -94,6 +103,13 @@ export function useClaudeRefresh(args: UseClaudeRefreshArgs) {
                 const ev = data.event as Event;
                 dispatch({ type: "FOUND_EVENT", event: ev });
                 if (ev?.id) collectedIds.push(ev.id);
+              }
+              if (eventLine === "source_progress") {
+                setSourceProgress(data.source, {
+                  status: data.status,
+                  label: data.label,
+                  count: data.count ?? 0,
+                });
               }
               if (eventLine === "error")  { dispatch({ type: "ERROR", message: data.message }); }
             } catch { /* ignore malformed frame */ }

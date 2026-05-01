@@ -4,6 +4,12 @@ import type { DiscoverEvent } from "./index.ts";
 
 interface RunBody {
   user_id: string; lat: number; lng: number; radius_miles: number; geohash: string;
+  // Optional context surfaced from sync-location: localized neighborhood string
+  // and the categories already well-represented by fast sources. When present,
+  // the discovery prompt uses them to ground searches and bias toward variety.
+  neighborhood?: string;
+  well_covered_categories?: string[];
+  under_represented_categories?: string[];
 }
 
 interface RunDeps {
@@ -21,8 +27,13 @@ const SYSTEM_PROMPT = (now: string, neighborhood: string) => [
   "- Only emit events found in your web_search results. Do not recall events from memory.",
   "- Every event MUST have a real source_url copied from a web_search result.",
   "- Skip events you cannot ground in a search result. Do not make up venues, dates, or URLs.",
-  "- Prefer variety (≤2 per venue). Favor tonight/tomorrow over later in the week.",
+  "- Prefer variety (≤2 per venue, mix categories). Favor tonight/tomorrow over later in the week.",
   "- Use the emit_event tool for each event. Keep descriptions concrete — no fluff.",
+  "",
+  "SEARCH GUIDANCE:",
+  `- Search for things like "things to do in ${neighborhood} this week", "events tonight ${neighborhood}", and venue-specific lookups.`,
+  "- After your first 1–2 searches, look at gaps and search for under-represented categories (e.g. 'live music', 'comedy', 'fitness classes', 'food festivals').",
+  "- Hidden gems beat obvious mainstream concerts. Trivia nights, open mics, gallery openings, run clubs, paint-and-sips, food tours all count.",
 ].join("\n");
 
 const EMIT_EVENT_TOOL = {
@@ -89,17 +100,44 @@ export async function* runDiscovery(args: { body: RunBody; deps: RunDeps; metric
 
   yield { type: "status", text: "Reading your vibe…" };
 
-  const userPrompt = [
+  const neighborhood = body.neighborhood?.trim() || "the user's area";
+
+  // Announce the Claude phase as a banner row so users see the AI agent at work
+  yield {
+    type: "source_progress",
+    source: "claude_web",
+    status: "scanning",
+    label: neighborhood !== "the user's area"
+      ? `Hand-picking gems in ${neighborhood}`
+      : "Hand-picking hidden gems",
+    count: 0,
+  };
+  const wellCovered = body.well_covered_categories?.filter(Boolean) ?? [];
+  const underRepresented = body.under_represented_categories?.filter(Boolean) ?? [];
+
+  const userPromptLines = [
     `Location: lat=${body.lat}, lng=${body.lng}, radius=${body.radius_miles} miles.`,
+    `Neighborhood: ${neighborhood}.`,
     `User profile: ${JSON.stringify(profile)}`,
     "Find events that fit this user. Use web_search. Emit each event with the emit_event tool.",
-  ].join("\n");
+  ];
+  if (wellCovered.length || underRepresented.length) {
+    userPromptLines.push("");
+    userPromptLines.push("VARIETY GUIDANCE — bias your picks to fill gaps:");
+    if (wellCovered.length) {
+      userPromptLines.push(`- Already well-covered (skip unless exceptional): ${wellCovered.join(", ")}`);
+    }
+    if (underRepresented.length) {
+      userPromptLines.push(`- Under-represented (prioritize): ${underRepresented.join(", ")}`);
+    }
+  }
+  const userPrompt = userPromptLines.join("\n");
 
   const stream = await deps.anthropic.messages.stream({
     model: SONNET_MODEL,
     max_tokens: 2000,
     system: [
-      { type: "text", text: SYSTEM_PROMPT(new Date().toISOString(), "the user's neighborhood"), cache_control: { type: "ephemeral" } },
+      { type: "text", text: SYSTEM_PROMPT(new Date().toISOString(), neighborhood), cache_control: { type: "ephemeral" } },
     ],
     tools: [EMIT_EVENT_TOOL, WEB_SEARCH_TOOL],
     messages: [{ role: "user", content: userPrompt }],
@@ -162,6 +200,16 @@ export async function* runDiscovery(args: { body: RunBody; deps: RunDeps; metric
     cached_input_tokens: metrics.cached_input_tokens,
     web_searches: metrics.web_searches,
   });
+
+  yield {
+    type: "source_progress",
+    source: "claude_web",
+    status: "done",
+    label: neighborhood !== "the user's area"
+      ? `Hidden gems in ${neighborhood}`
+      : "Hidden gems",
+    count: metrics.events_persisted,
+  };
 
   yield { type: "status", text: "Ranking picks for you…" };
   yield { type: "metrics", metrics } as any;

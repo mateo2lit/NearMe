@@ -192,77 +192,92 @@ async function fetchSeatGeek(lat: number, lng: number, radiusMiles: number) {
 
 // ─── Eventbrite ──────────────────────────────────────────────
 
-async function fetchEventbrite(lat: number, lng: number, radiusMiles: number) {
+async function fetchEventbrite(
+  lat: number,
+  lng: number,
+  radiusMiles: number,
+  opts?: { expandDates?: boolean },
+) {
   if (!EVENTBRITE_TOKEN) return [];
-  const events: any[] = [];
 
-  // Run main search + targeted dating/singles search in parallel
   const queries = [
     { q: "", label: "general" },
     { q: "singles dating speed dating mixer", label: "dating" },
     { q: "happy hour trivia karaoke", label: "bar-nights" },
   ];
 
-  const seenIds = new Set<string>();
+  const MAX_PAGES_PER_QUERY = 4; // up to ~200 per query at 50/page
+
+  // ISO without millis (Eventbrite is picky about format)
+  const iso = (d: Date) => d.toISOString().replace(/\.\d{3}Z$/, "Z");
+  const rangeStart = iso(new Date());
+  const rangeEnd = iso(new Date(Date.now() + 30 * 86400000));
+
+  const rawById = new Map<string, any>();
 
   for (const { q, label } of queries) {
-    try {
-      const url = new URL("https://www.eventbriteapi.com/v3/events/search/");
-      url.searchParams.set("location.latitude", String(lat));
-      url.searchParams.set("location.longitude", String(lng));
-      url.searchParams.set("location.within", `${radiusMiles}mi`);
-      url.searchParams.set("start_date.keyword", "this_week");
-      url.searchParams.set("expand", "venue");
-      if (q) url.searchParams.set("q", q);
+    for (let page = 1; page <= MAX_PAGES_PER_QUERY; page++) {
+      try {
+        const url = new URL("https://www.eventbriteapi.com/v3/events/search/");
+        url.searchParams.set("location.latitude", String(lat));
+        url.searchParams.set("location.longitude", String(lng));
+        url.searchParams.set("location.within", `${radiusMiles}mi`);
+        if (opts?.expandDates) {
+          // Sparse-market fallback: widen window now → now+30d
+          url.searchParams.set("start_date.range_start", rangeStart);
+          url.searchParams.set("start_date.range_end", rangeEnd);
+        } else {
+          url.searchParams.set("start_date.keyword", "this_week");
+        }
+        url.searchParams.set("expand", "venue");
+        url.searchParams.set("page", String(page));
+        if (q) url.searchParams.set("q", q);
 
-      const res = await fetch(url.toString(), {
-        headers: { Authorization: `Bearer ${EVENTBRITE_TOKEN}` },
-      });
-      const data = await res.json();
-      console.log(`[eb:${label}] ${data?.events?.length || 0} results`);
-      // Merge, dedupe by Eventbrite ID
-      for (const eb of data?.events || []) {
-        if (seenIds.has(eb.id)) continue;
-        seenIds.add(eb.id);
-        (events as any).push({ __raw: eb });
+        const res = await fetch(url.toString(), {
+          headers: { Authorization: `Bearer ${EVENTBRITE_TOKEN}` },
+        });
+        if (!res.ok) break;
+        const data = await res.json();
+        const pageEvents = data?.events || [];
+        if (!pageEvents.length) break;
+        for (const eb of pageEvents) {
+          if (!rawById.has(eb.id)) rawById.set(eb.id, eb);
+        }
+        if (!data?.pagination?.has_more_items) break;
+      } catch (err) {
+        console.error(`[eb:${label}:p${page}] error:`, err);
+        break;
       }
-    } catch (err) {
-      console.error(`[eb:${label}] error:`, err);
     }
+    console.log(`[eb:${label}] cumulative=${rawById.size}`);
   }
 
-  // Now process all unique events
-  try {
-    const data = { events: events.map((e: any) => e.__raw) };
-    events.length = 0; // reset
-    for (const eb of data?.events || []) {
-      const venue = eb.venue;
-      const eLat = venue?.latitude ? parseFloat(venue.latitude) : null;
-      const eLng = venue?.longitude ? parseFloat(venue.longitude) : null;
-      if (!eLat || !eLng) continue;
+  const events: any[] = [];
+  for (const eb of rawById.values()) {
+    const venue = eb.venue;
+    const eLat = venue?.latitude ? parseFloat(venue.latitude) : null;
+    const eLng = venue?.longitude ? parseFloat(venue.longitude) : null;
+    if (!eLat || !eLng) continue;
 
-      const is_free = eb.is_free || false;
-      const tags = generateTags({
-        category: "community", subcategory: "event",
-        title: eb.name?.text || "", description: eb.description?.text,
-        is_free, start_time: eb.start?.utc || null, ticket_url: eb.url,
-      });
-      events.push({
-        source: "community", source_id: `eb-${eb.id}`,
-        title: eb.name?.text || "",
-        description: (eb.description?.text || "").slice(0, 500) || null,
-        category: "community", subcategory: "event",
-        lat: eLat, lng: eLng,
-        address: [venue?.address?.address_1, venue?.address?.city, venue?.address?.region].filter(Boolean).join(", "),
-        image_url: eb.logo?.url || null,
-        start_time: eb.start?.utc || null, end_time: eb.end?.utc || null,
-        is_recurring: false, recurrence_rule: null, is_free,
-        price_min: null, price_max: null,
-        ticket_url: eb.url || null, source_url: eb.url || null, tags,
-      });
-    }
-  } catch (err) {
-    console.error("[eb] error:", err);
+    const is_free = eb.is_free || false;
+    const tags = generateTags({
+      category: "community", subcategory: "event",
+      title: eb.name?.text || "", description: eb.description?.text,
+      is_free, start_time: eb.start?.utc || null, ticket_url: eb.url,
+    });
+    events.push({
+      source: "community", source_id: `eb-${eb.id}`,
+      title: eb.name?.text || "",
+      description: (eb.description?.text || "").slice(0, 500) || null,
+      category: "community", subcategory: "event",
+      lat: eLat, lng: eLng,
+      address: [venue?.address?.address_1, venue?.address?.city, venue?.address?.region].filter(Boolean).join(", "),
+      image_url: eb.logo?.url || null,
+      start_time: eb.start?.utc || null, end_time: eb.end?.utc || null,
+      is_recurring: false, recurrence_rule: null, is_free,
+      price_min: null, price_max: null,
+      ticket_url: eb.url || null, source_url: eb.url || null, tags,
+    });
   }
   console.log(`[eb] ${events.length}`);
   return events;
@@ -281,7 +296,7 @@ async function fetchBandsintown(lat: number, lng: number, radiusMiles: number) {
     url.searchParams.set("app_id", BANDSINTOWN_APP_ID);
     url.searchParams.set("location", `${lat},${lng}`);
     url.searchParams.set("radius", String(radiusMiles));
-    url.searchParams.set("per_page", "50");
+    url.searchParams.set("per_page", "100");
 
     const res = await fetch(url.toString(), {
       headers: { Accept: "application/json" },
@@ -329,71 +344,107 @@ async function fetchBandsintown(lat: number, lng: number, radiusMiles: number) {
 
 // ─── Yelp Events ─────────────────────────────────────────────
 
-async function fetchYelpEvents(lat: number, lng: number, radiusMiles: number) {
+async function fetchYelpEvents(
+  lat: number,
+  lng: number,
+  radiusMiles: number,
+  opts?: { expandDates?: boolean },
+) {
   if (!YELP_API_KEY) return [];
+
+  // Yelp caps radius at 40km (~25mi). For wider user radii, fan out to
+  // center + 4 cardinal offsets at radius/2 so coverage extends to ~radiusMiles.
+  const milesPerDegLat = 69;
+  const milesPerDegLng = Math.cos((lat * Math.PI) / 180) * 69 || 69;
+  const offsetMiles = Math.min(radiusMiles / 2, 25);
+  const offsetLat = offsetMiles / milesPerDegLat;
+  const offsetLng = offsetMiles / milesPerDegLng;
+
+  const centers: [number, number][] = radiusMiles > 25
+    ? [
+        [lat, lng],
+        [lat + offsetLat, lng],
+        [lat - offsetLat, lng],
+        [lat, lng + offsetLng],
+        [lat, lng - offsetLng],
+      ]
+    : [[lat, lng]];
+
+  const seen = new Set<string>();
   const events: any[] = [];
-  try {
-    const url = new URL("https://api.yelp.com/v3/events");
-    url.searchParams.set("latitude", String(lat));
-    url.searchParams.set("longitude", String(lng));
-    url.searchParams.set("radius", String(Math.min(radiusMiles * 1609, 40000))); // meters, max 40km
-    url.searchParams.set("limit", "50");
-    url.searchParams.set("sort_on", "popularity");
 
-    const res = await fetch(url.toString(), {
-      headers: { Authorization: `Bearer ${YELP_API_KEY}` },
-    });
-    if (!res.ok) {
-      console.log(`[yelp] status ${res.status}`);
-      return [];
-    }
-    const data = await res.json();
+  const categoryMap: Record<string, string> = {
+    "food-and-drink": "food",
+    music: "music",
+    nightlife: "nightlife",
+    "visual-arts": "arts",
+    "performing-arts": "arts",
+    film: "movies",
+    sports: "sports",
+    fitness: "fitness",
+  };
 
-    for (const yp of data?.events || []) {
-      const loc = yp.location || {};
-      const eLat = yp.latitude ? parseFloat(yp.latitude) : null;
-      const eLng = yp.longitude ? parseFloat(yp.longitude) : null;
-      if (!eLat || !eLng) continue;
+  await Promise.all(centers.map(async ([cLat, cLng]) => {
+    try {
+      const url = new URL("https://api.yelp.com/v3/events");
+      url.searchParams.set("latitude", String(cLat));
+      url.searchParams.set("longitude", String(cLng));
+      url.searchParams.set("radius", "40000"); // 40km max — each center covers 25mi
+      url.searchParams.set("limit", "50");
+      url.searchParams.set("sort_on", "popularity");
+      if (opts?.expandDates) {
+        const now = Math.floor(Date.now() / 1000);
+        url.searchParams.set("start_date", String(now));
+        url.searchParams.set("end_date", String(now + 30 * 86400));
+      }
 
-      const categoryMap: Record<string, string> = {
-        "food-and-drink": "food",
-        music: "music",
-        nightlife: "nightlife",
-        "visual-arts": "arts",
-        "performing-arts": "arts",
-        film: "movies",
-        sports: "sports",
-        fitness: "fitness",
-      };
-      const cat = categoryMap[yp.category || ""] || "community";
-
-      const tags = generateTags({
-        category: cat, subcategory: yp.category || "event",
-        title: yp.name, description: yp.description,
-        is_free: yp.cost === 0 || yp.cost === null,
-        start_time: yp.time_start, ticket_url: yp.tickets_url || yp.event_site_url,
+      const res = await fetch(url.toString(), {
+        headers: { Authorization: `Bearer ${YELP_API_KEY}` },
       });
+      if (!res.ok) {
+        console.log(`[yelp] status ${res.status}`);
+        return;
+      }
+      const data = await res.json();
 
-      events.push({
-        source: "yelp", source_id: `yelp-${yp.id}`,
-        title: yp.name, description: yp.description || null,
-        category: cat, subcategory: yp.category || "event",
-        lat: eLat, lng: eLng,
-        address: loc.display_address?.join(", ") || "",
-        image_url: yp.image_url || null,
-        start_time: yp.time_start, end_time: yp.time_end || null,
-        is_recurring: false, recurrence_rule: null,
-        is_free: yp.cost === 0 || yp.cost === null,
-        price_min: yp.cost || null, price_max: yp.cost_max || null,
-        ticket_url: yp.tickets_url || yp.event_site_url || null,
-        source_url: yp.event_site_url || null,
-        tags,
-      });
+      for (const yp of data?.events || []) {
+        if (seen.has(yp.id)) continue;
+        seen.add(yp.id);
+        const loc = yp.location || {};
+        const eLat = yp.latitude ? parseFloat(yp.latitude) : null;
+        const eLng = yp.longitude ? parseFloat(yp.longitude) : null;
+        if (!eLat || !eLng) continue;
+
+        const cat = categoryMap[yp.category || ""] || "community";
+        const tags = generateTags({
+          category: cat, subcategory: yp.category || "event",
+          title: yp.name, description: yp.description,
+          is_free: yp.cost === 0 || yp.cost === null,
+          start_time: yp.time_start, ticket_url: yp.tickets_url || yp.event_site_url,
+        });
+
+        events.push({
+          source: "yelp", source_id: `yelp-${yp.id}`,
+          title: yp.name, description: yp.description || null,
+          category: cat, subcategory: yp.category || "event",
+          lat: eLat, lng: eLng,
+          address: loc.display_address?.join(", ") || "",
+          image_url: yp.image_url || null,
+          start_time: yp.time_start, end_time: yp.time_end || null,
+          is_recurring: false, recurrence_rule: null,
+          is_free: yp.cost === 0 || yp.cost === null,
+          price_min: yp.cost || null, price_max: yp.cost_max || null,
+          ticket_url: yp.tickets_url || yp.event_site_url || null,
+          source_url: yp.event_site_url || null,
+          tags,
+        });
+      }
+    } catch (err) {
+      console.error("[yelp] error:", err);
     }
-  } catch (err) {
-    console.error("[yelp] error:", err);
-  }
-  console.log(`[yelp] ${events.length}`);
+  }));
+
+  console.log(`[yelp] ${events.length} (${centers.length} center${centers.length > 1 ? "s" : ""})`);
   return events;
 }
 
@@ -425,14 +476,53 @@ function subredditsForLocation(lat: number, lng: number): string[] {
   return subs;
 }
 
-async function fetchRedditEvents(lat: number, lng: number) {
+// ─── Variety hint helpers ───────────────────────────────────
+// After fast sources return, we compute which categories are well-represented
+// vs under-represented and pass a hint to Claude-driven sources so they bias
+// extraction toward the gaps. This is the B5 "variety-aware prompt" bit.
+
+const ALL_CATEGORIES = [
+  "music", "sports", "food", "nightlife", "arts",
+  "community", "fitness", "outdoors", "movies",
+];
+
+function computeCategoryHint(events: any[]): { wellCovered: string[]; underRepresented: string[] } {
+  const counts = new Map<string, number>();
+  for (const e of events) {
+    const c = e.category || "community";
+    counts.set(c, (counts.get(c) || 0) + 1);
+  }
+  const total = events.length;
+  const threshold = Math.max(2, total * 0.15);
+  const wellCovered = ALL_CATEGORIES.filter((c) => (counts.get(c) || 0) >= threshold);
+  const underRepresented = ALL_CATEGORIES.filter((c) => (counts.get(c) || 0) < 2);
+  return { wellCovered, underRepresented };
+}
+
+function varietyHintBlock(hint?: { wellCovered: string[]; underRepresented: string[] }): string {
+  if (!hint || (hint.wellCovered.length === 0 && hint.underRepresented.length === 0)) return "";
+  const lines: string[] = ["", "VARIETY GUIDANCE — bias your picks to fill gaps:"];
+  if (hint.wellCovered.length) {
+    lines.push(`- Already well-covered (only include exceptional ones): ${hint.wellCovered.join(", ")}`);
+  }
+  if (hint.underRepresented.length) {
+    lines.push(`- Under-represented (prioritize these): ${hint.underRepresented.join(", ")}`);
+  }
+  return lines.join("\n");
+}
+
+async function fetchRedditEvents(
+  lat: number,
+  lng: number,
+  opts?: { categoryHint?: { wellCovered: string[]; underRepresented: string[] } },
+) {
   const subs = subredditsForLocation(lat, lng);
   if (!subs.length || !ANTHROPIC_API_KEY) return [];
 
   const events: any[] = [];
   for (const sub of subs.slice(0, 2)) {
     try {
-      const url = `https://www.reddit.com/r/${sub}/search.json?q=event+OR+tonight+OR+this+weekend&restrict_sr=1&sort=new&limit=15&t=week`;
+      const url = `https://www.reddit.com/r/${sub}/search.json?q=event+OR+tonight+OR+this+weekend&restrict_sr=1&sort=new&limit=25&t=week`;
       const res = await fetch(url, {
         headers: { "User-Agent": "NearMe-Bot/1.0" },
       });
@@ -441,7 +531,7 @@ async function fetchRedditEvents(lat: number, lng: number) {
       const posts = data?.data?.children || [];
 
       // Concat post titles+bodies for Claude to extract events
-      const postTexts = posts.slice(0, 10).map((p: any) => {
+      const postTexts = posts.slice(0, 15).map((p: any) => {
         const d = p.data;
         return `TITLE: ${d.title}\nBODY: ${(d.selftext || "").slice(0, 500)}\nURL: https://reddit.com${d.permalink}`;
       }).join("\n---\n");
@@ -461,6 +551,7 @@ async function fetchRedditEvents(lat: number, lng: number) {
           messages: [{
             role: "user",
             content: `Extract specific local events from these Reddit posts about r/${sub}. Only include real, upcoming events with clear dates/venues. Skip general discussion posts.
+${varietyHintBlock(opts?.categoryHint)}
 
 Posts:
 ${postTexts}
@@ -549,7 +640,12 @@ function extractSchemaOrgEvents(html: string) {
   return events;
 }
 
-async function extractWithClaude(html: string, venueName: string, venueCategory: string) {
+async function extractWithClaude(
+  html: string,
+  venueName: string,
+  venueCategory: string,
+  opts?: { categoryHint?: { wellCovered: string[]; underRepresented: string[] } },
+) {
   if (!ANTHROPIC_API_KEY) return [];
   const text = html
     .replace(/<script[\s\S]*?<\/script>/gi, "")
@@ -581,6 +677,7 @@ PRIORITIZE finding:
 2. Recurring nights: trivia, karaoke, open mic, happy hour, DJ sets, live music, game night
 3. Active/social: pickup sports, run clubs, yoga, fitness classes with social element
 4. Special events: tastings, comedy, paint & sip, dinner shows, date nights
+${varietyHintBlock(opts?.categoryHint)}
 
 Website text:
 ${text}
@@ -655,7 +752,12 @@ function getNextOccurrence(dayName?: string, time?: string): string | null {
   return next.toISOString();
 }
 
-async function scanVenues(lat: number, lng: number, radiusMeters: number) {
+async function scanVenues(
+  lat: number,
+  lng: number,
+  radiusMeters: number,
+  opts?: { categoryHint?: { wellCovered: string[]; underRepresented: string[] } },
+) {
   const { data: venues } = await supabase
     .from("venues")
     .select("id, name, website, lat, lng, address, category")
@@ -677,7 +779,10 @@ async function scanVenues(lat: number, lng: number, radiusMeters: number) {
     return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
   });
 
-  const toScan = nearby.slice(0, 30);
+  // 75-venue budget per location, batched 5 concurrent. Priority order above
+  // pushes bars/venues/restaurants to the top so the budget hits the highest-yield
+  // sites first; lower-priority venues fill the remainder.
+  const toScan = nearby.slice(0, 75);
   console.log(`[scanner] ${toScan.length}/${nearby.length} venues`);
   const all: any[] = [];
 
@@ -696,7 +801,11 @@ async function scanVenues(lat: number, lng: number, radiusMeters: number) {
           if (!r.ok) return [];
           const html = await r.text();
           let events = extractSchemaOrgEvents(html);
-          if (events.length === 0) events = await extractWithClaude(html, venue.name, venue.category);
+          if (events.length === 0) {
+            events = await extractWithClaude(html, venue.name, venue.category, {
+              categoryHint: opts?.categoryHint,
+            });
+          }
 
           return events.map((e: any) => ({
             venue_id: venue.id, source: "scraped",
@@ -721,6 +830,54 @@ async function scanVenues(lat: number, lng: number, radiusMeters: number) {
   }
   console.log(`[scanner] ${all.length}`);
   return all;
+}
+
+// ─── Neighborhood Discovery (B3) ─────────────────────────────
+// Quick Claude lookup for the neighborhood name. Returned to the client so
+// the loading UX can localize copy ("Reading Wynwood's mood…") and surface
+// the AI-robot-personal-agent voice that justifies the subscription.
+
+async function fetchNeighborhood(
+  lat: number,
+  lng: number,
+): Promise<{ neighborhood: string | null; nearby: string[] } | null> {
+  if (!ANTHROPIC_API_KEY) return null;
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 400,
+        messages: [{
+          role: "user",
+          content: `Coordinates: ${lat}, ${lng}
+
+What neighborhood is this in? Reply with strict JSON only:
+{"neighborhood": "<primary neighborhood name>", "city": "<city>", "nearby": ["<adjacent 1>", "<adjacent 2>", "<adjacent 3>"]}
+
+If you don't know the specific neighborhood, use the most specific area name you do know. If only the city is known, set neighborhood to the city name. No prose, JSON only.`,
+        }],
+      }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const content = data.content?.[0]?.text || "{}";
+    const match = content.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    const parsed = JSON.parse(match[0]);
+    return {
+      neighborhood: parsed.neighborhood || parsed.city || null,
+      nearby: Array.isArray(parsed.nearby) ? parsed.nearby.slice(0, 3) : [],
+    };
+  } catch (err) {
+    console.error("[neighborhood] error:", err);
+    return null;
+  }
 }
 
 // ─── Geohash Encoder ─────────────────────────────────────────
@@ -849,8 +1006,16 @@ serve(async (req: Request) => {
     const hoursSince = lastSync
       ? (Date.now() - new Date(lastSync).getTime()) / 3600000
       : Infinity;
+    const minutesSince = hoursSince * 60;
 
-    if (hoursSince < SYNC_COOLDOWN_HOURS && lastCount > 0) {
+    // Two-tier cooldown: prior sync was healthy (≥20 events) → full 2hr cooldown.
+    // Prior sync was thin (<20) → only 15min cooldown so users can re-fetch and
+    // hit the pack-the-feed floor without waiting 2hr on a starved feed.
+    const wasHealthy = lastCount >= 20;
+    const inFullCooldown = wasHealthy && hoursSince < SYNC_COOLDOWN_HOURS;
+    const inThinCooldown = !wasHealthy && lastCount > 0 && minutesSince < 15;
+
+    if (inFullCooldown || inThinCooldown) {
       return new Response(
         JSON.stringify({
           synced: false,
@@ -862,25 +1027,40 @@ serve(async (req: Request) => {
       );
     }
 
+    // Track whether the prior sync was thin so fetchers can widen date ranges (A5)
+    const thinPriorSync = lastCount > 0 && lastCount < 20;
+
     console.log(`[sync] ${gridKey} geohash=${geohash} (${hoursSince.toFixed(1)}h since)`);
 
     // 1. Venues
     const venueCount = await syncVenues(lat, lng, radiusMiles * 1609.34);
 
-    // 2. Events from APIs in parallel (6 sources)
-    const [tm, sg, eb, bit, yelp, reddit] = await Promise.all([
+    // 2. Fast API sources in parallel (5 sources). When the prior sync was thin,
+    // date-window-aware fetchers widen their range (A5 fallback).
+    const [tm, sg, eb, bit, yelp] = await Promise.all([
       fetchTicketmaster(lat, lng, radiusMiles),
       fetchSeatGeek(lat, lng, radiusMiles),
-      fetchEventbrite(lat, lng, radiusMiles),
+      fetchEventbrite(lat, lng, radiusMiles, { expandDates: thinPriorSync }),
       fetchBandsintown(lat, lng, radiusMiles),
-      fetchYelpEvents(lat, lng, radiusMiles),
-      fetchRedditEvents(lat, lng),
+      fetchYelpEvents(lat, lng, radiusMiles, { expandDates: thinPriorSync }),
     ]);
 
-    // 3. Scan venue websites (Claude-powered)
-    const scraped = await scanVenues(lat, lng, radiusMiles * 1609.34);
+    // 3. Compute variety hint from fast-source results so Claude-driven sources
+    // (Reddit, venue scanning) bias toward under-represented categories. This
+    // is the B5 "fill the gap" prompt addendum.
+    const categoryHint = computeCategoryHint([...tm, ...sg, ...eb, ...bit, ...yelp]);
+    console.log(
+      `[variety] well-covered=[${categoryHint.wellCovered.join(",")}] under=[${categoryHint.underRepresented.join(",")}]`,
+    );
 
-    // 4. Dedupe and upsert
+    // 4. Claude-driven sources + neighborhood lookup, all in parallel
+    const [reddit, scraped, neighborhoodInfo] = await Promise.all([
+      fetchRedditEvents(lat, lng, { categoryHint }),
+      scanVenues(lat, lng, radiusMiles * 1609.34, { categoryHint }),
+      fetchNeighborhood(lat, lng),
+    ]);
+
+    // 5. Dedupe and upsert
     const all = [...tm, ...sg, ...eb, ...bit, ...yelp, ...reddit, ...scraped].filter((e) => e.start_time);
     const seen = new Set<string>();
     const unique = all.filter((e) => {
@@ -918,6 +1098,10 @@ serve(async (req: Request) => {
         reddit: reddit.length,
         scraped: scraped.length,
         upserted: unique.length,
+        neighborhood: neighborhoodInfo?.neighborhood || null,
+        nearby_neighborhoods: neighborhoodInfo?.nearby || [],
+        well_covered_categories: categoryHint.wellCovered,
+        under_represented_categories: categoryHint.underRepresented,
         remaining_requests: rate.remaining,
       }),
       { status: 200, headers: { "Content-Type": "application/json" } }

@@ -24,6 +24,22 @@ function tagDisplay(tag: string): string {
   return TAG_MAP[tag]?.label || tag;
 }
 
+// Subtle source attribution. Reinforces that the AI agent is searching multiple
+// sources on the user's behalf — the value-prop of the subscription.
+function sourceLabel(source: string | undefined | null): string | null {
+  switch (source) {
+    case "ticketmaster":  return "via Ticketmaster";
+    case "seatgeek":      return "via SeatGeek";
+    case "community":     return "via Eventbrite";
+    case "bandsintown":   return "via Bandsintown";
+    case "yelp":          return "via Yelp";
+    case "reddit":        return "from the local roundup";
+    case "scraped":       return "via venue page";
+    case "claude":        return "hand-picked by your AI";
+    default:              return null;
+  }
+}
+
 export default function FeedCard({ event, isSaved, onPress, onSave }: Props) {
   const [realLoaded, setRealLoaded] = useState(false);
   const [realFailed, setRealFailed] = useState(false);
@@ -98,6 +114,10 @@ export default function FeedCard({ event, isSaved, onPress, onSave }: Props) {
         <Text style={styles.meta}>
           {dateStr} · {timeStr}{altTimeStr ? ` & ${altTimeStr}` : ""}{distanceStr ? ` · ${distanceStr}` : ""}
         </Text>
+        {(() => {
+          const srcLabel = sourceLabel(event.source);
+          return srcLabel ? <Text style={styles.sourceAttr}>{srcLabel}</Text> : null;
+        })()}
         <Text style={styles.title} numberOfLines={2}>
           {event.title}{venueName !== "Nearby" ? ` at ${venueName}` : ""}
         </Text>
@@ -231,4 +251,12 @@ const styles = StyleSheet.create({
     color: COLORS.warm,
   },
   blurb: { color: "#9090b0", fontSize: 12, marginTop: 4 },
+  sourceAttr: {
+    fontSize: 10,
+    color: COLORS.muted,
+    fontWeight: "600",
+    letterSpacing: 0.6,
+    textTransform: "lowercase",
+    marginTop: -3,
+  },
 });
