@@ -97,7 +97,7 @@ export default function EventDetail() {
     const dateStr = start.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
     const timeStr = start.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
     const venue = event.venue?.name || event.address?.split(",")[0] || "Nearby";
-    const message = `Check out "${event.title}" on NearMe:\n\n📅 ${dateStr} at ${timeStr}\n📍 ${venue}\n\nDiscover local events near you — download NearMe: https://mateo2lit.github.io/NearMe/`;
+    const message = `Check out "${event.title}" on NearMe:\n\n📅 ${dateStr} at ${timeStr}\n📍 ${venue}\n\nDiscover local events near you — download NearMe: https://apps.apple.com/app/id6762168537`;
     try { await Share.share({ message, title: event.title }); } catch {}
   };
 

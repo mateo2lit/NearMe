@@ -1348,7 +1348,7 @@ function PaywallStep({ onSubscribe, onBack }: { onSubscribe: () => void; onBack:
             <Text style={styles.paywallLink}>Restore</Text>
           </TouchableOpacity>
           <Text style={styles.paywallLinkDivider}>·</Text>
-          <TouchableOpacity activeOpacity={0.6} onPress={() => Linking.openURL("https://mateo2lit.github.io/NearMe/terms.html")}>
+          <TouchableOpacity activeOpacity={0.6} onPress={() => Linking.openURL("https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")}>
             <Text style={styles.paywallLink}>Terms</Text>
           </TouchableOpacity>
           <Text style={styles.paywallLinkDivider}>·</Text>
