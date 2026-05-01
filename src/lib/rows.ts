@@ -33,7 +33,10 @@ const happeningNow: RowBuilder = (events, now) => {
       isHappeningNowOrSoon(e, HAPPENING_SOON_HOURS, now)
     )
   );
-  return filtered.length >= MIN_EVENTS_PER_ROW
+  // Always render this row when ANY event is happening now/soon — the
+  // "what's live right now" affordance is the most time-critical thing
+  // on the feed and must surface even when only 1-2 things qualify.
+  return filtered.length >= 1
     ? { id: "happening-now", title: "Happening Now", icon: "flame", events: filtered }
     : null;
 };

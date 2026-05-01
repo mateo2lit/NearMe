@@ -222,6 +222,8 @@ export function formatDistance(miles: number): string {
   return `${miles.toFixed(1)} mi`;
 }
 
+export { dedupeSameDayDuplicates } from "../lib/dedupe";
+
 /**
  * Filter out events matching hidden categories/tags (user Settings preference).
  */

@@ -43,6 +43,9 @@ export interface Event {
   rank_score?: number;
   blurb?: string;
   distance?: number; // computed, in miles
+  // Alternate showtimes from same-day duplicate events merged into this one.
+  // ISO strings, sorted ascending. Excludes the primary start_time.
+  additionalStartTimes?: string[];
 }
 
 export type EventCategory =

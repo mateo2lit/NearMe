@@ -3,7 +3,7 @@ import { View, Text, Image, StyleSheet, Dimensions, TouchableOpacity } from "rea
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { Event } from "../types";
-import { formatDistance, effectiveStart } from "../services/events";
+import { formatDistance, effectiveStart, getEventTimeLabel } from "../services/events";
 import { CATEGORY_MAP } from "../constants/categories";
 import { TAG_MAP } from "../constants/tags";
 import { getEventImage } from "../constants/images";
@@ -36,6 +36,12 @@ export default function FeedCard({ event, isSaved, onPress, onSave }: Props) {
     weekday: "short", month: "short", day: "numeric",
   }).toUpperCase();
   const timeStr = startDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const altTimeStr = (event.additionalStartTimes || [])
+    .map((iso) =>
+      new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+    )
+    .join(" & ");
+  const timeLabel = getEventTimeLabel(event);
 
   const displayTags = (event.tags || []).slice(0, 3).map(tagDisplay);
   const distanceStr = event.distance != null ? formatDistance(event.distance) : null;
@@ -81,11 +87,16 @@ export default function FeedCard({ event, isSaved, onPress, onSave }: Props) {
           />
         </TouchableOpacity>
         {event.source === "claude" && <FoundForYouChip />}
+        <View style={[styles.timeChip, { backgroundColor: timeLabel.color + "E6" }]}>
+          <Text style={styles.timeChipText} numberOfLines={1}>
+            {timeLabel.label}
+          </Text>
+        </View>
       </View>
 
       <View style={styles.info}>
         <Text style={styles.meta}>
-          {dateStr} · {timeStr}{distanceStr ? ` · ${distanceStr}` : ""}
+          {dateStr} · {timeStr}{altTimeStr ? ` & ${altTimeStr}` : ""}{distanceStr ? ` · ${distanceStr}` : ""}
         </Text>
         <Text style={styles.title} numberOfLines={2}>
           {event.title}{venueName !== "Nearby" ? ` at ${venueName}` : ""}
@@ -147,6 +158,21 @@ const styles = StyleSheet.create({
   },
   saveBtnActive: {
     backgroundColor: "rgba(255,107,107,0.2)",
+  },
+  timeChip: {
+    position: "absolute",
+    bottom: 10,
+    left: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: RADIUS.pill,
+    maxWidth: "70%",
+  },
+  timeChipText: {
+    color: "#fff",
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.5,
   },
   info: {
     padding: 14,

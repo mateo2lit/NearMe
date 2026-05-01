@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import {
-  View, Text, StyleSheet, TouchableOpacity, FlatList, RefreshControl,
+  View, Text, StyleSheet, TouchableOpacity, FlatList, RefreshControl, ActivityIndicator,
 } from "react-native";
 import { useRouter, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -13,7 +13,7 @@ import ActiveFiltersRow from "../../src/components/ActiveFiltersRow";
 import FilterSheet, { FilterValue } from "../../src/components/FilterSheet";
 import SearchOverlay from "../../src/components/SearchOverlay";
 import EmptyState from "../../src/components/EmptyState";
-import { fetchNearbyEvents, applyHiddenFilter, filterPastEvents, filterHappyHour, sortByStartTime } from "../../src/services/events";
+import { fetchNearbyEvents, applyHiddenFilter, filterPastEvents, filterHappyHour, sortByStartTime, dedupeSameDayDuplicates } from "../../src/services/events";
 import { getFeedHandoff, clearFeedHandoff } from "../../src/services/eventCache";
 import { useLocation } from "../../src/hooks/useLocation";
 import { useSyncStatus } from "../../src/hooks/useSyncStatus";
@@ -107,21 +107,21 @@ export default function DiscoverScreen() {
   const loadEvents = useCallback(async () => {
     const prefsStr = await AsyncStorage.getItem("@nearme_preferences");
     const prefs = prefsStr ? JSON.parse(prefsStr) : null;
-    const categories = filter.categories.length ? filter.categories : prefs?.categories || [];
     const radius = filter.radiusMiles || prefs?.radius || 5;
-    const tags = filter.tags.length ? filter.tags : undefined;
     const useLat = prefs?.customLocation?.lat ?? location.lat;
     const useLng = prefs?.customLocation?.lng ?? location.lng;
 
-    const data = await fetchNearbyEvents(
-      useLat, useLng, radius,
-      categories.length ? categories : undefined,
-      tags
-    );
+    // Only the FilterSheet narrows the server-side query. Onboarding interests
+    // (prefs.categories) curate via scoring, not by removing events.
+    const explicitCategories = filter.categories.length ? filter.categories : undefined;
+    const explicitTags = filter.tags.length ? filter.tags : undefined;
+
+    const data = await fetchNearbyEvents(useLat, useLng, radius, explicitCategories, explicitTags);
     const happyHourEnabled = prefs?.happyHourEnabled ?? true;
     const hidden = applyHiddenFilter(data, prefs?.hiddenCategories, prefs?.hiddenTags);
-    const filtered = filterHappyHour(hidden, happyHourEnabled);
-    const diversified = diversifyByVenue(filtered);
+    const filteredHH = filterHappyHour(hidden, happyHourEnabled);
+    const deduped = dedupeSameDayDuplicates(filteredHH);
+    const diversified = diversifyByVenue(deduped, 6);
 
     const userGoals: string[] = prefs?.onboarding?.goals || [];
     setGoals(userGoals);
@@ -132,13 +132,13 @@ export default function DiscoverScreen() {
         .filter((x) => x.s > 0)
         .sort((a, b) => b.s - a.s);
       const top = scored.slice(0, 6).map((x) => x.e);
-      const topIds = new Set(top.map((e) => e.id));
       setPicks(top);
-      setEvents(diversified.filter((e) => !topIds.has(e.id)));
     } else {
       setPicks([]);
-      setEvents(diversified);
     }
+    // events is the canonical full list — picks are derived for the row
+    // builder, but they still appear in the chronological list below.
+    setEvents(diversified);
   }, [location.lat, location.lng, filter]);
 
   useEffect(() => {
@@ -152,7 +152,8 @@ export default function DiscoverScreen() {
         const happyHourEnabled = prefs?.happyHourEnabled ?? true;
         const hidden = applyHiddenFilter(fresh, prefs?.hiddenCategories, prefs?.hiddenTags);
         const filteredHandoff = filterHappyHour(hidden, happyHourEnabled);
-        const diversified = diversifyByVenue(filteredHandoff);
+        const deduped = dedupeSameDayDuplicates(filteredHandoff);
+        const diversified = diversifyByVenue(deduped, 6);
         const userGoals: string[] = prefs?.onboarding?.goals || [];
         setGoals(userGoals);
         setHiddenRowIds(prefs?.hiddenRowIds || []);
@@ -162,12 +163,11 @@ export default function DiscoverScreen() {
             .filter((x) => x.s > 0)
             .sort((a, b) => b.s - a.s);
           const top = scored.slice(0, 6).map((x) => x.e);
-          const topIds = new Set(top.map((e) => e.id));
           setPicks(top);
-          setEvents(diversified.filter((e) => !topIds.has(e.id)));
         } else {
-          setEvents(diversified);
+          setPicks([]);
         }
+        setEvents(diversified);
         setLoading(false);
         await clearFeedHandoff();
       }
@@ -253,24 +253,18 @@ export default function DiscoverScreen() {
     () => buildDiscoveryRows(whenFiltered, now, whenPicks, goals, hiddenRowIds),
     [whenFiltered, whenPicks, goals, hiddenRowIds]
   );
-  const rowIds = useMemo(
-    () => new Set(rows.flatMap((r) => r.events.map((e) => e.id))),
-    [rows]
-  );
+  // Show ALL events chronologically below the curated rows. Rows are
+  // highlights overlaying this list, not a partition that subtracts from
+  // it — users want the canonical full list always visible.
   const flatFeed = useMemo(() => {
-    // Picks that didn't make it into a row (e.g., when filter narrowed below
-    // the 3-event row threshold) fall through here so they're not lost.
-    const orphanPicks = whenPicks.filter((e) => !rowIds.has(e.id));
-    const base = whenFiltered.filter((e) => !rowIds.has(e.id));
-    const combined = [...orphanPicks, ...base];
-    if (!claude.state.ranking.length) return sortByStartTime(combined);
-    const merged = applyRanking(combined, claude.state.ranking);
+    if (!claude.state.ranking.length) return sortByStartTime(whenFiltered);
+    const merged = applyRanking(whenFiltered, claude.state.ranking);
     const claudeOnes = merged.filter((e) => e.source === "claude");
     const others = merged.filter((e) => e.source !== "claude");
     return [...claudeOnes, ...others];
-  }, [whenFiltered, whenPicks, rowIds, claude.state.ranking]);
+  }, [whenFiltered, claude.state.ranking]);
 
-  const allForSearch = [...picks, ...events];
+  const allForSearch = events;
   const liveCount = useCallback(
     (v: FilterValue) => {
       return whenFiltered.filter((e) => {
@@ -386,6 +380,14 @@ export default function DiscoverScreen() {
               tintColor={COLORS.accent}
             />
           }
+          ListFooterComponent={
+            syncStatus.status === "syncing" ? (
+              <View style={styles.loadingFooter}>
+                <ActivityIndicator color={COLORS.accent} size="small" />
+                <Text style={styles.loadingFooterText}>Finding more events nearby…</Text>
+              </View>
+            ) : null
+          }
         />
       )}
 
@@ -449,4 +451,9 @@ const styles = StyleSheet.create({
   divider: { flexDirection: "row", alignItems: "center", gap: 10, marginVertical: 12 },
   dividerLine: { flex: 1, height: 1, backgroundColor: COLORS.border },
   dividerText: { fontSize: 11, fontWeight: "700", color: COLORS.muted, letterSpacing: 1 },
+  loadingFooter: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    gap: 10, paddingVertical: 24,
+  },
+  loadingFooterText: { color: COLORS.muted, fontSize: 13, fontWeight: "600" },
 });
