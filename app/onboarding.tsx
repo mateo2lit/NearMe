@@ -592,21 +592,21 @@ function BuildingStep({
 
   // Dynamic task list based on user's actual answers
   const goalLabels = goals
-    .map((id) => GOALS.find((g) => g.id === id)?.label.toLowerCase())
+    .map((id) => GOALS.find((g) => g.id === id)?.label)
     .filter((s): s is string => Boolean(s));
-  const primaryGoals =
+  const goalLine =
     goalLabels.length === 0
-      ? "your goals"
+      ? "Reading your preferences"
       : goalLabels.length === 1
-        ? `"${goalLabels[0]}"`
+        ? `Honed in on ${goalLabels[0].toLowerCase()}`
         : goalLabels.length === 2
-          ? `"${goalLabels[0]}" + "${goalLabels[1]}"`
-          : `"${goalLabels[0]}", "${goalLabels[1]}" +${goalLabels.length - 2} more`;
+          ? `Balancing ${goalLabels[0].toLowerCase()} and ${goalLabels[1].toLowerCase()}`
+          : `Weighing your ${goalLabels.length} priorities`;
   const vibeLabel = VIBES.find((v) => v.id === vibe)?.label.toLowerCase() || vibe || "custom";
   const blockerLabel = BLOCKERS.find((b) => b.id === blocker)?.label.toLowerCase();
 
   const tasks = [
-    `Reading what matters: ${primaryGoals}`,
+    goalLine,
     "Sweeping venues within 15 miles of you",
     blockerLabel
       ? `Solving for "${blockerLabel}"`
@@ -636,8 +636,9 @@ function BuildingStep({
       setProgress(target);
     };
 
-    // Schedule tasks to advance with natural pacing — slower on last step so it doesn't stall
-    const taskTimings = [1200, 1400, 1600, 1800]; // cumulative delays between tasks
+    // Schedule tasks to advance with varied pacing — non-monotonic so it
+    // feels like real computational work rather than a linear timer
+    const taskTimings = [1500, 800, 2100, 1100]; // delay BEFORE each transition
     let taskElapsed = 0;
     const taskTimers: any[] = [];
 
@@ -651,6 +652,18 @@ function BuildingStep({
         }, taskElapsed)
       );
     }
+
+    // While we're waiting for the fetch on the LAST task ("Ranking your top
+    // picks"), creep the progress bar from 80% toward 95% so the user doesn't
+    // feel stuck. When the fetch completes we jump to 100%.
+    const driftTimer = setTimeout(() => {
+      if (cancelled || fetchDone) return;
+      Animated.timing(progressAnim, {
+        toValue: 0.95,
+        duration: 4000,
+        useNativeDriver: false,
+      }).start();
+    }, taskElapsed);
 
     // Run real sync using user's ACTUAL location (from useLocation hook)
     (async () => {
@@ -667,9 +680,8 @@ function BuildingStep({
         }
         fetchDone = true;
 
-        const minTotal = taskElapsed + 1200; // min 8s total
-        const elapsedNow = taskElapsed;
-        const remainder = Math.max(0, minTotal - elapsedNow);
+        const minTotal = taskElapsed + 1200;
+        const remainder = Math.max(0, minTotal - taskElapsed);
 
         setTimeout(() => {
           if (cancelled) return;
@@ -694,6 +706,7 @@ function BuildingStep({
     return () => {
       cancelled = true;
       taskTimers.forEach(clearTimeout);
+      clearTimeout(driftTimer);
     };
   }, []);
 
