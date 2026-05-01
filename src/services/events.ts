@@ -102,13 +102,13 @@ function mergeUnique(base: Event[], extra: Event[]): Event[] {
   return merged;
 }
 
+import { DEFAULT_RADIUS_MILES } from "../constants/theme";
+
 /**
- * The default radius before any user filtering. Pack-the-feed widening only
- * kicks in for default values — once the user sets explicit filter values
- * (smaller radius, specific tags or categories), we respect their choice and
- * never silently broaden the search.
+ * Pack-the-feed widening only kicks in for the default radius — once the user
+ * sets an explicit value (smaller radius, specific tags or categories), we
+ * respect their choice and never silently broaden the search.
  */
-const DEFAULT_RADIUS_MILES = 5;
 
 /**
  * Fetch events. Two regimes:

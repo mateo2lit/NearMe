@@ -6,7 +6,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { TAGS_BY_DIMENSION, DIMENSION_LABELS } from "../constants/tags";
 import { CATEGORIES } from "../constants/categories";
 import { EventCategory } from "../types";
-import { COLORS, RADIUS, SPACING } from "../constants/theme";
+import { COLORS, RADIUS, SPACING, DEFAULT_RADIUS_MILES } from "../constants/theme";
 
 export interface FilterValue {
   categories: EventCategory[];
@@ -27,7 +27,7 @@ export default function FilterSheet({ visible, initial, liveCount, onClose, onAp
   const count = useMemo(() => liveCount(value), [value, liveCount]);
 
   const active =
-    value.categories.length > 0 || value.tags.length > 0 || value.radiusMiles !== 5;
+    value.categories.length > 0 || value.tags.length > 0 || value.radiusMiles !== DEFAULT_RADIUS_MILES;
 
   function toggleCategory(id: EventCategory) {
     setValue((v) => ({
@@ -44,7 +44,7 @@ export default function FilterSheet({ visible, initial, liveCount, onClose, onAp
     }));
   }
   function reset() {
-    setValue({ categories: [], tags: [], radiusMiles: 5 });
+    setValue({ categories: [], tags: [], radiusMiles: DEFAULT_RADIUS_MILES });
   }
 
   return (

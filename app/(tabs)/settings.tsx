@@ -18,17 +18,17 @@ import { CATEGORIES } from "../../src/constants/categories";
 import { TAGS } from "../../src/constants/tags";
 import TagBadge from "../../src/components/TagBadge";
 import { useLocation, geocodeAddress, refreshLocation } from "../../src/hooks/useLocation";
-import { COLORS, RADIUS, SPACING } from "../../src/constants/theme";
+import { COLORS, RADIUS, SPACING, DEFAULT_RADIUS_MILES } from "../../src/constants/theme";
 import { EventCategory } from "../../src/types";
 
-const RADIUS_OPTIONS = [1, 2, 5, 10, 25];
+const RADIUS_OPTIONS = [5, 10, 25, 50, 100];
 
 export default function SettingsScreen() {
   const router = useRouter();
   const location = useLocation();
   const [selectedCategories, setSelectedCategories] = useState<EventCategory[]>([]);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
-  const [radius, setRadius] = useState(5);
+  const [radius, setRadius] = useState(DEFAULT_RADIUS_MILES);
   const [addressInput, setAddressInput] = useState("");
   const [isGeocoding, setIsGeocoding] = useState(false);
   const [customLocation, setCustomLocation] = useState<{
@@ -47,7 +47,7 @@ export default function SettingsScreen() {
         const prefs = JSON.parse(prefsStr);
         setSelectedCategories(prefs.categories || []);
         setSelectedTags(prefs.tags || []);
-        setRadius(prefs.radius || 5);
+        setRadius(prefs.radius || DEFAULT_RADIUS_MILES);
         setHiddenCategories(prefs.hiddenCategories || []);
         setHiddenTags(prefs.hiddenTags || []);
         setHappyHourEnabled(prefs.happyHourEnabled ?? true);

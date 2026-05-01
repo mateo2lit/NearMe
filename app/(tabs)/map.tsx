@@ -11,7 +11,7 @@ import { useWhenFilter, WhenFilter } from "../../src/hooks/useWhenFilter";
 import MapPin from "../../src/components/MapPin";
 import HeroCard from "../../src/components/HeroCard";
 import WhenSegmented from "../../src/components/WhenSegmented";
-import { COLORS, RADIUS, SPACING } from "../../src/constants/theme";
+import { COLORS, RADIUS, SPACING, DEFAULT_RADIUS_MILES } from "../../src/constants/theme";
 import { Event } from "../../src/types";
 import { isTonight, isTomorrow, isThisWeekend, effectiveStart } from "../../src/lib/time-windows";
 
@@ -55,7 +55,7 @@ export default function MapScreen() {
       (async () => {
         const prefsStr = await AsyncStorage.getItem("@nearme_preferences");
         const prefs = prefsStr ? JSON.parse(prefsStr) : null;
-        const data = await fetchNearbyEvents(location.lat, location.lng, prefs?.radius || 5);
+        const data = await fetchNearbyEvents(location.lat, location.lng, prefs?.radius || DEFAULT_RADIUS_MILES);
         const happyHourEnabled = prefs?.happyHourEnabled ?? true;
         const hidden = applyHiddenFilter(data, prefs?.hiddenCategories, prefs?.hiddenTags);
         const visible = filterHappyHour(hidden, happyHourEnabled);
