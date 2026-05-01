@@ -50,3 +50,6 @@ eas.local.json
 
 # OS
 Thumbs.db
+
+# Claude Code local agent state
+.claude/
