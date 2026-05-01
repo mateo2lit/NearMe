@@ -146,13 +146,17 @@ export default function EventDetail() {
         <View style={styles.heroWrap}>
           <Image
             source={{
-              uri: imageFailed
-                ? getEventImage(null, event.category, event.subcategory, event.title, event.description)
-                : getEventImage(event.image_url, event.category, event.subcategory, event.title, event.description),
+              uri: getEventImage(null, event.category, event.subcategory, event.title, event.description),
             }}
-            onError={() => setImageFailed(true)}
             style={styles.heroImage}
           />
+          {!imageFailed && event.image_url ? (
+            <Image
+              source={{ uri: event.image_url }}
+              onError={() => setImageFailed(true)}
+              style={[styles.heroImage, StyleSheet.absoluteFillObject]}
+            />
+          ) : null}
           <LinearGradient
             colors={["rgba(15,15,26,0.2)", "rgba(15,15,26,0.4)", "rgba(15,15,26,0.98)"]}
             locations={[0.3, 0.7, 1]}

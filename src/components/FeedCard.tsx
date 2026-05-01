@@ -27,9 +27,8 @@ function tagDisplay(tag: string): string {
 export default function FeedCard({ event, isSaved, onPress, onSave }: Props) {
   const [imageFailed, setImageFailed] = useState(false);
   const category = CATEGORY_MAP[event.category];
-  const imageUri = imageFailed
-    ? getEventImage(null, event.category, event.subcategory, event.title, event.description)
-    : getEventImage(event.image_url, event.category, event.subcategory, event.title, event.description);
+  const fallbackUri = getEventImage(null, event.category, event.subcategory, event.title, event.description);
+  const realUri = !imageFailed && event.image_url ? event.image_url : null;
 
   const startDate = effectiveStart(event);
   const dateStr = startDate.toLocaleDateString([], {
@@ -49,7 +48,14 @@ export default function FeedCard({ event, isSaved, onPress, onSave }: Props) {
   return (
     <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.95}>
       <View style={styles.imageWrap}>
-        <Image source={{ uri: imageUri }} onError={() => setImageFailed(true)} style={styles.image} />
+        <Image source={{ uri: fallbackUri }} style={styles.image} />
+        {realUri ? (
+          <Image
+            source={{ uri: realUri }}
+            onError={() => setImageFailed(true)}
+            style={[styles.image, StyleSheet.absoluteFillObject]}
+          />
+        ) : null}
         <TouchableOpacity
           style={[styles.saveBtn, isSaved && styles.saveBtnActive]}
           onPress={handleSave}

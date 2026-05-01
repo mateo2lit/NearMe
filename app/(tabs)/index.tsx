@@ -252,13 +252,17 @@ export default function DiscoverScreen() {
     [rows]
   );
   const flatFeed = useMemo(() => {
+    // Picks that didn't make it into a row (e.g., when filter narrowed below
+    // the 3-event row threshold) fall through here so they're not lost.
+    const orphanPicks = whenPicks.filter((e) => !rowIds.has(e.id));
     const base = whenFiltered.filter((e) => !rowIds.has(e.id));
-    if (!claude.state.ranking.length) return sortByStartTime(base);
-    const merged = applyRanking(base, claude.state.ranking);
+    const combined = [...orphanPicks, ...base];
+    if (!claude.state.ranking.length) return sortByStartTime(combined);
+    const merged = applyRanking(combined, claude.state.ranking);
     const claudeOnes = merged.filter((e) => e.source === "claude");
     const others = merged.filter((e) => e.source !== "claude");
     return [...claudeOnes, ...others];
-  }, [whenFiltered, rowIds, claude.state.ranking]);
+  }, [whenFiltered, whenPicks, rowIds, claude.state.ranking]);
 
   const allForSearch = [...picks, ...events];
   const liveCount = useCallback(

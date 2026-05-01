@@ -10,10 +10,23 @@ const DAY_MAP: Record<string, number> = {
   thursday: 4, friday: 5, saturday: 6,
 };
 
+const DEFAULT_DURATION_MS = 3 * 3600_000;
+
+function rawDuration(event: EventLike): number {
+  if (!event.end_time) return DEFAULT_DURATION_MS;
+  const rawStart = new Date(event.start_time).getTime();
+  const rawEnd = new Date(event.end_time).getTime();
+  return Math.max(0, rawEnd - rawStart);
+}
+
 /**
  * For recurring events whose stored start_time is in the past, roll forward
  * to the next occurrence based on recurrence_rule ("every <weekday>") while
  * preserving the stored time-of-day. Non-recurring events return as-is.
+ *
+ * Today's occurrence is preserved while the event is still in progress (i.e.
+ * today's start + duration is still in the future). Only rolls to next week
+ * once today's occurrence has fully ended.
  */
 export function effectiveStart(event: EventLike): Date {
   const original = new Date(event.start_time);
@@ -26,13 +39,15 @@ export function effectiveStart(event: EventLike): Date {
   const target = DAY_MAP[match[1].toLowerCase()];
   if (target === undefined) return original;
 
+  const duration = rawDuration(event);
   const next = new Date();
   let days = target - next.getDay();
   if (days < 0) days += 7;
   if (days === 0) {
     const today = new Date();
     today.setHours(original.getHours(), original.getMinutes(), 0, 0);
-    if (today.getTime() < now) days = 7;
+    // Roll to next week only if today's occurrence has fully ended
+    if (today.getTime() + duration <= now) days = 7;
   }
   next.setDate(next.getDate() + days);
   next.setHours(original.getHours(), original.getMinutes(), 0, 0);
@@ -41,11 +56,7 @@ export function effectiveStart(event: EventLike): Date {
 
 function effectiveEnd(event: EventLike): Date {
   const start = effectiveStart(event);
-  if (!event.end_time) return new Date(start.getTime() + 3 * 3600_000);
-  const rawStart = new Date(event.start_time).getTime();
-  const rawEnd = new Date(event.end_time).getTime();
-  const duration = Math.max(0, rawEnd - rawStart);
-  return new Date(start.getTime() + duration);
+  return new Date(start.getTime() + rawDuration(event));
 }
 
 export function sortByStartTime<T extends EventLike>(events: T[]): T[] {
