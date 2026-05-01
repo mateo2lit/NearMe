@@ -3,7 +3,7 @@
 
 create table if not exists feedback (
   id uuid primary key default gen_random_uuid(),
-  user_id text not null,
+  user_id uuid not null,
   message text not null,
   app_version text,
   created_at timestamptz not null default now()
@@ -17,4 +17,5 @@ alter table feedback enable row level security;
 drop policy if exists "feedback_insert_anon" on feedback;
 create policy "feedback_insert_anon" on feedback
   for insert
+  to anon, authenticated
   with check (true);
