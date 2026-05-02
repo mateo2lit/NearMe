@@ -186,7 +186,14 @@ const CATEGORY_IMAGES: Record<string, string> = {
 
 /**
  * Get the best matching image for an event.
- * Priority: event.image_url > subcategory match > tag match > keyword match > category fallback
+ * Priority: event.image_url > strong tag match > subcategory > weak tag match
+ *           > keyword match > category fallback
+ *
+ * Strong tags (date-night, couples) override subcategory because the subcategory
+ * comes from venue-scraping inference (Claude looking at a venue page) which can
+ * miss the "couples" angle, while tags are generated from the actual event
+ * title+description which captures it. E.g. "Couples & Single Ladies Night"
+ * gets subcategory=singles_mixer but should show couple-coded imagery.
  */
 export function getEventImage(
   imageUrl: string | null,
@@ -199,19 +206,25 @@ export function getEventImage(
   // Use the event's own image if it has one
   if (imageUrl) return imageUrl;
 
-  // Try subcategory match (most specific signal)
+  // STRONG tag overrides — these win over subcategory because subcategory
+  // can be wrong/incomplete from venue-scraping inference.
+  if (tags?.length) {
+    const strongPriority = ["date-night", "couples"];
+    for (const p of strongPriority) {
+      if (tags.includes(p) && TAG_IMAGES[p]) return TAG_IMAGES[p];
+    }
+  }
+
+  // Subcategory match (most specific concrete signal)
   if (subcategory && SUBCATEGORY_IMAGES[subcategory]) {
     return SUBCATEGORY_IMAGES[subcategory];
   }
 
-  // Tag-based match — tags are normalized (e.g. "date-night", "singles") so
-  // they're more reliable than fuzzy keyword matching against the title.
-  // Priority: date-night first so compound events like "Couples & Single
-  // Ladies Night" land on the intimate-dining image instead of a singles
-  // mingling shot. Then couples, then singles for pure singles events.
+  // Weaker tag matches (singles, live-music, trivia, etc.) — used when no
+  // subcategory was set.
   if (tags?.length) {
-    const priority = ["date-night", "couples", "singles"];
-    for (const p of priority) {
+    const weakPriority = ["singles"];
+    for (const p of weakPriority) {
       if (tags.includes(p) && TAG_IMAGES[p]) return TAG_IMAGES[p];
     }
     for (const tag of tags) {
