@@ -374,7 +374,7 @@ export default function DiscoverScreen() {
     <View style={styles.container}>
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <Text style={styles.headerTitle}>NearMe ✨v2✨</Text>
+          <Text style={styles.headerTitle}>NearMe</Text>
           <View style={styles.locChip}>
             <Ionicons name="location" size={11} color={COLORS.accent} />
             <Text style={styles.locText} numberOfLines={1}>{location.cityName}</Text>
