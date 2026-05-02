@@ -21,7 +21,7 @@ import { getFeedHandoff, clearFeedHandoff } from "../../src/services/eventCache"
 import { useLocation } from "../../src/hooks/useLocation";
 import { useSyncStatus } from "../../src/hooks/useSyncStatus";
 import { useWhenFilter, WhenFilter } from "../../src/hooks/useWhenFilter";
-import { COLORS, RADIUS } from "../../src/constants/theme";
+import { COLORS, RADIUS, DEFAULT_RADIUS_MILES } from "../../src/constants/theme";
 import { Event } from "../../src/types";
 import { buildDiscoveryRows } from "../../src/lib/rows";
 import { isTonight, isTomorrow, isThisWeekend, effectiveStart } from "../../src/lib/time-windows";
@@ -139,7 +139,7 @@ export default function DiscoverScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
-  const [filter, setFilter] = useState<FilterValue>({ categories: [], tags: [], radiusMiles: 5 });
+  const [filter, setFilter] = useState<FilterValue>({ categories: [], tags: [], radiusMiles: DEFAULT_RADIUS_MILES });
   const [showFilters, setShowFilters] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [goals, setGoals] = useState<string[]>([]);
@@ -165,7 +165,10 @@ export default function DiscoverScreen() {
   const loadEvents = useCallback(async () => {
     const prefsStr = await AsyncStorage.getItem("@nearme_preferences");
     const prefs = prefsStr ? JSON.parse(prefsStr) : null;
-    const radius = filter.radiusMiles || prefs?.radius || 5;
+    // Settings (prefs.radius) is the user's primary radius control. FilterSheet's
+    // value is dead-weight today (no radius UI in the sheet) — it just defaults to
+    // DEFAULT_RADIUS_MILES. Prefs wins so the Settings slider actually applies.
+    const radius = prefs?.radius || filter.radiusMiles || DEFAULT_RADIUS_MILES;
     const useLat = prefs?.customLocation?.lat ?? location.lat;
     const useLng = prefs?.customLocation?.lng ?? location.lng;
 
@@ -262,11 +265,13 @@ export default function DiscoverScreen() {
   const onRefresh = useCallback(async () => {
     if (!location.lat || !location.lng) return;
     const userId = await getOrCreateUserId();
+    const prefsStr = await AsyncStorage.getItem("@nearme_preferences");
+    const prefs = prefsStr ? JSON.parse(prefsStr) : null;
     await claude.start({
       userId,
       lat: location.lat,
       lng: location.lng,
-      radiusMiles: filter.radiusMiles || 5,
+      radiusMiles: prefs?.radius || filter.radiusMiles || DEFAULT_RADIUS_MILES,
       geohash: geohashEncode(location.lat, location.lng, 5),
       knownEventIds: events.map((e) => e.id),
       neighborhood: syncStatus.context.neighborhood,
