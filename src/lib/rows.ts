@@ -25,7 +25,10 @@ function buildPickedForYou(picks: Event[]): RowBuilder {
       : null;
 }
 
-const HAPPENING_SOON_HOURS = 6;
+// 12-hour window: at 8pm Friday, captures events through 8am Saturday so
+// late-night and early-Saturday-morning options surface alongside what's
+// already in progress. Sorted by soonest so the urgency reads correctly.
+const HAPPENING_SOON_HOURS = 12;
 
 const happeningNow: RowBuilder = (events, now) => {
   const filtered = sortByStartTime(
