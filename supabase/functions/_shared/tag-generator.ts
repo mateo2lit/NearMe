@@ -63,7 +63,14 @@ const DATE_NIGHT_KEYWORDS = [
 
 function textContains(text: string, keywords: string[]): boolean {
   const lower = text.toLowerCase();
-  return keywords.some((kw) => lower.includes(kw));
+  return keywords.some((kw) => {
+    // Word-boundary match so "run" doesn't match "brunch", "swim" doesn't
+    // match "swimming pool deck", "surf" doesn't match "surface", etc.
+    // Phrases with spaces still work because \b sits at any word/non-word
+    // transition.
+    const escaped = kw.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`\\b${escaped}\\b`, "i").test(lower);
+  });
 }
 
 export function generateTags(event: EventInput): string[] {

@@ -9,6 +9,33 @@ import {
 } from "../_shared/category-mapper.ts";
 
 /**
+ * Strip HTML/markup from a description and cap its length. Schema.org JSON-LD
+ * descriptions on venue sites often contain raw WordPress markup, captions,
+ * inline styles, and embed shortcodes — none of which belong in a feed card.
+ */
+function cleanText(raw: string | null | undefined, maxLen = 500): string | null {
+  if (!raw) return null;
+  const cleaned = raw
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/\[caption[\s\S]*?\[\/caption\]/gi, "")
+    .replace(/\[\/?\w+[^\]]*\]/g, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#?\w+;/g, "")
+    .replace(/https?:\/\/\S+/g, "") // strip raw URLs that escaped tag stripping
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!cleaned) return null;
+  if (cleaned.length <= maxLen) return cleaned;
+  return cleaned.slice(0, maxLen).trim() + "…";
+}
+
+/**
  * On-demand sync for a specific location.
  * Checks cooldown, syncs venues via Google Places, then events from
  * Ticketmaster/SeatGeek/Eventbrite + venue website scanning with Claude.
@@ -1101,6 +1128,13 @@ serve(async (req: Request) => {
       seen.add(key);
       return true;
     });
+
+    // Final cleanup pass: strip HTML/markup from descriptions. Schema.org
+    // JSON-LD on venue sites often contains raw WordPress markup that
+    // shouldn't reach the feed card.
+    for (const e of unique) {
+      e.description = cleanText(e.description);
+    }
 
     if (unique.length > 0) {
       await supabase.from("events").upsert(unique, { onConflict: "source,source_id" });
