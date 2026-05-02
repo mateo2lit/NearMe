@@ -535,7 +535,7 @@ function QuestionStep({ title, subtitle, options, selected, onChange, onNext, ca
                 >
                   <Text style={styles.optionEmoji}>{opt.emoji}</Text>
                   <View style={{ flex: 1 }}>
-                    <Text style={[styles.optionLabel, isSelected && { color: COLORS.accent }]}>
+                    <Text style={styles.optionLabel}>
                       {opt.label}
                     </Text>
                     {opt.description && <Text style={styles.optionDescription}>{opt.description}</Text>}
@@ -946,7 +946,7 @@ function TeaserStep({
               ))}
               {goals.length > 4 && (
                 <View style={[styles.goalBubble, { backgroundColor: COLORS.accent + "20" }]}>
-                  <Text style={{ fontSize: 12, fontWeight: "700", color: COLORS.accent }}>+{goals.length - 4}</Text>
+                  <Text style={{ fontSize: 12, fontWeight: "700", color: COLORS.accentLight }}>+{goals.length - 4}</Text>
                 </View>
               )}
             </View>
@@ -1401,17 +1401,6 @@ function PaywallStep({ onSubscribe, onBack }: { onSubscribe: () => void; onBack:
             <Text style={styles.paywallLink}>Privacy</Text>
           </TouchableOpacity>
         </View>
-
-        {__DEV__ && (
-          <TouchableOpacity
-            activeOpacity={0.7}
-            onPress={onSubscribe}
-            style={styles.devSkipBtn}
-          >
-            <Ionicons name="code-slash" size={12} color={COLORS.muted} />
-            <Text style={styles.devSkipText}>Dev: Skip paywall</Text>
-          </TouchableOpacity>
-        )}
       </View>
     </View>
   );
@@ -1648,7 +1637,7 @@ const styles = StyleSheet.create({
   },
   optionCardSelected: {
     borderColor: COLORS.accent,
-    backgroundColor: COLORS.accent + "12",
+    backgroundColor: COLORS.accent + "22", // bump tint so the selected card reads stronger against the dark bg
   },
   optionEmoji: {
     fontSize: 28,
@@ -2520,25 +2509,5 @@ const styles = StyleSheet.create({
   paywallLinkDivider: {
     fontSize: 12,
     color: COLORS.muted,
-  },
-  devSkipBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    alignSelf: "center",
-    marginTop: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: RADIUS.pill,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderStyle: "dashed",
-  },
-  devSkipText: {
-    fontSize: 11,
-    color: COLORS.muted,
-    fontWeight: "700",
-    letterSpacing: 0.3,
   },
 });
