@@ -87,6 +87,17 @@ Try it free for 7 days. Less than $7/month with the yearly plan. Cancel anytime.
 **Why NearMe?**
 Because "I don't know, what do you want to do?" is a garbage plan. Open the app. Pick something. Go.
 
+—
+
+**Subscription Information**
+NearMe Premium is an auto-renewable subscription with a 7-day free trial.
+• Yearly: $79.99/year (less than $7/month)
+• Weekly: $4.99/week
+Payment is charged to your Apple ID account at confirmation of purchase. The subscription automatically renews unless it is canceled at least 24 hours before the end of the current period. Manage or cancel anytime in your Apple ID Account Settings.
+
+Privacy Policy: https://mateo2lit.github.io/NearMe/privacy.html
+Terms of Use (EULA): https://www.apple.com/legal/internet-services/itunes/dev/stdeula/
+
 ---
 
 ## What's New (release notes for first version)
@@ -136,7 +147,7 @@ https://davidhershman.github.io/nearme-support/
 (Instructions below for free GitHub Pages hosting)
 
 ## Privacy Policy URL
-https://davidhershman.github.io/nearme-support/privacy.html
+https://mateo2lit.github.io/NearMe/privacy.html
 
 ## Marketing URL (optional)
 Same as support for now.
