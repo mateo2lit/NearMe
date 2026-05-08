@@ -10,6 +10,9 @@ import {
   Alert,
   Image,
   Linking,
+  TextInput,
+  ActivityIndicator,
+  Keyboard,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { BlurView } from "expo-blur";
@@ -22,7 +25,12 @@ import { setFeedHandoff, getFeedHandoff } from "../src/services/eventCache";
 import { CelebrateStep } from "../src/components/CelebrateStep";
 import { getOrCreateUserId } from "../src/hooks/usePreferences";
 import { getEventImage } from "../src/constants/images";
-import { useLocation } from "../src/hooks/useLocation";
+import {
+  useLocation,
+  geocodeAddress,
+  setManualLocation,
+  refreshLocation,
+} from "../src/hooks/useLocation";
 import { Event } from "../src/types";
 import type { PurchasesOffering, PurchasesPackage } from "react-native-purchases";
 import {
@@ -125,8 +133,22 @@ const HAPPY_HOUR_OPTIONS: Option[] = [
 
 // ─── Main Component ──────────────────────────────────────────
 
-type StepKey = "welcome" | "goals" | "vibe" | "social" | "schedule" | "blocker" | "budget" | "happy-hour" | "building" | "teaser" | "paywall" | "celebrate";
-const STEPS: StepKey[] = ["welcome", "goals", "vibe", "social", "schedule", "blocker", "budget", "happy-hour", "building", "teaser", "paywall", "celebrate"];
+type StepKey = "welcome" | "goals" | "vibe" | "social" | "schedule" | "blocker" | "budget" | "happy-hour" | "location" | "building" | "teaser" | "paywall" | "celebrate";
+const STEPS: StepKey[] = ["welcome", "goals", "vibe", "social", "schedule", "blocker", "budget", "happy-hour", "location", "building", "teaser", "paywall", "celebrate"];
+
+// Curated list of cities the database is well-populated for. One-tap for the
+// user (or App Review tester) to pick a city that's guaranteed to have events.
+// Centered on the city's geographic center.
+const CITY_PRESETS: Array<{ label: string; lat: number; lng: number }> = [
+  { label: "New York, NY", lat: 40.7128, lng: -74.0060 },
+  { label: "Los Angeles, CA", lat: 34.0522, lng: -118.2437 },
+  { label: "Miami, FL", lat: 25.7617, lng: -80.1918 },
+  { label: "Boca Raton, FL", lat: 26.3587, lng: -80.0831 },
+  { label: "Chicago, IL", lat: 41.8781, lng: -87.6298 },
+  { label: "Austin, TX", lat: 30.2672, lng: -97.7431 },
+  { label: "San Francisco, CA", lat: 37.7749, lng: -122.4194 },
+  { label: "Seattle, WA", lat: 47.6062, lng: -122.3321 },
+];
 
 export default function Onboarding() {
   const router = useRouter();
@@ -185,14 +207,18 @@ export default function Onboarding() {
       tagSet.add("singles");
     }
 
+    // Preserve any previously saved customLocation so we don't blow away the
+    // user's chosen city from the location step.
+    const existingPrefsStr = await AsyncStorage.getItem("@nearme_preferences");
+    const existingPrefs = existingPrefsStr ? JSON.parse(existingPrefsStr) : {};
+
     await AsyncStorage.setItem(
       "@nearme_preferences",
       JSON.stringify({
+        ...existingPrefs,
         categories: Array.from(categorySet),
         tags: Array.from(tagSet),
         radius: 10,
-        lat: 26.3587,
-        lng: -80.0831,
         happyHourEnabled: happyHour !== "hide",
         onboarding: { goals, vibe, social, schedule, blocker, budget, happyHour },
       })
@@ -221,7 +247,32 @@ export default function Onboarding() {
 
   // Step routing
   if (step === "welcome") return <WelcomeStep onNext={goNext} />;
+  if (step === "location") {
+    return (
+      <LocationStep
+        location={location}
+        onBack={goBack}
+        onNext={goNext}
+        progress={progress}
+        stepIdx={stepIdx}
+      />
+    );
+  }
   if (step === "building") {
+    // BuildingStep requires a real location. The location step before this
+    // guarantees lat/lng are set, but guard anyway so a bad route doesn't
+    // crash the sync call.
+    if (location.lat == null || location.lng == null) {
+      return (
+        <LocationStep
+          location={location}
+          onBack={goBack}
+          onNext={goNext}
+          progress={progress}
+          stepIdx={stepIdx}
+        />
+      );
+    }
     return (
       <BuildingStep
         goals={goals}
@@ -256,7 +307,7 @@ export default function Onboarding() {
   // Question steps share the same UI shell
   return (
     <View style={styles.container}>
-      <Header progress={progress} onBack={goBack} stepIdx={stepIdx} totalSteps={8} />
+      <Header progress={progress} onBack={goBack} stepIdx={stepIdx} totalSteps={9} />
 
       {step === "goals" && (
         <QuestionStep
@@ -578,6 +629,191 @@ function QuestionStep({ title, subtitle, options, selected, onChange, onNext, ca
         </TouchableOpacity>
       </View>
     </>
+  );
+}
+
+// ─── Location Step ───────────────────────────────────────────
+// A reviewer-proof "Where are you?" step. Always shown so users (and Apple
+// reviewers) explicitly confirm or pick a location before we sync events. If
+// GPS is denied or fails, the city chips and address input let anyone get a
+// populated feed without depending on device location services.
+
+function LocationStep({
+  location,
+  onBack,
+  onNext,
+  progress,
+  stepIdx,
+}: {
+  location: ReturnType<typeof useLocation>;
+  onBack: () => void;
+  onNext: () => void;
+  progress: number;
+  stepIdx: number;
+}) {
+  const [addressInput, setAddressInput] = useState("");
+  const [isGeocoding, setIsGeocoding] = useState(false);
+  const [isRequestingGPS, setIsRequestingGPS] = useState(false);
+
+  const hasLocation = location.lat != null && location.lng != null;
+
+  const handleUseGPS = async () => {
+    setIsRequestingGPS(true);
+    await refreshLocation();
+    setIsRequestingGPS(false);
+  };
+
+  const handlePickCity = async (city: typeof CITY_PRESETS[number]) => {
+    await setManualLocation(city);
+  };
+
+  const handleSubmitAddress = async () => {
+    if (!addressInput.trim()) return;
+    Keyboard.dismiss();
+    setIsGeocoding(true);
+    const result = await geocodeAddress(addressInput.trim());
+    setIsGeocoding(false);
+    if (result) {
+      await setManualLocation(result);
+      setAddressInput("");
+    } else {
+      Alert.alert("Not found", "Couldn't find that address. Try adding city/state.");
+    }
+  };
+
+  return (
+    <View style={styles.container}>
+      <Header progress={progress} onBack={onBack} stepIdx={stepIdx} totalSteps={9} />
+
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={styles.locationScroll}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+        <Text style={styles.stepTitle}>Where are you?</Text>
+        <Text style={styles.stepSubtitle}>
+          We'll find local events around this spot. You can change it anytime in Settings.
+        </Text>
+
+        {/* Current detected/chosen location */}
+        <View style={styles.locStatusCard}>
+          <View style={styles.locStatusIcon}>
+            <Ionicons
+              name={hasLocation ? "checkmark-circle" : "location-outline"}
+              size={20}
+              color={hasLocation ? COLORS.success : COLORS.muted}
+            />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.locStatusLabel}>
+              {hasLocation ? "Using" : "No location yet"}
+            </Text>
+            <Text style={styles.locStatusName}>
+              {hasLocation
+                ? location.cityName || `${location.lat?.toFixed(2)}, ${location.lng?.toFixed(2)}`
+                : "Allow GPS or pick a city below"}
+            </Text>
+          </View>
+        </View>
+
+        {/* GPS button */}
+        <TouchableOpacity
+          style={styles.locGpsBtn}
+          onPress={handleUseGPS}
+          activeOpacity={0.8}
+          disabled={isRequestingGPS}
+        >
+          <Ionicons name="navigate" size={18} color={COLORS.accent} />
+          <Text style={styles.locGpsBtnText}>
+            {isRequestingGPS ? "Detecting…" : "Use my location"}
+          </Text>
+        </TouchableOpacity>
+
+        <View style={styles.locDividerRow}>
+          <View style={styles.locDividerLine} />
+          <Text style={styles.locDividerText}>OR PICK A CITY</Text>
+          <View style={styles.locDividerLine} />
+        </View>
+
+        {/* City chips */}
+        <View style={styles.locChipGrid}>
+          {CITY_PRESETS.map((c) => {
+            const selected =
+              location.lat === c.lat && location.lng === c.lng;
+            return (
+              <TouchableOpacity
+                key={c.label}
+                style={[styles.locCityChip, selected && styles.locCityChipSelected]}
+                onPress={() => handlePickCity(c)}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.locCityChipText, selected && styles.locCityChipTextSelected]}>
+                  {c.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
+        <View style={styles.locDividerRow}>
+          <View style={styles.locDividerLine} />
+          <Text style={styles.locDividerText}>OR ENTER ADDRESS</Text>
+          <View style={styles.locDividerLine} />
+        </View>
+
+        <View style={styles.locAddressRow}>
+          <TextInput
+            style={styles.locAddressInput}
+            value={addressInput}
+            onChangeText={setAddressInput}
+            placeholder="City, state or full address"
+            placeholderTextColor={COLORS.muted}
+            returnKeyType="search"
+            onSubmitEditing={handleSubmitAddress}
+            autoCapitalize="words"
+          />
+          <TouchableOpacity
+            style={[
+              styles.locAddressBtn,
+              (!addressInput.trim() || isGeocoding) && { opacity: 0.4 },
+            ]}
+            onPress={handleSubmitAddress}
+            disabled={!addressInput.trim() || isGeocoding}
+            activeOpacity={0.8}
+          >
+            {isGeocoding ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Text style={styles.locAddressBtnText}>Set</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+
+        <View style={{ height: 24 }} />
+      </ScrollView>
+
+      <View style={styles.locContinueBar}>
+        <TouchableOpacity
+          style={[styles.primaryBtn, !hasLocation && { opacity: 0.4 }]}
+          onPress={onNext}
+          disabled={!hasLocation}
+          activeOpacity={0.85}
+        >
+          <LinearGradient
+            colors={GRADIENTS.accent as any}
+            style={styles.btnGradient}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+          >
+            <Text style={styles.primaryBtnText}>
+              {hasLocation ? "Continue" : "Pick a location"}
+            </Text>
+            {hasLocation && <Ionicons name="arrow-forward" size={20} color="#fff" />}
+          </LinearGradient>
+        </TouchableOpacity>
+      </View>
+    </View>
   );
 }
 
@@ -2509,5 +2745,143 @@ const styles = StyleSheet.create({
   paywallLinkDivider: {
     fontSize: 12,
     color: COLORS.muted,
+  },
+  // Location Step
+  locationScroll: {
+    paddingHorizontal: 20,
+    paddingTop: 8,
+    paddingBottom: 120,
+  },
+  locStatusCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: RADIUS.lg,
+    padding: 14,
+    marginTop: 12,
+    marginBottom: 16,
+  },
+  locStatusIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: COLORS.bg,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  locStatusLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: COLORS.muted,
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+  },
+  locStatusName: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: COLORS.text,
+    marginTop: 2,
+  },
+  locGpsBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.accent,
+    borderRadius: RADIUS.lg,
+    paddingVertical: 14,
+    marginBottom: 8,
+  },
+  locGpsBtnText: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: COLORS.accent,
+  },
+  locDividerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginVertical: 16,
+  },
+  locDividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: COLORS.border,
+  },
+  locDividerText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: COLORS.muted,
+    letterSpacing: 1,
+  },
+  locChipGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  locCityChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: RADIUS.pill,
+  },
+  locCityChipSelected: {
+    backgroundColor: COLORS.accent + "20",
+    borderColor: COLORS.accent,
+  },
+  locCityChipText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: COLORS.text,
+  },
+  locCityChipTextSelected: {
+    color: COLORS.accent,
+  },
+  locAddressRow: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  locAddressInput: {
+    flex: 1,
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: RADIUS.lg,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 14,
+    color: COLORS.text,
+  },
+  locAddressBtn: {
+    paddingHorizontal: 18,
+    backgroundColor: COLORS.accent,
+    borderRadius: RADIUS.lg,
+    alignItems: "center",
+    justifyContent: "center",
+    minWidth: 60,
+  },
+  locAddressBtnText: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  locContinueBar: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 32,
+    backgroundColor: COLORS.bg,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
   },
 });

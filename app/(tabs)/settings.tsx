@@ -154,7 +154,9 @@ export default function SettingsScreen() {
 
   const displayLocation = customLocation
     ? { name: customLocation.label, isCustom: true }
-    : { name: location.cityName, isCustom: false };
+    : location.lat != null
+      ? { name: location.cityName || "Current location", isCustom: false }
+      : { name: "Not set — enter address below", isCustom: false };
 
   return (
     <ScrollView

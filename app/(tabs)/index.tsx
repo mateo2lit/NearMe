@@ -172,6 +172,15 @@ export default function DiscoverScreen() {
     const useLat = prefs?.customLocation?.lat ?? location.lat;
     const useLng = prefs?.customLocation?.lng ?? location.lng;
 
+    // No usable location — leave the feed empty so the empty-state CTA can
+    // route the user to Settings to set one. Don't pass null lat/lng to the
+    // RPC, which would silently return [].
+    if (useLat == null || useLng == null) {
+      setEvents([]);
+      setPicks([]);
+      return;
+    }
+
     // Only the FilterSheet narrows the server-side query. Onboarding interests
     // (prefs.categories) curate via scoring, not by removing events.
     const explicitCategories = filter.categories.length ? filter.categories : undefined;
@@ -375,10 +384,16 @@ export default function DiscoverScreen() {
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           <Text style={styles.headerTitle}>NearMe</Text>
-          <View style={styles.locChip}>
+          <TouchableOpacity
+            style={styles.locChip}
+            onPress={() => router.push("/(tabs)/settings")}
+            activeOpacity={0.7}
+          >
             <Ionicons name="location" size={11} color={COLORS.accent} />
-            <Text style={styles.locText} numberOfLines={1}>{location.cityName}</Text>
-          </View>
+            <Text style={styles.locText} numberOfLines={1}>
+              {location.cityName || "Set location"}
+            </Text>
+          </TouchableOpacity>
         </View>
         <TouchableOpacity
           onPress={() => setShowSearch(true)}
@@ -413,6 +428,14 @@ export default function DiscoverScreen() {
           renderItem={() => <View style={{ marginBottom: 16 }}><SkeletonCard /></View>}
           contentContainerStyle={styles.feed}
           showsVerticalScrollIndicator={false}
+        />
+      ) : location.needsSetup || (location.lat == null && !location.loading) ? (
+        <EmptyState
+          icon="location-outline"
+          title="Set your location to see events"
+          body="We need a location to find events near you. Allow GPS or pick a city in Settings."
+          ctaLabel="Open Settings"
+          onCtaPress={() => router.push("/(tabs)/settings")}
         />
       ) : rows.length === 0 && flatFeed.length === 0 ? (
         <EmptyState

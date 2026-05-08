@@ -1,26 +1,42 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import * as Location from "expo-location";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { BOCA_RATON } from "../constants/theme";
 
 interface LocationState {
-  lat: number;
-  lng: number;
+  lat: number | null;
+  lng: number | null;
   cityName: string;
   loading: boolean;
   error: string | null;
   permissionGranted: boolean;
   isCustom: boolean;
+  // True when we have no usable location (no GPS + no custom address) and the
+  // app should prompt the user to set one. Don't silently fall back to a
+  // hardcoded city — that lies to the user about where their events are from
+  // and got us rejected for "App Completeness" on iPad.
+  needsSetup: boolean;
 }
 
-const DEFAULT_STATE: LocationState = {
-  lat: BOCA_RATON.lat,
-  lng: BOCA_RATON.lng,
-  cityName: "Boca Raton, FL",
+const INITIAL_STATE: LocationState = {
+  lat: null,
+  lng: null,
+  cityName: "",
   loading: true,
   error: null,
   permissionGranted: false,
   isCustom: false,
+  needsSetup: false,
+};
+
+const NEEDS_SETUP_STATE: LocationState = {
+  lat: null,
+  lng: null,
+  cityName: "",
+  loading: false,
+  error: "Location unavailable",
+  permissionGranted: false,
+  isCustom: false,
+  needsSetup: true,
 };
 
 /**
@@ -28,7 +44,7 @@ const DEFAULT_STATE: LocationState = {
  * Settings changes propagate immediately to all screens using useLocation.
  */
 const listeners = new Set<(s: LocationState) => void>();
-let currentState: LocationState = DEFAULT_STATE;
+let currentState: LocationState = INITIAL_STATE;
 
 function setGlobal(updater: (s: LocationState) => LocationState) {
   currentState = updater(currentState);
@@ -48,18 +64,14 @@ async function loadFromPrefs(): Promise<LocationState | null> {
     error: null,
     permissionGranted: true,
     isCustom: true,
+    needsSetup: false,
   };
 }
 
-async function loadFromGPS(): Promise<LocationState | null> {
+async function loadFromGPS(): Promise<LocationState> {
   const { status } = await Location.requestForegroundPermissionsAsync();
   if (status !== "granted") {
-    return {
-      ...DEFAULT_STATE,
-      loading: false,
-      error: "Location permission denied",
-      permissionGranted: false,
-    };
+    return { ...NEEDS_SETUP_STATE, error: "Location permission denied" };
   }
 
   try {
@@ -86,9 +98,10 @@ async function loadFromGPS(): Promise<LocationState | null> {
       error: null,
       permissionGranted: true,
       isCustom: false,
+      needsSetup: false,
     };
   } catch {
-    return { ...DEFAULT_STATE, loading: false, permissionGranted: true };
+    return { ...NEEDS_SETUP_STATE, error: "Could not determine location", permissionGranted: true };
   }
 }
 
@@ -103,9 +116,29 @@ export async function refreshLocation() {
     return;
   }
   const fromGPS = await loadFromGPS();
-  if (fromGPS) {
-    setGlobal(() => fromGPS);
-  }
+  setGlobal(() => fromGPS);
+}
+
+/**
+ * Persist a chosen location (e.g. from a city chip in onboarding) and notify
+ * all useLocation consumers immediately. Mirrors the customLocation write that
+ * Settings.tsx does, but available from anywhere in the app.
+ */
+export async function setManualLocation(loc: { lat: number; lng: number; label: string }) {
+  const prefsStr = await AsyncStorage.getItem("@nearme_preferences");
+  const prefs = prefsStr ? JSON.parse(prefsStr) : {};
+  prefs.customLocation = loc;
+  await AsyncStorage.setItem("@nearme_preferences", JSON.stringify(prefs));
+  setGlobal(() => ({
+    lat: loc.lat,
+    lng: loc.lng,
+    cityName: loc.label,
+    loading: false,
+    error: null,
+    permissionGranted: true,
+    isCustom: true,
+    needsSetup: false,
+  }));
 }
 
 let initialized = false;

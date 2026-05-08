@@ -160,4 +160,27 @@ Same as support for now.
 - **Contact Phone:** (your number)
 - **Demo Account:** (not needed — NearMe doesn't require login)
 - **Notes for reviewer:**
-  > NearMe is a location-based event discovery app. No account required — the app uses the device's location (with permission) to surface local events. No user-generated content. All events come from public APIs (Ticketmaster, SeatGeek) and public venue websites. Subscription is optional and implemented via StoreKit.
+  > NearMe is a location-based event discovery app. No account/login required. All events come from public APIs (Ticketmaster, Reddit) and public venue websites.
+  >
+  > **How to test the app:**
+  >
+  > 1. Open the app and tap "Get started."
+  > 2. Answer the onboarding questions (goals, vibe, etc).
+  > 3. On the **"Where are you?" step**, you have three options. Any of them will produce a populated event feed:
+  >    - Tap **"Use my location"** to allow GPS, OR
+  >    - Tap any **city chip** (New York, Los Angeles, Miami, Boca Raton, Chicago, Austin, San Francisco, Seattle), OR
+  >    - Type a city/address in the address field and tap "Set."
+  >
+  >    For the fastest path to a populated feed, **tap the "Boca Raton, FL" chip** — that region's database is most densely populated.
+  >
+  > 4. Continue through the building/teaser screens to the paywall.
+  > 5. Tap **"Subscribe"** and complete the **Sandbox IAP purchase** (subscription unlocks the full feed). Sandbox completes without real charges via RevenueCat — no demo account or extra setup needed.
+  > 6. The Discover feed will load with 20+ events for the selected city.
+  >
+  > Subscription products in App Store Connect:
+  > - `com.davidhershman.nearme.pro.annual`
+  > - `com.davidhershman.nearme.pro.weekly`
+  >
+  > If a problem arises:
+  > - The **city chips guarantee a populated feed** even if GPS is unavailable on your test device.
+  > - You can change location anytime via the **Settings tab** (gear icon, bottom right) → Your Location.

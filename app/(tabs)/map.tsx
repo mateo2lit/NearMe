@@ -51,11 +51,13 @@ export default function MapScreen() {
   const carouselRef = useRef<ScrollView>(null);
 
   useEffect(() => {
-    if (!location.loading) {
+    if (!location.loading && location.lat != null && location.lng != null) {
+      const lat = location.lat;
+      const lng = location.lng;
       (async () => {
         const prefsStr = await AsyncStorage.getItem("@nearme_preferences");
         const prefs = prefsStr ? JSON.parse(prefsStr) : null;
-        const data = await fetchNearbyEvents(location.lat, location.lng, prefs?.radius || DEFAULT_RADIUS_MILES);
+        const data = await fetchNearbyEvents(lat, lng, prefs?.radius || DEFAULT_RADIUS_MILES);
         const happyHourEnabled = prefs?.happyHourEnabled ?? true;
         const hidden = applyHiddenFilter(data, prefs?.hiddenCategories, prefs?.hiddenTags);
         const visible = filterHappyHour(hidden, happyHourEnabled);
@@ -63,8 +65,8 @@ export default function MapScreen() {
       })();
       if (!region) {
         setRegion({
-          latitude: location.lat,
-          longitude: location.lng,
+          latitude: lat,
+          longitude: lng,
           latitudeDelta: 0.06,
           longitudeDelta: 0.06,
         });
@@ -86,6 +88,7 @@ export default function MapScreen() {
   );
 
   const recenter = () => {
+    if (location.lat == null || location.lng == null) return;
     mapRef.current?.animateToRegion({
       latitude: location.lat,
       longitude: location.lng,
@@ -96,6 +99,50 @@ export default function MapScreen() {
 
   const onCardPress = (e: Event) => router.push(`/event/${e.id}`);
 
+  // No location set yet — prompt the user to set one in Settings rather than
+  // rendering a globe-centered map of the Atlantic Ocean.
+  if (!location.loading && (location.lat == null || location.lng == null)) {
+    return (
+      <View style={[styles.container, { padding: 32, justifyContent: "center", alignItems: "center" }]}>
+        <Ionicons name="location-outline" size={48} color={COLORS.muted} />
+        <Text
+          style={{
+            color: COLORS.text,
+            fontSize: 18,
+            fontWeight: "700",
+            marginTop: 12,
+            textAlign: "center",
+          }}
+        >
+          Set your location to see the map
+        </Text>
+        <Text
+          style={{
+            color: COLORS.muted,
+            fontSize: 14,
+            marginTop: 8,
+            textAlign: "center",
+          }}
+        >
+          Allow GPS or pick a city in Settings.
+        </Text>
+        <TouchableOpacity
+          style={{
+            marginTop: 20,
+            paddingHorizontal: 20,
+            paddingVertical: 12,
+            backgroundColor: COLORS.accent,
+            borderRadius: RADIUS.pill,
+          }}
+          onPress={() => router.push("/(tabs)/settings")}
+          activeOpacity={0.85}
+        >
+          <Text style={{ color: "#fff", fontWeight: "700" }}>Open Settings</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       <ClusteredMapView
@@ -105,8 +152,8 @@ export default function MapScreen() {
         customMapStyle={mapDarkStyle}
         initialRegion={
           region || {
-            latitude: location.lat,
-            longitude: location.lng,
+            latitude: location.lat ?? 0,
+            longitude: location.lng ?? 0,
             latitudeDelta: 0.06,
             longitudeDelta: 0.06,
           }
