@@ -110,31 +110,31 @@ const TAG_IMAGES: Record<string, string> = {
   "active":         SUBCATEGORY_IMAGES.running,
 };
 
-// Keyword-based matching (checked against title + description)
+// Keyword-based matching (checked against title + description). First match
+// wins, so order matters: concrete activity keywords MUST come before soft
+// lifestyle keywords. Otherwise a "Glow Bowl" event whose description happens
+// to mention "couples and friends" gets a wedding-style date-night photo
+// instead of the bowling photo.
 const KEYWORD_IMAGES: [string[], string][] = [
-  [["speed dating", "speed-dating"], SUBCATEGORY_IMAGES.speed_dating],
-  [["singles mixer", "singles night", "singles mingle", "singles event"], SUBCATEGORY_IMAGES.singles_mixer],
-  [["matchmaking", "matchmaker"],    SUBCATEGORY_IMAGES.matchmaking],
-  [["couples & single", "couples and single", "couples & ladies", "couples and ladies", "singles & couples", "singles and couples", "couples", "for couples", "date night", "couples night", "couples event", "romantic"], SUBCATEGORY_IMAGES.date_night],
-  [["single ladies", "ladies night"], SUBCATEGORY_IMAGES.date_night],
-  [["flirty", "flirt night", "flirt event"], SUBCATEGORY_IMAGES.date_night],
-  [["girls night", "girls' night", "ladies' night"], SUBCATEGORY_IMAGES.social],
-  [["paint and sip", "paint & sip", "wine and paint"], SUBCATEGORY_IMAGES.paint_sip],
-  [["tasting", "wine tasting"],      SUBCATEGORY_IMAGES.tasting],
+  // ── Sports / activities (very specific subject) ──
   [["pickleball"],          SUBCATEGORY_IMAGES.pickleball],
   [["basketball", "hoops"], SUBCATEGORY_IMAGES.basketball],
   [["volleyball"],          SUBCATEGORY_IMAGES.volleyball],
   [["soccer", "futsal"],    SUBCATEGORY_IMAGES.soccer],
   [["tennis"],              SUBCATEGORY_IMAGES.tennis],
-  [["bowling"],             SUBCATEGORY_IMAGES.bowling],
+  [["bowling", "bowl"],     SUBCATEGORY_IMAGES.bowling],
   [["golf"],                SUBCATEGORY_IMAGES.golf],
   [["swim"],                SUBCATEGORY_IMAGES.swimming],
   [["surf"],                SUBCATEGORY_IMAGES.surfing],
+
+  // ── Fitness ──
   [["yoga"],                SUBCATEGORY_IMAGES.yoga],
   [["zumba", "dance fitness"], SUBCATEGORY_IMAGES.zumba],
   [["run ", "running", "5k", "marathon"], SUBCATEGORY_IMAGES.running],
   [["crossfit", "bootcamp"], SUBCATEGORY_IMAGES.crossfit],
   [["pilates"],             SUBCATEGORY_IMAGES.pilates],
+
+  // ── Specific bar / nightlife activities ──
   [["karaoke"],             SUBCATEGORY_IMAGES.karaoke],
   [["trivia"],              SUBCATEGORY_IMAGES.trivia],
   [["board game", "game night"], SUBCATEGORY_IMAGES.game_night],
@@ -145,30 +145,57 @@ const KEYWORD_IMAGES: [string[], string][] = [
   [["dj"],                  SUBCATEGORY_IMAGES.dj_set],
   [["jazz", "blues"],       SUBCATEGORY_IMAGES.jazz],
   [["jam session"],         SUBCATEGORY_IMAGES.jam_session],
+
+  // ── Food / drink ──
   [["brunch"],              SUBCATEGORY_IMAGES.brunch],
   [["farmer", "market"],    SUBCATEGORY_IMAGES.market],
   [["food truck"],          SUBCATEGORY_IMAGES.food_truck],
-  [["wine", "tasting"],     SUBCATEGORY_IMAGES.wine_tasting],
+  [["wine tasting", "wine "], SUBCATEGORY_IMAGES.wine_tasting],
   [["cooking class", "chef"], SUBCATEGORY_IMAGES.cooking_class],
   [["beer", "brew", "taproom"], SUBCATEGORY_IMAGES.beer],
+  [["paint and sip", "paint & sip", "wine and paint"], SUBCATEGORY_IMAGES.paint_sip],
+  [["tasting"],             SUBCATEGORY_IMAGES.tasting],
+
+  // ── Arts ──
   [["theater", "theatre", "play", "musical"], SUBCATEGORY_IMAGES.theater],
   [["gallery", "exhibit"],  SUBCATEGORY_IMAGES.gallery],
   [["workshop", "craft", "mosaic", "pottery"], SUBCATEGORY_IMAGES.workshop],
   [["magic"],               SUBCATEGORY_IMAGES.magic_show],
   [["museum"],              SUBCATEGORY_IMAGES.museum],
   [["paint", "art class"],  SUBCATEGORY_IMAGES.painting],
+
+  // ── Outdoors ──
   [["hike", "trek", "trail", "walk"], SUBCATEGORY_IMAGES.hiking],
   [["kayak", "canoe", "paddle"], SUBCATEGORY_IMAGES.kayaking],
   [["bird"],                SUBCATEGORY_IMAGES.birding],
   [["fish"],                SUBCATEGORY_IMAGES.fishing],
   [["beach", "ocean"],      SUBCATEGORY_IMAGES.beach],
   [["camp"],                SUBCATEGORY_IMAGES.camping],
+
+  // ── Movies ──
   [["movie", "film", "cinema", "screening"], SUBCATEGORY_IMAGES.screening],
+
+  // ── Community ──
   [["volunteer", "cleanup"], SUBCATEGORY_IMAGES.volunteer],
-  [["network", "meetup", "mixer"], SUBCATEGORY_IMAGES.networking],
+  [["network", "meetup"],   SUBCATEGORY_IMAGES.networking],
   [["lecture", "talk", "seminar"], SUBCATEGORY_IMAGES.lecture],
   [["kids", "children", "tot ", "toddler"], SUBCATEGORY_IMAGES.kids],
   [["festival", "fair"],    SUBCATEGORY_IMAGES.festival],
+
+  // ── Dating / romantic (lowest priority among keywords — these are soft
+  // signals and shouldn't override a concrete activity above) ──
+  [["speed dating", "speed-dating"], SUBCATEGORY_IMAGES.speed_dating],
+  [["singles mixer", "singles night", "singles mingle", "singles event"], SUBCATEGORY_IMAGES.singles_mixer],
+  [["matchmaking", "matchmaker"],    SUBCATEGORY_IMAGES.matchmaking],
+  // Multi-word couples phrases only — bare "couples" was too greedy and
+  // hijacked any event whose description mentioned the word.
+  [["couples & single", "couples and single", "couples & ladies", "couples and ladies", "singles & couples", "singles and couples", "for couples", "date night", "couples night", "couples event", "romantic"], SUBCATEGORY_IMAGES.date_night],
+  [["single ladies"],       SUBCATEGORY_IMAGES.date_night],
+  [["flirty", "flirt night", "flirt event"], SUBCATEGORY_IMAGES.date_night],
+  [["girls night", "girls' night", "ladies' night", "ladies night"], SUBCATEGORY_IMAGES.social],
+  // Generic "mixer" comes after specific romantic ones so a "speed dating
+  // mixer" gets the dating photo, not the networking one.
+  [["mixer"],               SUBCATEGORY_IMAGES.networking],
 ];
 
 // Category-level fallbacks (lowest priority)
