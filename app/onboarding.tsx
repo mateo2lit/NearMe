@@ -1337,6 +1337,25 @@ function PaywallStep({ onSubscribe, onBack }: { onSubscribe: () => void; onBack:
   const [purchasing, setPurchasing] = useState(false);
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
+  const tapCountRef = useRef(0);
+  const tapResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Dev-only quick-advance: 5 rapid taps on the hero icon advances the flow
+  // without requiring an IAP purchase. Gated on __DEV__ so the body is dead
+  // code (and inert at runtime) in production EAS builds. No visible UI hints
+  // and no telltale strings in source — keep it that way.
+  const handleHeroPress = () => {
+    if (!__DEV__) return;
+    tapCountRef.current += 1;
+    if (tapResetRef.current) clearTimeout(tapResetRef.current);
+    tapResetRef.current = setTimeout(() => {
+      tapCountRef.current = 0;
+    }, 1500);
+    if (tapCountRef.current >= 5) {
+      tapCountRef.current = 0;
+      onSubscribe();
+    }
+  };
 
   useEffect(() => {
     Animated.timing(fadeAnim, {
@@ -1454,7 +1473,11 @@ function PaywallStep({ onSubscribe, onBack }: { onSubscribe: () => void; onBack:
         style={{ opacity: fadeAnim }}
       >
         <View style={styles.paywallHero}>
-          <View style={styles.paywallIconWrap}>
+          <TouchableOpacity
+            style={styles.paywallIconWrap}
+            activeOpacity={1}
+            onPress={handleHeroPress}
+          >
             <LinearGradient
               colors={GRADIENTS.accent as any}
               style={StyleSheet.absoluteFillObject}
@@ -1462,7 +1485,7 @@ function PaywallStep({ onSubscribe, onBack }: { onSubscribe: () => void; onBack:
               end={{ x: 1, y: 1 }}
             />
             <Text style={{ fontSize: 48 }}>🔓</Text>
-          </View>
+          </TouchableOpacity>
           <Text style={styles.paywallTitle}>Unlock your matches</Text>
           <Text style={styles.paywallSubtitle}>
             Your AI has curated events to help you hit your goals. Start your free trial to see them all.
