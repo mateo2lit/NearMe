@@ -4,11 +4,11 @@ describe("getSourceDisplayName", () => {
   it("maps ticketmaster", () => {
     expect(getSourceDisplayName("ticketmaster", null)).toBe("Ticketmaster");
   });
-  it("maps seatgeek", () => {
-    expect(getSourceDisplayName("seatgeek", null)).toBe("SeatGeek");
-  });
   it("maps google_places", () => {
     expect(getSourceDisplayName("google_places", null)).toBe("Google");
+  });
+  it("maps reddit", () => {
+    expect(getSourceDisplayName("reddit", null)).toBe("Local roundup");
   });
   it("maps municipal", () => {
     expect(getSourceDisplayName("municipal", null)).toBe("City website");

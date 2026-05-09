@@ -10,6 +10,6 @@ describe("FoundForYouChip", () => {
     });
     const tree = instance.toJSON();
     const json = JSON.stringify(tree);
-    expect(json).toContain("Found for you");
+    expect(json).toContain("Hand-picked");
   });
 });

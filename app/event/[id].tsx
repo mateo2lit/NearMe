@@ -8,6 +8,9 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { fetchEventById, formatDistance, effectiveStart } from "../../src/services/events";
+import {
+  cancelReminderForEvent, ensurePermissions, scheduleReminderForEvent,
+} from "../../src/services/reminders";
 import { CATEGORY_MAP } from "../../src/constants/categories";
 import { TAG_MAP } from "../../src/constants/tags";
 import { getEventImage } from "../../src/constants/images";
@@ -72,17 +75,39 @@ export default function EventDetail() {
     const ids: string[] = savedIds ? JSON.parse(savedIds) : [];
     const savedEvents = await AsyncStorage.getItem("@nearme_saved_events");
     const eventsArr: Event[] = savedEvents ? JSON.parse(savedEvents) : [];
-    if (isSaved) {
-      await AsyncStorage.setItem("@nearme_saved", JSON.stringify(ids.filter((i) => i !== event.id)));
-      await AsyncStorage.setItem("@nearme_saved_events", JSON.stringify(eventsArr.filter((e) => e.id !== event.id)));
+    const wasSaved = isSaved;
+    if (wasSaved) {
+      await AsyncStorage.multiSet([
+        ["@nearme_saved", JSON.stringify(ids.filter((i) => i !== event.id))],
+        ["@nearme_saved_events", JSON.stringify(eventsArr.filter((e) => e.id !== event.id))],
+      ]);
       setIsSaved(false);
     } else {
       ids.push(event.id);
       eventsArr.push(event);
-      await AsyncStorage.setItem("@nearme_saved", JSON.stringify(ids));
-      await AsyncStorage.setItem("@nearme_saved_events", JSON.stringify(eventsArr));
+      await AsyncStorage.multiSet([
+        ["@nearme_saved", JSON.stringify(ids)],
+        ["@nearme_saved_events", JSON.stringify(eventsArr)],
+      ]);
       setIsSaved(true);
     }
+    // Reminder side-effect, fire-and-forget so the heart toggles instantly.
+    (async () => {
+      try {
+        if (wasSaved) {
+          await cancelReminderForEvent(event.id);
+          return;
+        }
+        const prefsStr = await AsyncStorage.getItem("@nearme_preferences");
+        const prefs = prefsStr ? JSON.parse(prefsStr) : null;
+        if (prefs?.remindersEnabled === false) return;
+        const granted = await ensurePermissions();
+        if (!granted) return;
+        await scheduleReminderForEvent(event, {
+          quietHours: prefs?.quietHours || { start: 22, end: 8 },
+        });
+      } catch { /* best-effort */ }
+    })();
   };
 
   const openDirections = () => {
@@ -169,8 +194,8 @@ export default function EventDetail() {
             />
           ) : null}
           <LinearGradient
-            colors={["rgba(15,15,26,0.2)", "rgba(15,15,26,0.4)", "rgba(15,15,26,0.98)"]}
-            locations={[0.3, 0.7, 1]}
+            colors={["rgba(15,15,26,0.05)", "rgba(15,15,26,0.55)", "rgba(15,15,26,0.98)"]}
+            locations={[0, 0.6, 1]}
             style={StyleSheet.absoluteFillObject}
           />
 

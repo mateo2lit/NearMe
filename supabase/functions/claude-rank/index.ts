@@ -40,6 +40,8 @@ function buildRankPrompt(profile: ProfileRow, events: EventLite[]): string {
   ].join("\n");
 }
 
+const MAX_EVENT_IDS = 100;
+
 export async function handleRankRequest(req: RankRequest): Promise<Response> {
   const { body, deps } = req;
   if (!body.user_id || !Array.isArray(body.event_ids) || body.event_ids.length === 0) {
@@ -47,6 +49,11 @@ export async function handleRankRequest(req: RankRequest): Promise<Response> {
       status: 400, headers: { "Content-Type": "application/json" },
     });
   }
+
+  // Cap input — without this, a misbehaving client could ship hundreds of
+  // event_ids and force an unbounded events table scan + Claude prompt that
+  // dominates the function's wall-clock budget.
+  const eventIds = body.event_ids.slice(0, MAX_EVENT_IDS);
 
   // Circuit breaker
   const { data: circuit } = await deps.supabase.from("claude_circuit").select().single();
@@ -65,7 +72,8 @@ export async function handleRankRequest(req: RankRequest): Promise<Response> {
 
   const { data: events, error: eErr } = await deps.supabase
     .from("events").select("id,title,category,tags,is_free,price_min")
-    .in("id", body.event_ids);
+    .in("id", eventIds)
+    .limit(MAX_EVENT_IDS);
   if (eErr) return new Response(JSON.stringify({ error: "events_lookup_failed" }), { status: 500 });
 
   const startedAt = new Date().toISOString();

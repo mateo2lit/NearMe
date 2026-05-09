@@ -16,7 +16,8 @@ import SearchOverlay from "../../src/components/SearchOverlay";
 import EmptyState from "../../src/components/EmptyState";
 import { SyncStatusBanner } from "../../src/components/SyncStatusBanner";
 import { BouncingDots } from "../../src/components/BouncingDots";
-import { fetchNearbyEvents, applyHiddenFilter, filterPastEvents, filterHappyHour, sortByStartTime, dedupeSameDayDuplicates, balanceSources, balanceCategories } from "../../src/services/events";
+import { fetchNearbyEvents, applyHiddenFilter, filterPastEvents, filterHappyHour, sortByStartTime, dedupeSameDayDuplicates, balanceSources, balanceCategories, getLastFetchError, clearLastFetchError } from "../../src/services/events";
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from "../../src/services/supabase";
 import { getFeedHandoff, clearFeedHandoff } from "../../src/services/eventCache";
 import { useLocation } from "../../src/hooks/useLocation";
 import { useSyncStatus } from "../../src/hooks/useSyncStatus";
@@ -31,6 +32,9 @@ import { getOrCreateUserId } from "../../src/hooks/usePreferences";
 import { useRatingTriggers } from "../../src/hooks/useRatingTriggers";
 import { RatingPrompt } from "../../src/components/RatingPrompt";
 import { geohashEncode } from "../../src/lib/geohash";
+import {
+  cancelReminderForEvent, ensurePermissions, scheduleReminderForEvent,
+} from "../../src/services/reminders";
 
 const FIRST_REFRESH_KEY = "@nearme_first_claude_refresh_done";
 
@@ -129,6 +133,46 @@ function diversifyByVenue(list: Event[], targetCount = 20): Event[] {
   return applyVenueCap(list, 8);
 }
 
+interface PipelinePrefs {
+  hiddenCategories?: string[];
+  hiddenTags?: string[];
+  happyHourEnabled?: boolean;
+  onboarding?: { goals?: string[] };
+  hiddenRowIds?: string[];
+}
+
+interface PipelineResult {
+  diversified: Event[];
+  picks: Event[];
+  goals: string[];
+  hiddenRowIds: string[];
+}
+
+// Single source of truth for turning raw events into the diversified feed
+// + goal-based picks. Used by both loadEvents() and the onboarding handoff
+// effect so they can never drift.
+function applyFeedPipeline(raw: Event[], prefs: PipelinePrefs | null): PipelineResult {
+  const happyHourEnabled = prefs?.happyHourEnabled ?? true;
+  const hidden = applyHiddenFilter(raw, prefs?.hiddenCategories, prefs?.hiddenTags);
+  const filteredHH = filterHappyHour(hidden, happyHourEnabled);
+  const deduped = dedupeSameDayDuplicates(filteredHH);
+  const diversified = balanceCategories(
+    balanceSources(diversifyByVenue(deduped), deduped),
+    deduped,
+  );
+  const goals: string[] = prefs?.onboarding?.goals || [];
+  let picks: Event[] = [];
+  if (goals.length) {
+    picks = diversified
+      .map((e) => ({ e, s: scoreEvent(e, goals) }))
+      .filter((x) => x.s > 0)
+      .sort((a, b) => b.s - a.s)
+      .slice(0, 6)
+      .map((x) => x.e);
+  }
+  return { diversified, picks, goals, hiddenRowIds: prefs?.hiddenRowIds || [] };
+}
+
 export default function DiscoverScreen() {
   const router = useRouter();
   const location = useLocation();
@@ -144,10 +188,10 @@ export default function DiscoverScreen() {
   const [showSearch, setShowSearch] = useState(false);
   const [goals, setGoals] = useState<string[]>([]);
   const [hiddenRowIds, setHiddenRowIds] = useState<string[]>([]);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [userInterests, setUserInterests] = useState<{ categories: string[]; tags: string[]; goals: string[] }>({ categories: [], tags: [], goals: [] });
 
-  const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL!;
-  const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!;
-  const claude = useClaudeRefresh({ supabaseUrl, anonKey });
+  const claude = useClaudeRefresh({ supabaseUrl: SUPABASE_URL, anonKey: SUPABASE_ANON_KEY });
 
   const ratingTrigger = useRatingTriggers();
   const [ratingUserId, setRatingUserId] = useState<string>("");
@@ -186,32 +230,21 @@ export default function DiscoverScreen() {
     const explicitCategories = filter.categories.length ? filter.categories : undefined;
     const explicitTags = filter.tags.length ? filter.tags : undefined;
 
+    clearLastFetchError();
     const data = await fetchNearbyEvents(useLat, useLng, radius, explicitCategories, explicitTags);
-    const happyHourEnabled = prefs?.happyHourEnabled ?? true;
-    const hidden = applyHiddenFilter(data, prefs?.hiddenCategories, prefs?.hiddenTags);
-    const filteredHH = filterHappyHour(hidden, happyHourEnabled);
-    const deduped = dedupeSameDayDuplicates(filteredHH);
-    const diversified = balanceCategories(
-      balanceSources(diversifyByVenue(deduped), deduped),
-      deduped,
-    );
-
-    const userGoals: string[] = prefs?.onboarding?.goals || [];
-    setGoals(userGoals);
-    setHiddenRowIds(prefs?.hiddenRowIds || []);
-    if (userGoals.length) {
-      const scored = diversified
-        .map((e) => ({ e, s: scoreEvent(e, userGoals) }))
-        .filter((x) => x.s > 0)
-        .sort((a, b) => b.s - a.s);
-      const top = scored.slice(0, 6).map((x) => x.e);
-      setPicks(top);
-    } else {
-      setPicks([]);
-    }
+    setFetchError(getLastFetchError());
+    const result = applyFeedPipeline(data, prefs);
+    setGoals(result.goals);
+    setHiddenRowIds(result.hiddenRowIds);
+    setPicks(result.picks);
+    setUserInterests({
+      categories: prefs?.categories || [],
+      tags: prefs?.tags || [],
+      goals: result.goals,
+    });
     // events is the canonical full list — picks are derived for the row
     // builder, but they still appear in the chronological list below.
-    setEvents(diversified);
+    setEvents(result.diversified);
   }, [location.lat, location.lng, filter]);
 
   useEffect(() => {
@@ -222,28 +255,11 @@ export default function DiscoverScreen() {
         const prefsStr = await AsyncStorage.getItem("@nearme_preferences");
         const prefs = prefsStr ? JSON.parse(prefsStr) : null;
         const fresh = filterPastEvents(handoff);
-        const happyHourEnabled = prefs?.happyHourEnabled ?? true;
-        const hidden = applyHiddenFilter(fresh, prefs?.hiddenCategories, prefs?.hiddenTags);
-        const filteredHandoff = filterHappyHour(hidden, happyHourEnabled);
-        const deduped = dedupeSameDayDuplicates(filteredHandoff);
-        const diversified = balanceCategories(
-          balanceSources(diversifyByVenue(deduped), deduped),
-          deduped,
-        );
-        const userGoals: string[] = prefs?.onboarding?.goals || [];
-        setGoals(userGoals);
-        setHiddenRowIds(prefs?.hiddenRowIds || []);
-        if (userGoals.length) {
-          const scored = diversified
-            .map((e) => ({ e, s: scoreEvent(e, userGoals) }))
-            .filter((x) => x.s > 0)
-            .sort((a, b) => b.s - a.s);
-          const top = scored.slice(0, 6).map((x) => x.e);
-          setPicks(top);
-        } else {
-          setPicks([]);
-        }
-        setEvents(diversified);
+        const result = applyFeedPipeline(fresh, prefs);
+        setGoals(result.goals);
+        setHiddenRowIds(result.hiddenRowIds);
+        setPicks(result.picks);
+        setEvents(result.diversified);
         setLoading(false);
         await clearFeedHandoff();
       }
@@ -273,6 +289,12 @@ export default function DiscoverScreen() {
 
   const onRefresh = useCallback(async () => {
     if (!location.lat || !location.lng) return;
+    // Guard against concurrent starts: if a prior refresh is still streaming
+    // (phase1/phase2) or about to, ignore this trigger. Otherwise re-focusing
+    // the tab can fire claude.start() while the previous run is still active.
+    if (claude.state.state !== "idle" && claude.state.state !== "done" && claude.state.state !== "error") {
+      return;
+    }
     const userId = await getOrCreateUserId();
     const prefsStr = await AsyncStorage.getItem("@nearme_preferences");
     const prefs = prefsStr ? JSON.parse(prefsStr) : null;
@@ -304,21 +326,48 @@ export default function DiscoverScreen() {
   );
 
   const toggleSave = async (event: Event) => {
+    // Read-once: the previous version read @nearme_saved_events twice when
+    // unsaving, and conditionally wrote when saving. Now we read once, mutate
+    // a local array, and write the final state back.
     const newSaved = new Set(savedIds);
     const savedEventsStr = await AsyncStorage.getItem("@nearme_saved_events");
     const savedEvents: Event[] = savedEventsStr ? JSON.parse(savedEventsStr) : [];
-    if (newSaved.has(event.id)) {
+    let nextSavedEvents = savedEvents;
+    const isUnsave = newSaved.has(event.id);
+    if (isUnsave) {
       newSaved.delete(event.id);
-      await AsyncStorage.setItem("@nearme_saved_events", JSON.stringify(savedEvents.filter((e) => e.id !== event.id)));
+      nextSavedEvents = savedEvents.filter((e) => e.id !== event.id);
     } else {
       newSaved.add(event.id);
       if (!savedEvents.find((e) => e.id === event.id)) {
-        savedEvents.push(event);
-        await AsyncStorage.setItem("@nearme_saved_events", JSON.stringify(savedEvents));
+        nextSavedEvents = [...savedEvents, event];
       }
     }
     setSavedIds(newSaved);
-    await AsyncStorage.setItem("@nearme_saved", JSON.stringify([...newSaved]));
+    await AsyncStorage.multiSet([
+      ["@nearme_saved_events", JSON.stringify(nextSavedEvents)],
+      ["@nearme_saved", JSON.stringify([...newSaved])],
+    ]);
+
+    // Reminder side-effect — fire-and-forget so the heart toggles instantly.
+    // Reads remindersEnabled + quietHours each time so a Settings change
+    // takes effect immediately on the next save.
+    (async () => {
+      try {
+        if (isUnsave) {
+          await cancelReminderForEvent(event.id);
+          return;
+        }
+        const prefsStr = await AsyncStorage.getItem("@nearme_preferences");
+        const prefs = prefsStr ? JSON.parse(prefsStr) : null;
+        if (prefs?.remindersEnabled === false) return;
+        const granted = await ensurePermissions();
+        if (!granted) return;
+        await scheduleReminderForEvent(event, {
+          quietHours: prefs?.quietHours || { start: 22, end: 8 },
+        });
+      } catch { /* best-effort */ }
+    })();
   };
 
   const now = new Date();
@@ -361,8 +410,11 @@ export default function DiscoverScreen() {
 
   // Track newly-arrived event IDs so AnimatedFeedRow only animates those
   // (otherwise the initial 20-event render would all animate at once).
+  // The Set is owned by a ref and only rebuilt when flatFeed actually changes,
+  // not on every unrelated re-render.
   const newIdsRef = useRef<Set<string>>(new Set());
   const prevIdsRef = useRef<Set<string>>(new Set());
+  const flatFeedKey = useMemo(() => flatFeed.map((e) => e.id).join("|"), [flatFeed]);
 
   useEffect(() => {
     const currentIds = new Set(flatFeed.map((e) => e.id));
@@ -377,7 +429,7 @@ export default function DiscoverScreen() {
     // Clear after animation duration so subsequent re-renders don't reanimate
     const t = setTimeout(() => { newIdsRef.current = new Set(); }, 400);
     return () => clearTimeout(t);
-  }, [flatFeed]);
+  }, [flatFeedKey]);
 
   return (
     <View style={styles.container}>
@@ -395,14 +447,28 @@ export default function DiscoverScreen() {
             </Text>
           </TouchableOpacity>
         </View>
-        <TouchableOpacity
-          onPress={() => setShowSearch(true)}
-          style={styles.searchPill}
-          activeOpacity={0.8}
-          accessibilityLabel="Search events"
-        >
-          <Ionicons name="search" size={16} color={COLORS.muted} />
-        </TouchableOpacity>
+        <View style={styles.headerActions}>
+          <TouchableOpacity
+            onPress={() => {
+              if (events.length === 0) return;
+              const pick = events[Math.floor(Math.random() * events.length)];
+              router.push(`/event/${pick.id}`);
+            }}
+            style={[styles.searchPill, styles.luckyPill]}
+            activeOpacity={0.8}
+            accessibilityLabel="Pick something random for me"
+          >
+            <Ionicons name="shuffle" size={16} color={COLORS.accentLight} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => setShowSearch(true)}
+            style={styles.searchPill}
+            activeOpacity={0.8}
+            accessibilityLabel="Search events"
+          >
+            <Ionicons name="search" size={16} color={COLORS.muted} />
+          </TouchableOpacity>
+        </View>
       </View>
 
       <View style={{ paddingVertical: 8 }}>
@@ -437,6 +503,17 @@ export default function DiscoverScreen() {
           ctaLabel="Open Settings"
           onCtaPress={() => router.push("/(tabs)/settings")}
         />
+      ) : rows.length === 0 && flatFeed.length === 0 && fetchError ? (
+        <EmptyState
+          icon="cloud-offline-outline"
+          title="Couldn't reach the feed"
+          body="Connection hiccup or our service is briefly down. Pull down to retry."
+          ctaLabel="Retry"
+          onCtaPress={() => {
+            setLoading(true);
+            loadEvents().finally(() => setLoading(false));
+          }}
+        />
       ) : rows.length === 0 && flatFeed.length === 0 ? (
         <EmptyState
           icon="radio"
@@ -455,6 +532,7 @@ export default function DiscoverScreen() {
                 isSaved={savedIds.has(item.id)}
                 onPress={() => router.push(`/event/${item.id}`)}
                 onSave={() => toggleSave(item)}
+                userInterests={userInterests}
               />
             </AnimatedFeedRow>
           )}
@@ -496,7 +574,7 @@ export default function DiscoverScreen() {
             claude.state.state === "phase1" ||
             claude.state.state === "phase2" ? (
               <View style={styles.loadingFooter}>
-                <Text style={styles.loadingFooterRobot}>🤖</Text>
+                <Ionicons name="sparkles" size={13} color={COLORS.accentLight} />
                 <Text style={styles.loadingFooterText}>
                   {claude.state.foundEvents.length > 0
                     ? `Still finding more — ${claude.state.foundEvents.length} fresh pick${claude.state.foundEvents.length === 1 ? "" : "s"} added`
@@ -521,7 +599,18 @@ export default function DiscoverScreen() {
         initial={filter}
         liveCount={liveCount}
         onClose={() => setShowFilters(false)}
-        onApply={setFilter}
+        onApply={async (next) => {
+          setFilter(next);
+          // Persist radius back to prefs so loadEvents (which reads prefs.radius
+          // first) actually honors what the user just picked. Without this the
+          // FilterSheet radius is dead-weight against the Settings slider.
+          try {
+            const prefsStr = await AsyncStorage.getItem("@nearme_preferences");
+            const prefs = prefsStr ? JSON.parse(prefsStr) : {};
+            prefs.radius = next.radiusMiles;
+            await AsyncStorage.setItem("@nearme_preferences", JSON.stringify(prefs));
+          } catch { /* best-effort */ }
+        }}
       />
 
       <SearchOverlay
@@ -554,6 +643,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20, paddingTop: 60, paddingBottom: 8, gap: 10,
   },
   headerLeft: { flexDirection: "row", alignItems: "center", gap: 10, flex: 1 },
+  headerActions: { flexDirection: "row", gap: 8 },
   headerTitle: { fontSize: 26, fontWeight: "800", color: COLORS.text, letterSpacing: -0.5 },
   locChip: {
     flexDirection: "row", alignItems: "center", gap: 4,
@@ -568,6 +658,10 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.card, alignItems: "center", justifyContent: "center",
     borderWidth: 1, borderColor: COLORS.border,
   },
+  luckyPill: {
+    backgroundColor: COLORS.accent + "1A",
+    borderColor: COLORS.accent + "55",
+  },
   feed: { paddingHorizontal: 16, paddingBottom: 24, gap: 16 },
   divider: { flexDirection: "row", alignItems: "center", gap: 10, marginVertical: 12 },
   dividerLine: { flex: 1, height: 1, backgroundColor: COLORS.border },
@@ -577,5 +671,4 @@ const styles = StyleSheet.create({
     gap: 10, paddingVertical: 24,
   },
   loadingFooterText: { color: COLORS.muted, fontSize: 13, fontWeight: "600" },
-  loadingFooterRobot: { fontSize: 16, lineHeight: 18 },
 });

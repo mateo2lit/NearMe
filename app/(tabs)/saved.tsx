@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
 import {
   View, Text, StyleSheet, SectionList, TouchableOpacity, Image, Alert,
 } from "react-native";
@@ -9,14 +9,23 @@ import { Event } from "../../src/types";
 import { CATEGORY_MAP } from "../../src/constants/categories";
 import { getEventImage } from "../../src/constants/images";
 import { effectiveStart } from "../../src/services/events";
+import { getAllFeedback, FeedbackRecord } from "../../src/services/feedback";
+import { DidYouGo } from "../../src/components/DidYouGo";
 import EmptyState from "../../src/components/EmptyState";
 import { COLORS, RADIUS, SPACING } from "../../src/constants/theme";
 
 type SavedMode = "all" | "upcoming" | "past";
 
-type Section = { title: string; data: Event[]; collapsed?: boolean };
+type Section = { title: string; data: Event[]; collapsed?: boolean; subtle?: boolean };
 
-function groupEvents(events: Event[], mode: SavedMode, now: Date): Section[] {
+const ONE_WEEK_MS = 7 * 24 * 3600_000;
+
+function groupEvents(
+  events: Event[],
+  mode: SavedMode,
+  now: Date,
+  feedback: Record<string, FeedbackRecord>,
+): Section[] {
   const upcoming: Event[] = [];
   const past: Event[] = [];
   for (const e of events) {
@@ -26,32 +35,61 @@ function groupEvents(events: Event[], mode: SavedMode, now: Date): Section[] {
   upcoming.sort((a, b) => effectiveStart(a).getTime() - effectiveStart(b).getTime());
   past.sort((a, b) => effectiveStart(b).getTime() - effectiveStart(a).getTime());
 
-  if (mode === "past") return past.length ? [{ title: "PAST", data: past }] : [];
-  if (mode === "all") return [
-    ...(upcoming.length ? [{ title: "UPCOMING", data: upcoming }] : []),
-    ...(past.length ? [{ title: "PAST", data: past }] : []),
-  ];
+  // Past events split by feedback so the user sees a clean "what I did" list
+  // separately from "what slipped past me." Events without recorded feedback
+  // land in MISSED — that's the prompt-to-rate surface.
+  const went: Event[] = [];
+  const missed: Event[] = [];
+  for (const e of past) {
+    const r = feedback[e.id];
+    if (r && (r.status === "loved" || r.status === "ok")) went.push(e);
+    else missed.push(e);
+  }
 
+  if (mode === "past") {
+    const sections: Section[] = [];
+    if (went.length) sections.push({ title: `WENT (${went.length})`, data: went });
+    if (missed.length) sections.push({ title: `MISSED (${missed.length})`, data: missed, subtle: true });
+    return sections;
+  }
+  if (mode === "all") {
+    const sections: Section[] = [];
+    if (upcoming.length) sections.push({ title: "UPCOMING", data: upcoming });
+    if (went.length) sections.push({ title: `WENT (${went.length})`, data: went });
+    if (missed.length) sections.push({ title: `MISSED (${missed.length})`, data: missed, subtle: true });
+    return sections;
+  }
+
+  // Upcoming mode: split by horizon. Going-soon = next 7 days; thinking-about-it
+  // = beyond a week. Past gets folded into a collapsed "MISSED" prompt card.
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const endOfThisWeek = new Date(startOfToday);
-  endOfThisWeek.setDate(endOfThisWeek.getDate() + (7 - startOfToday.getDay()));
-  const endOfNextWeek = new Date(endOfThisWeek);
-  endOfNextWeek.setDate(endOfNextWeek.getDate() + 7);
+  const weekCutoff = new Date(startOfToday.getTime() + ONE_WEEK_MS);
 
-  const thisWeek: Event[] = [];
-  const nextWeek: Event[] = [];
-  const later: Event[] = [];
+  const goingSoon: Event[] = [];
+  const thinking: Event[] = [];
   for (const e of upcoming) {
     const d = effectiveStart(e);
-    if (d < endOfThisWeek) thisWeek.push(e);
-    else if (d < endOfNextWeek) nextWeek.push(e);
-    else later.push(e);
+    if (d < weekCutoff) goingSoon.push(e);
+    else thinking.push(e);
   }
   const sections: Section[] = [];
-  if (thisWeek.length) sections.push({ title: "THIS WEEK", data: thisWeek });
-  if (nextWeek.length) sections.push({ title: "NEXT WEEK", data: nextWeek });
-  if (later.length) sections.push({ title: "LATER", data: later });
-  if (past.length) sections.push({ title: `PAST (${past.length})`, data: past, collapsed: true });
+  if (goingSoon.length) sections.push({ title: "GOING SOON", data: goingSoon });
+  if (thinking.length) sections.push({ title: "THINKING ABOUT IT", data: thinking });
+  if (missed.length) {
+    sections.push({
+      title: `MISSED (${missed.length}) — DID YOU GO?`,
+      data: missed,
+      collapsed: true,
+      subtle: true,
+    });
+  }
+  if (went.length) {
+    sections.push({
+      title: `WENT (${went.length})`,
+      data: went,
+      collapsed: true,
+    });
+  }
   return sections;
 }
 
@@ -60,13 +98,24 @@ export default function SavedScreen() {
   const [savedEvents, setSavedEvents] = useState<Event[]>([]);
   const [mode, setMode] = useState<SavedMode>("upcoming");
   const [pastExpanded, setPastExpanded] = useState(false);
+  const [wentExpanded, setWentExpanded] = useState(false);
+  const [feedback, setFeedback] = useState<Record<string, FeedbackRecord>>({});
 
   const loadSaved = useCallback(async () => {
     const data = await AsyncStorage.getItem("@nearme_saved_events");
     setSavedEvents(data ? JSON.parse(data) : []);
+    setFeedback(await getAllFeedback());
   }, []);
 
   useFocusEffect(useCallback(() => { loadSaved(); }, [loadSaved]));
+
+  // Refresh feedback periodically so DidYouGo taps inside section list reflect
+  // in section grouping (otherwise a thumbs-up on a "MISSED" card stays in the
+  // missed group until the screen refocuses).
+  useEffect(() => {
+    const t = setInterval(() => { getAllFeedback().then(setFeedback); }, 4000);
+    return () => clearInterval(t);
+  }, []);
 
   const remove = async (id: string) => {
     const next = savedEvents.filter((e) => e.id !== id);
@@ -83,10 +132,14 @@ export default function SavedScreen() {
   };
 
   const sections = useMemo(
-    () => groupEvents(savedEvents, mode, new Date()).map((s) =>
-      s.collapsed && !pastExpanded ? { ...s, data: [] } : s
-    ),
-    [savedEvents, mode, pastExpanded]
+    () => groupEvents(savedEvents, mode, new Date(), feedback).map((s) => {
+      const isMissed = s.title.startsWith("MISSED");
+      const isWent = s.title.startsWith("WENT");
+      if (s.collapsed && isMissed && !pastExpanded) return { ...s, data: [] };
+      if (s.collapsed && isWent && !wentExpanded) return { ...s, data: [] };
+      return s;
+    }),
+    [savedEvents, mode, pastExpanded, wentExpanded, feedback]
   );
 
   if (savedEvents.length === 0) {
@@ -97,8 +150,8 @@ export default function SavedScreen() {
         </View>
         <EmptyState
           icon="heart-outline"
-          title="No saved events yet"
-          body="Tap the heart on events you want to remember. They'll show up here, grouped by date."
+          title="Nothing saved yet"
+          body="Tap the heart on anything that catches your eye — it'll live here, grouped by date so you actually remember to go."
         />
       </View>
     );
@@ -133,48 +186,72 @@ export default function SavedScreen() {
         sections={sections}
         keyExtractor={(item) => item.id}
         renderSectionHeader={({ section }) => {
-          const isPast = section.title.startsWith("PAST");
-          if (isPast && !pastExpanded) {
+          const isMissed = section.title.startsWith("MISSED");
+          const isWent = section.title.startsWith("WENT");
+          const collapsedAndCollapsible =
+            section.collapsed && ((isMissed && !pastExpanded) || (isWent && !wentExpanded));
+          if (collapsedAndCollapsible) {
             return (
               <TouchableOpacity
                 style={styles.pastHeaderCollapsed}
-                onPress={() => setPastExpanded(true)}
+                onPress={() => {
+                  if (isMissed) setPastExpanded(true);
+                  else if (isWent) setWentExpanded(true);
+                }}
+                activeOpacity={0.75}
               >
-                <Text style={styles.sectionHeader}>{section.title}</Text>
+                <Text style={[styles.sectionHeader, section.subtle && styles.sectionHeaderSubtle, { marginTop: 0, marginBottom: 0 }]}>
+                  {section.title}
+                </Text>
                 <Ionicons name="chevron-down" size={16} color={COLORS.muted} />
               </TouchableOpacity>
             );
           }
-          return <Text style={styles.sectionHeader}>{section.title}</Text>;
+          return (
+            <Text style={[styles.sectionHeader, section.subtle && styles.sectionHeaderSubtle]}>
+              {section.title}
+            </Text>
+          );
         }}
-        renderItem={({ item }) => {
+        renderItem={({ item, section }) => {
           const category = CATEGORY_MAP[item.category];
           const startDate = effectiveStart(item);
           const day = startDate.toLocaleDateString([], { weekday: "short" }).toUpperCase();
           const soon = startDate.getTime() - Date.now() < 24 * 3600_000 && startDate.getTime() > Date.now();
+          const isPastSection = section.title.startsWith("MISSED") || section.title.startsWith("WENT");
           return (
-            <TouchableOpacity
-              style={[styles.card, soon && styles.cardSoon]}
-              onPress={() => router.push(`/event/${item.id}`)}
-              onLongPress={() => confirmRemove(item)}
-              activeOpacity={0.85}
-            >
-              <Image
-                source={{ uri: getEventImage(item.image_url, item.category, item.subcategory, item.title, item.description, item.tags) }}
-                style={styles.cardImage}
-              />
-              <View style={styles.cardBody}>
-                <Text style={styles.cardDay}>{day}</Text>
-                <Text style={styles.cardTitle} numberOfLines={2}>{item.title}</Text>
-                {category && (
-                  <View style={styles.cardMeta}>
-                    <View style={[styles.catDot, { backgroundColor: category.color }]} />
-                    <Text style={styles.catText}>{category.label}</Text>
-                  </View>
-                )}
-              </View>
-              <Ionicons name="chevron-forward" size={20} color={COLORS.muted} style={{ alignSelf: "center", marginRight: 10 }} />
-            </TouchableOpacity>
+            <View>
+              <TouchableOpacity
+                style={[styles.card, soon && styles.cardSoon, isPastSection && styles.cardPast]}
+                onPress={() => router.push(`/event/${item.id}`)}
+                onLongPress={() => confirmRemove(item)}
+                activeOpacity={0.85}
+              >
+                <Image
+                  source={{ uri: getEventImage(item.image_url, item.category, item.subcategory, item.title, item.description, item.tags) }}
+                  style={styles.cardImage}
+                />
+                <View style={styles.cardBody}>
+                  <Text style={styles.cardDay}>{day}</Text>
+                  <Text style={styles.cardTitle} numberOfLines={2}>{item.title}</Text>
+                  {category && (
+                    <View style={styles.cardMeta}>
+                      <View style={[styles.catDot, { backgroundColor: category.color }]} />
+                      <Text style={styles.catText}>{category.label}</Text>
+                    </View>
+                  )}
+                </View>
+                <Ionicons name="chevron-forward" size={20} color={COLORS.muted} style={{ alignSelf: "center", marginRight: 10 }} />
+              </TouchableOpacity>
+              {isPastSection && (
+                <DidYouGo
+                  eventId={item.id}
+                  category={item.category}
+                  tags={item.tags}
+                  compact
+                />
+              )}
+            </View>
           );
         }}
         contentContainerStyle={styles.list}
@@ -210,9 +287,10 @@ const styles = StyleSheet.create({
   segTextActive: { color: "#fff" },
   list: { paddingHorizontal: SPACING.md, paddingBottom: 24 },
   sectionHeader: {
-    fontSize: 11, fontWeight: "800", color: COLORS.muted,
+    fontSize: 11, fontWeight: "800", color: COLORS.text,
     letterSpacing: 1, marginTop: 16, marginBottom: 8,
   },
+  sectionHeaderSubtle: { color: COLORS.muted },
   pastHeaderCollapsed: {
     flexDirection: "row", justifyContent: "space-between", alignItems: "center",
     paddingVertical: 12, paddingHorizontal: 12,
@@ -224,10 +302,13 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     backgroundColor: COLORS.card, borderRadius: RADIUS.md,
     borderWidth: 1, borderColor: COLORS.border,
-    marginBottom: 10, overflow: "hidden",
+    marginBottom: 4, overflow: "hidden",
   },
   cardSoon: {
     borderLeftWidth: 3, borderLeftColor: COLORS.accent,
+  },
+  cardPast: {
+    opacity: 0.78,
   },
   cardImage: { width: 86, height: 86, borderTopLeftRadius: RADIUS.md, borderBottomLeftRadius: RADIUS.md },
   cardBody: { flex: 1, padding: 10, justifyContent: "center", gap: 2 },

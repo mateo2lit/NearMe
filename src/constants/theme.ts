@@ -18,8 +18,6 @@ export const COLORS = {
   warm: "#ffb347",     // price, soon
   hot: "#ff6b6b",      // saved, packed, urgent
 
-  // Legacy compatibility (used by some existing code — keep for now)
-  secondary: "#00d4cd",
   pink: "#ff6b9d",
   overlay: "rgba(15, 15, 26, 0.85)",
 };
@@ -44,6 +42,40 @@ export const SPACING = {
   lg: 24,
   xl: 32,
 };
+
+export const SHADOWS = {
+  sm: {
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  md: {
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.14,
+    shadowRadius: 10,
+    elevation: 6,
+  },
+  tabBar: {
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.18,
+    shadowRadius: 8,
+    elevation: 12,
+  },
+} as const;
+
+export const OPACITY = {
+  disabled: 0.4,
+  pressed: 0.75,
+  overlay: 0.9,
+  borderSubtle: "1F", // ~12%
+  borderEmphasis: "55",
+} as const;
+
+export const SHEET_HEIGHT = "85%" as const;
 
 export const BOCA_RATON = {
   lat: 26.3587,

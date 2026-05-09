@@ -3,10 +3,10 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.103.0";
 import { generateTags } from "../_shared/tag-generator.ts";
 import {
   mapTMCategory,
-  mapSGCategory,
   mapVenueCategory,
   mapPriceLevel,
 } from "../_shared/category-mapper.ts";
+import { geohashEncode } from "../_shared/geohash.ts";
 
 /**
  * Strip HTML/markup from a description and cap its length. Schema.org JSON-LD
@@ -44,17 +44,35 @@ function cleanText(raw: string | null | undefined, maxLen = 500): string | null 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const TM_API_KEY = Deno.env.get("TICKETMASTER_API_KEY");
-const SG_CLIENT_ID = Deno.env.get("SEATGEEK_CLIENT_ID");
 const GOOGLE_API_KEY = Deno.env.get("GOOGLE_PLACES_API_KEY");
 const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
 const EVENTBRITE_TOKEN = Deno.env.get("EVENTBRITE_TOKEN");
-const BANDSINTOWN_APP_ID = Deno.env.get("BANDSINTOWN_APP_ID");
-const YELP_API_KEY = Deno.env.get("YELP_API_KEY");
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
 const SYNC_COOLDOWN_HOURS = 2;
 const PLACES_URL = "https://places.googleapis.com/v1/places:searchNearby";
+const UPSTREAM_TIMEOUT_MS = 12_000; // hard cap on any single upstream API call
+
+/**
+ * Wrap fetch() with an AbortController-based timeout so a hung upstream
+ * (Google Places, Ticketmaster, Anthropic, Eventbrite, Reddit) doesn't drag
+ * the entire sync past its wall-clock budget. Throws on timeout/network
+ * error; callers should already be defensive (try/catch + log).
+ */
+async function timeoutFetch(
+  input: string | URL,
+  init: RequestInit & { timeoutMs?: number } = {},
+): Promise<Response> {
+  const { timeoutMs, ...rest } = init;
+  const ac = new AbortController();
+  const id = setTimeout(() => ac.abort(), timeoutMs ?? UPSTREAM_TIMEOUT_MS);
+  try {
+    return await fetch(input, { ...rest, signal: ac.signal });
+  } finally {
+    clearTimeout(id);
+  }
+}
 const VENUE_TYPES = [
   "bar", "restaurant", "night_club", "movie_theater", "stadium",
   "park", "gym", "bowling_alley", "amusement_park",
@@ -96,7 +114,7 @@ async function syncVenues(lat: number, lng: number, radiusMeters: number) {
 
   for (const type of VENUE_TYPES) {
     try {
-      const response = await fetch(PLACES_URL, {
+      const response = await timeoutFetch(PLACES_URL, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -168,7 +186,7 @@ async function fetchTicketmaster(lat: number, lng: number, radiusMiles: number) 
     url.searchParams.set("sort", "date,asc");
     url.searchParams.set("startDateTime", new Date().toISOString().replace(/\.\d{3}Z$/, "Z"));
 
-    const res = await fetch(url.toString());
+    const res = await timeoutFetch(url.toString());
     const data = await res.json();
     for (const e of data?._embedded?.events || []) {
       const venue = e._embedded?.venues?.[0];
@@ -200,48 +218,6 @@ async function fetchTicketmaster(lat: number, lng: number, radiusMiles: number) 
     console.error("[tm] error:", err);
   }
   console.log(`[tm] ${events.length}`);
-  return events;
-}
-
-// ─── SeatGeek ────────────────────────────────────────────────
-
-async function fetchSeatGeek(lat: number, lng: number, radiusMiles: number) {
-  if (!SG_CLIENT_ID) return [];
-  const events: any[] = [];
-  try {
-    const url = new URL("https://api.seatgeek.com/2/events");
-    url.searchParams.set("client_id", SG_CLIENT_ID);
-    url.searchParams.set("lat", String(lat));
-    url.searchParams.set("lon", String(lng));
-    url.searchParams.set("range", `${radiusMiles}mi`);
-    url.searchParams.set("per_page", "100");
-
-    const res = await fetch(url.toString());
-    const data = await res.json();
-    for (const sg of data?.events || []) {
-      const { category, subcategory } = mapSGCategory(sg.type);
-      const tags = generateTags({
-        category, subcategory, title: sg.short_title || sg.title,
-        description: sg.description, is_free: false,
-        start_time: sg.datetime_utc, ticket_url: sg.url,
-      });
-      events.push({
-        source: "seatgeek", source_id: String(sg.id),
-        title: sg.short_title || sg.title, description: sg.description || null,
-        category, subcategory,
-        lat: sg.venue.location.lat, lng: sg.venue.location.lon,
-        address: `${sg.venue.address}, ${sg.venue.city}, ${sg.venue.state}`,
-        image_url: sg.performers?.[0]?.image || null,
-        start_time: sg.datetime_utc, end_time: null,
-        is_recurring: false, recurrence_rule: null, is_free: false,
-        price_min: sg.stats?.lowest_price || null, price_max: sg.stats?.highest_price || null,
-        ticket_url: sg.url, source_url: sg.url, tags,
-      });
-    }
-  } catch (err) {
-    console.error("[sg] error:", err);
-  }
-  console.log(`[sg] ${events.length}`);
   return events;
 }
 
@@ -288,7 +264,7 @@ async function fetchEventbrite(
         url.searchParams.set("page", String(page));
         if (q) url.searchParams.set("q", q);
 
-        const res = await fetch(url.toString(), {
+        const res = await timeoutFetch(url.toString(), {
           headers: { Authorization: `Bearer ${EVENTBRITE_TOKEN}` },
         });
         if (!res.ok) break;
@@ -335,171 +311,6 @@ async function fetchEventbrite(
     });
   }
   console.log(`[eb] ${events.length}`);
-  return events;
-}
-
-// ─── Bandsintown (music events) ──────────────────────────────
-
-async function fetchBandsintown(lat: number, lng: number, radiusMiles: number) {
-  if (!BANDSINTOWN_APP_ID) return [];
-  const events: any[] = [];
-  try {
-    // Bandsintown has no direct location search, but they have a location-based search via artists.
-    // Better approach: use their public events endpoint with location header.
-    // For now, use the simpler /events/search endpoint
-    const url = new URL("https://rest.bandsintown.com/events/search");
-    url.searchParams.set("app_id", BANDSINTOWN_APP_ID);
-    url.searchParams.set("location", `${lat},${lng}`);
-    url.searchParams.set("radius", String(radiusMiles));
-    url.searchParams.set("per_page", "100");
-
-    const res = await fetch(url.toString(), {
-      headers: { Accept: "application/json" },
-    });
-    if (!res.ok) {
-      console.log(`[bit] status ${res.status}`);
-      return [];
-    }
-    const data = await res.json();
-    const items = Array.isArray(data) ? data : data?.events || [];
-
-    for (const bit of items) {
-      const venue = bit.venue;
-      const eLat = venue?.latitude ? parseFloat(venue.latitude) : null;
-      const eLng = venue?.longitude ? parseFloat(venue.longitude) : null;
-      if (!eLat || !eLng) continue;
-
-      const title = bit.lineup?.[0] || bit.title || "Live Music";
-      const tags = generateTags({
-        category: "music", subcategory: "concert",
-        title, description: bit.description,
-        is_free: false, start_time: bit.datetime, ticket_url: bit.url,
-      });
-
-      events.push({
-        source: "bandsintown", source_id: `bit-${bit.id}`,
-        title: String(title),
-        description: bit.description || `Live music at ${venue?.name || "venue"}`,
-        category: "music", subcategory: "concert",
-        lat: eLat, lng: eLng,
-        address: `${venue?.name || ""} ${venue?.city || ""} ${venue?.region || ""}`.trim(),
-        image_url: bit.artist?.image_url || null,
-        start_time: bit.datetime, end_time: null,
-        is_recurring: false, recurrence_rule: null, is_free: false,
-        price_min: null, price_max: null,
-        ticket_url: bit.url, source_url: bit.url, tags,
-      });
-    }
-  } catch (err) {
-    console.error("[bit] error:", err);
-  }
-  console.log(`[bit] ${events.length}`);
-  return events;
-}
-
-// ─── Yelp Events ─────────────────────────────────────────────
-
-async function fetchYelpEvents(
-  lat: number,
-  lng: number,
-  radiusMiles: number,
-  opts?: { expandDates?: boolean },
-) {
-  if (!YELP_API_KEY) return [];
-
-  // Yelp caps radius at 40km (~25mi). For wider user radii, fan out to
-  // center + 4 cardinal offsets at radius/2 so coverage extends to ~radiusMiles.
-  const milesPerDegLat = 69;
-  const milesPerDegLng = Math.cos((lat * Math.PI) / 180) * 69 || 69;
-  const offsetMiles = Math.min(radiusMiles / 2, 25);
-  const offsetLat = offsetMiles / milesPerDegLat;
-  const offsetLng = offsetMiles / milesPerDegLng;
-
-  const centers: [number, number][] = radiusMiles > 25
-    ? [
-        [lat, lng],
-        [lat + offsetLat, lng],
-        [lat - offsetLat, lng],
-        [lat, lng + offsetLng],
-        [lat, lng - offsetLng],
-      ]
-    : [[lat, lng]];
-
-  const seen = new Set<string>();
-  const events: any[] = [];
-
-  const categoryMap: Record<string, string> = {
-    "food-and-drink": "food",
-    music: "music",
-    nightlife: "nightlife",
-    "visual-arts": "arts",
-    "performing-arts": "arts",
-    film: "movies",
-    sports: "sports",
-    fitness: "fitness",
-  };
-
-  await Promise.all(centers.map(async ([cLat, cLng]) => {
-    try {
-      const url = new URL("https://api.yelp.com/v3/events");
-      url.searchParams.set("latitude", String(cLat));
-      url.searchParams.set("longitude", String(cLng));
-      url.searchParams.set("radius", "40000"); // 40km max — each center covers 25mi
-      url.searchParams.set("limit", "50");
-      url.searchParams.set("sort_on", "popularity");
-      if (opts?.expandDates) {
-        const now = Math.floor(Date.now() / 1000);
-        url.searchParams.set("start_date", String(now));
-        url.searchParams.set("end_date", String(now + 30 * 86400));
-      }
-
-      const res = await fetch(url.toString(), {
-        headers: { Authorization: `Bearer ${YELP_API_KEY}` },
-      });
-      if (!res.ok) {
-        console.log(`[yelp] status ${res.status}`);
-        return;
-      }
-      const data = await res.json();
-
-      for (const yp of data?.events || []) {
-        if (seen.has(yp.id)) continue;
-        seen.add(yp.id);
-        const loc = yp.location || {};
-        const eLat = yp.latitude ? parseFloat(yp.latitude) : null;
-        const eLng = yp.longitude ? parseFloat(yp.longitude) : null;
-        if (!eLat || !eLng) continue;
-
-        const cat = categoryMap[yp.category || ""] || "community";
-        const tags = generateTags({
-          category: cat, subcategory: yp.category || "event",
-          title: yp.name, description: yp.description,
-          is_free: yp.cost === 0 || yp.cost === null,
-          start_time: yp.time_start, ticket_url: yp.tickets_url || yp.event_site_url,
-        });
-
-        events.push({
-          source: "yelp", source_id: `yelp-${yp.id}`,
-          title: yp.name, description: yp.description || null,
-          category: cat, subcategory: yp.category || "event",
-          lat: eLat, lng: eLng,
-          address: loc.display_address?.join(", ") || "",
-          image_url: yp.image_url || null,
-          start_time: yp.time_start, end_time: yp.time_end || null,
-          is_recurring: false, recurrence_rule: null,
-          is_free: yp.cost === 0 || yp.cost === null,
-          price_min: yp.cost || null, price_max: yp.cost_max || null,
-          ticket_url: yp.tickets_url || yp.event_site_url || null,
-          source_url: yp.event_site_url || null,
-          tags,
-        });
-      }
-    } catch (err) {
-      console.error("[yelp] error:", err);
-    }
-  }));
-
-  console.log(`[yelp] ${events.length} (${centers.length} center${centers.length > 1 ? "s" : ""})`);
   return events;
 }
 
@@ -578,7 +389,7 @@ async function fetchRedditEvents(
   for (const sub of subs.slice(0, 2)) {
     try {
       const url = `https://www.reddit.com/r/${sub}/search.json?q=event+OR+tonight+OR+this+weekend&restrict_sr=1&sort=new&limit=25&t=week`;
-      const res = await fetch(url, {
+      const res = await timeoutFetch(url, {
         headers: { "User-Agent": "NearMe-Bot/1.0" },
       });
       if (!res.ok) continue;
@@ -593,8 +404,9 @@ async function fetchRedditEvents(
 
       if (postTexts.length < 100) continue;
 
-      const claudeRes = await fetch("https://api.anthropic.com/v1/messages", {
+      const claudeRes = await timeoutFetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
+        timeoutMs: 30_000,
         headers: {
           "Content-Type": "application/json",
           "x-api-key": ANTHROPIC_API_KEY!,
@@ -713,8 +525,9 @@ async function extractWithClaude(
   if (text.length < 100) return [];
 
   try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
+    const res = await timeoutFetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
+      timeoutMs: 30_000,
       headers: {
         "Content-Type": "application/json",
         "x-api-key": ANTHROPIC_API_KEY,
@@ -902,8 +715,9 @@ async function fetchNeighborhood(
 ): Promise<{ neighborhood: string | null; nearby: string[] } | null> {
   if (!ANTHROPIC_API_KEY) return null;
   try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
+    const res = await timeoutFetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
+      timeoutMs: 15_000,
       headers: {
         "Content-Type": "application/json",
         "x-api-key": ANTHROPIC_API_KEY,
@@ -937,39 +751,6 @@ If you don't know the specific neighborhood, use the most specific area name you
     console.error("[neighborhood] error:", err);
     return null;
   }
-}
-
-// ─── Geohash Encoder ─────────────────────────────────────────
-
-const BASE32 = "0123456789bcdefghjkmnpqrstuvwxyz";
-
-function encodeGeohash(lat: number, lng: number, precision = 5): string {
-  let minLat = -90, maxLat = 90;
-  let minLng = -180, maxLng = 180;
-  let hash = "";
-  let bits = 0;
-  let bit = 0;
-  let even = true;
-
-  while (hash.length < precision) {
-    if (even) {
-      const mid = (minLng + maxLng) / 2;
-      if (lng >= mid) { bits = (bits << 1) | 1; minLng = mid; }
-      else { bits = bits << 1; maxLng = mid; }
-    } else {
-      const mid = (minLat + maxLat) / 2;
-      if (lat >= mid) { bits = (bits << 1) | 1; minLat = mid; }
-      else { bits = bits << 1; maxLat = mid; }
-    }
-    even = !even;
-    bit++;
-    if (bit === 5) {
-      hash += BASE32[bits];
-      bits = 0;
-      bit = 0;
-    }
-  }
-  return hash;
 }
 
 // ─── Rate Limiting ───────────────────────────────────────────
@@ -1032,7 +813,7 @@ serve(async (req: Request) => {
     }
 
     // Rate limit by geohash+IP (identifies approximate user location)
-    const clientId = encodeGeohash(lat, lng, 6);
+    const clientId = geohashEncode(lat, lng, 6);
     const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
                req.headers.get("cf-connecting-ip") ||
                "unknown";
@@ -1047,7 +828,7 @@ serve(async (req: Request) => {
     }
 
     // Geohash-based caching (precision 5 ≈ 4.9km cells)
-    const geohash = encodeGeohash(lat, lng, 5);
+    const geohash = geohashEncode(lat, lng, 5);
     const gridLat = Math.round(lat * 10) / 10;
     const gridLng = Math.round(lng * 10) / 10;
     const gridKey = `${gridLat},${gridLng}`;
@@ -1094,20 +875,18 @@ serve(async (req: Request) => {
     // 1. Venues
     const venueCount = await syncVenues(lat, lng, radiusMiles * 1609.34);
 
-    // 2. Fast API sources in parallel (5 sources). When the prior sync was thin,
-    // date-window-aware fetchers widen their range (A5 fallback).
-    const [tm, sg, eb, bit, yelp] = await Promise.all([
+    // 2. Fast API sources in parallel. SeatGeek/Bandsintown/Yelp removed —
+    // their APIs are silently dead in our coverage. When the prior sync was
+    // thin, date-window-aware fetchers widen their range (A5 fallback).
+    const [tm, eb] = await Promise.all([
       fetchTicketmaster(lat, lng, radiusMiles),
-      fetchSeatGeek(lat, lng, radiusMiles),
       fetchEventbrite(lat, lng, radiusMiles, { expandDates: thinPriorSync }),
-      fetchBandsintown(lat, lng, radiusMiles),
-      fetchYelpEvents(lat, lng, radiusMiles, { expandDates: thinPriorSync }),
     ]);
 
     // 3. Compute variety hint from fast-source results so Claude-driven sources
     // (Reddit, venue scanning) bias toward under-represented categories. This
     // is the B5 "fill the gap" prompt addendum.
-    const categoryHint = computeCategoryHint([...tm, ...sg, ...eb, ...bit, ...yelp]);
+    const categoryHint = computeCategoryHint([...tm, ...eb]);
     console.log(
       `[variety] well-covered=[${categoryHint.wellCovered.join(",")}] under=[${categoryHint.underRepresented.join(",")}]`,
     );
@@ -1120,7 +899,7 @@ serve(async (req: Request) => {
     ]);
 
     // 5. Dedupe and upsert
-    const all = [...tm, ...sg, ...eb, ...bit, ...yelp, ...reddit, ...scraped].filter((e) => e.start_time);
+    const all = [...tm, ...eb, ...reddit, ...scraped].filter((e) => e.start_time);
     const seen = new Set<string>();
     const unique = all.filter((e) => {
       const key = `${e.source}:${e.source_id}`;
@@ -1157,10 +936,7 @@ serve(async (req: Request) => {
         lat, lng, geohash,
         venues: venueCount,
         ticketmaster: tm.length,
-        seatgeek: sg.length,
         eventbrite: eb.length,
-        bandsintown: bit.length,
-        yelp: yelp.length,
         reddit: reddit.length,
         scraped: scraped.length,
         upserted: unique.length,

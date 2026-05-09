@@ -9,11 +9,13 @@ export default function Index() {
   const router = useRouter();
 
   useEffect(() => {
+    let cancelled = false;
     (async () => {
       const [onboarded, subscribedCache] = await Promise.all([
         AsyncStorage.getItem("@nearme_onboarded"),
         AsyncStorage.getItem("@nearme_subscribed"),
       ]);
+      if (cancelled) return;
 
       if (onboarded !== "true") {
         router.replace("/onboarding");
@@ -21,31 +23,33 @@ export default function Index() {
       }
 
       // Fast path: trust the cached flag so first render isn't network-bound.
-      if (subscribedCache === "true") {
-        router.replace("/(tabs)");
-      } else {
-        router.replace("/onboarding");
-      }
+      // Track the route we just sent the user to so the background reconcile
+      // only re-routes when the truth differs — eliminates a race where the
+      // initial replace and a follow-up replace fire back-to-back.
+      let currentRoute: "tabs" | "onboarding" =
+        subscribedCache === "true" ? "tabs" : "onboarding";
+      router.replace(currentRoute === "tabs" ? "/(tabs)" : "/onboarding");
 
-      // Verify with Apple via RevenueCat and reconcile the cache in the background.
+      // Verify with Apple via RevenueCat and reconcile the cache in the
+      // background. Only re-route if the verified state contradicts where
+      // we already sent the user.
       try {
         await configureIap();
+        if (cancelled) return;
         const active = await hasActiveEntitlement();
-        if (active) {
-          if (subscribedCache !== "true") {
-            await AsyncStorage.setItem("@nearme_subscribed", "true");
-            router.replace("/(tabs)");
-          }
-        } else {
-          if (subscribedCache === "true") {
-            await AsyncStorage.removeItem("@nearme_subscribed");
-            router.replace("/onboarding");
-          }
+        if (cancelled) return;
+        if (active && currentRoute !== "tabs") {
+          await AsyncStorage.setItem("@nearme_subscribed", "true");
+          if (!cancelled) router.replace("/(tabs)");
+        } else if (!active && currentRoute === "tabs") {
+          await AsyncStorage.removeItem("@nearme_subscribed");
+          if (!cancelled) router.replace("/onboarding");
         }
       } catch {
         // Network / SDK failure: keep the cached decision so the user isn't locked out.
       }
     })();
+    return () => { cancelled = true; };
   }, []);
 
   return (

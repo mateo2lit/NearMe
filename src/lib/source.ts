@@ -8,14 +8,14 @@ export function getSourceDisplayName(
   switch (source) {
     case "ticketmaster":
       return "Ticketmaster";
-    case "seatgeek":
-      return "SeatGeek";
     case "google_places":
       return "Google";
     case "municipal":
       return "City website";
     case "community":
       return "Community listing";
+    case "reddit":
+      return "Local roundup";
     case "scraped": {
       if (!sourceUrl) return "source";
       try {

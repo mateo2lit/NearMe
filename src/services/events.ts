@@ -1,5 +1,5 @@
 import { Event, EventCategory } from "../types";
-import { supabase } from "./supabase";
+import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY } from "./supabase";
 import { getCachedEvents, setCachedEvents } from "./eventCache";
 import { markSyncStart, markSyncDone, setSyncContext } from "../hooks/useSyncStatus";
 
@@ -14,14 +14,10 @@ export async function triggerLocationSync(
   radiusMiles: number = 15,
   waitForCompletion: boolean = false
 ): Promise<{ synced: boolean; events?: number }> {
-  const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-  const supabaseKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
-  if (!supabaseUrl || !supabaseKey) return { synced: false };
-
-  const request = fetch(`${supabaseUrl}/functions/v1/sync-location`, {
+  const request = fetch(`${SUPABASE_URL}/functions/v1/sync-location`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${supabaseKey}`,
+      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ lat, lng, radius_miles: radiusMiles }),
@@ -66,6 +62,12 @@ export async function triggerLocationSync(
   }
 }
 
+// Side channel so the UI can distinguish "RPC failed" from "no events nearby"
+// without reshaping every call site that today returns Event[].
+let lastFetchError: string | null = null;
+export function getLastFetchError(): string | null { return lastFetchError; }
+export function clearLastFetchError() { lastFetchError = null; }
+
 async function rpcDiscover(
   lat: number,
   lng: number,
@@ -83,8 +85,10 @@ async function rpcDiscover(
   });
   if (error) {
     console.error("[events] RPC error:", error);
+    lastFetchError = error.message || "RPC failed";
     return [];
   }
+  lastFetchError = null;
   return (data || []).map((e: any) => ({ ...e, tags: e.tags || [] }));
 }
 
@@ -244,10 +248,10 @@ export function getEventTimeLabel(event: Event): { label: string; color: string 
   if (minsUntil <= 60) return { label: `Starts in ${minsUntil} min`, color: "#ffb347" };
 
   const hours = Math.round(minsUntil / 60);
-  if (hours < 24) return { label: `In ${hours}h`, color: "#00d4cd" };
+  if (hours < 24) return { label: `In ${hours}h`, color: "#7c6cf0" };
 
   const days = Math.round(hours / 24);
-  return { label: `In ${days}d`, color: "#00d4cd" };
+  return { label: `In ${days}d`, color: "#7c6cf0" };
 }
 
 export function formatDistance(miles: number): string {
@@ -265,11 +269,11 @@ export { dedupeSameDayDuplicates } from "../lib/dedupe";
 const FEED_FLOOR = 20;
 
 function sortByStartTimeAscending(list: Event[]): Event[] {
-  return [...list].sort((a, b) => {
-    const aT = a.start_time ? new Date(a.start_time).getTime() : 0;
-    const bT = b.start_time ? new Date(b.start_time).getTime() : 0;
-    return aT - bT;
-  });
+  // Use effectiveStart so recurring events whose stored start_time is in the
+  // past sort by their next occurrence, not their original template time.
+  return [...list].sort(
+    (a, b) => effectiveStart(a).getTime() - effectiveStart(b).getTime(),
+  );
 }
 
 /**

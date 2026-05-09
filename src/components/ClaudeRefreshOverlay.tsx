@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from "react";
 import { View, Text, StyleSheet, AccessibilityInfo, Animated, Easing } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
+import { COLORS } from "../constants/theme";
 
 interface Props {
   state: "idle" | "cooldown_check" | "phase1" | "phase2" | "done" | "error";
@@ -35,7 +36,7 @@ export function ClaudeRefreshOverlay({ state, status, foundCount }: Props) {
 
   return (
     <View style={styles.root} pointerEvents="none" accessibilityLiveRegion="polite">
-      <LinearGradient colors={["rgba(10,5,40,0.95)", "rgba(10,5,40,0.7)"]} style={StyleSheet.absoluteFillObject} />
+      <LinearGradient colors={["rgba(15,15,26,0.96)", "rgba(15,15,26,0.78)"]} style={StyleSheet.absoluteFillObject} />
       <View style={styles.center}>
         <Animated.View style={[styles.ring, { transform: [{ scale }], opacity }]} />
         <View style={styles.dot} />
@@ -49,8 +50,8 @@ export function ClaudeRefreshOverlay({ state, status, foundCount }: Props) {
 const styles = StyleSheet.create({
   root: { ...StyleSheet.absoluteFillObject, zIndex: 999 },
   center: { flex: 1, alignItems: "center", justifyContent: "center", padding: 32 },
-  ring: { position: "absolute", width: 120, height: 120, borderRadius: 60, borderWidth: 2, borderColor: "#00d4cd" },
-  dot: { width: 16, height: 16, borderRadius: 8, backgroundColor: "#00d4cd", marginBottom: 32 },
-  status: { color: "#fff", fontSize: 16, fontWeight: "600", textAlign: "center" },
-  found: { color: "#9090c0", fontSize: 13, marginTop: 8 },
+  ring: { position: "absolute", width: 120, height: 120, borderRadius: 60, borderWidth: 2, borderColor: COLORS.accent },
+  dot: { width: 16, height: 16, borderRadius: 8, backgroundColor: COLORS.accent, marginBottom: 32 },
+  status: { color: COLORS.text, fontSize: 16, fontWeight: "600", textAlign: "center" },
+  found: { color: COLORS.muted, fontSize: 13, marginTop: 8 },
 });

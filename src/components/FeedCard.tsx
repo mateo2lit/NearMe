@@ -18,10 +18,32 @@ interface Props {
   isSaved: boolean;
   onPress: () => void;
   onSave: () => void;
+  // Optional: user's saved interests/goals so we can synthesize a "why this"
+  // explanation when the upstream blurb is empty.
+  userInterests?: { categories?: string[]; tags?: string[]; goals?: string[] };
 }
 
 function tagDisplay(tag: string): string {
   return TAG_MAP[tag]?.label || tag;
+}
+
+function buildWhyThis(event: Event, ui?: Props["userInterests"]): string {
+  if (event.blurb) return event.blurb;
+  const reasons: string[] = [];
+  const cats = ui?.categories || [];
+  const tags = ui?.tags || [];
+  if (event.category && cats.includes(event.category)) {
+    const label = CATEGORY_MAP[event.category]?.label || event.category;
+    reasons.push(`matches your ${label.toLowerCase()} interest`);
+  }
+  const matchTags = (event.tags || []).filter((t) => tags.includes(t)).slice(0, 2);
+  if (matchTags.length) {
+    reasons.push(`tagged ${matchTags.map(tagDisplay).join(" + ")}`);
+  }
+  if (event.is_free) reasons.push("free entry");
+  if (event.source === "claude") reasons.push("hand-picked by your AI");
+  if (reasons.length === 0) return "Showing because it's nearby and on your radar.";
+  return "Matches you on: " + reasons.join(", ") + ".";
 }
 
 // Subtle source attribution. Reinforces that the AI agent is searching multiple
@@ -29,10 +51,7 @@ function tagDisplay(tag: string): string {
 function sourceLabel(source: string | undefined | null): string | null {
   switch (source) {
     case "ticketmaster":  return "via Ticketmaster";
-    case "seatgeek":      return "via SeatGeek";
     case "community":     return "via Eventbrite";
-    case "bandsintown":   return "via Bandsintown";
-    case "yelp":          return "via Yelp";
     case "reddit":        return "from the local roundup";
     case "scraped":       return "via venue page";
     case "claude":        return "hand-picked by your AI";
@@ -40,9 +59,11 @@ function sourceLabel(source: string | undefined | null): string | null {
   }
 }
 
-export default function FeedCard({ event, isSaved, onPress, onSave }: Props) {
+export default function FeedCard({ event, isSaved, onPress, onSave, userInterests }: Props) {
   const [realLoaded, setRealLoaded] = useState(false);
   const [realFailed, setRealFailed] = useState(false);
+  const [whyExpanded, setWhyExpanded] = useState(false);
+  const whyThis = buildWhyThis(event, userInterests);
   const category = CATEGORY_MAP[event.category];
   const fallbackUri = getEventImage(null, event.category, event.subcategory, event.title, event.description, event.tags);
   const realUri = !realFailed && event.image_url ? event.image_url : null;
@@ -64,7 +85,9 @@ export default function FeedCard({ event, isSaved, onPress, onSave }: Props) {
   const venueName = event.venue?.name || event.address?.split(",")[0] || "Nearby";
 
   const handleSave = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    Haptics.impactAsync(
+      isSaved ? Haptics.ImpactFeedbackStyle.Light : Haptics.ImpactFeedbackStyle.Medium,
+    ).catch(() => {});
     onSave();
   };
 
@@ -125,11 +148,26 @@ export default function FeedCard({ event, isSaved, onPress, onSave }: Props) {
             ? ` at ${venueName}`
             : ""}
         </Text>
-        {event.blurb ? (
-          <Text style={styles.blurb} numberOfLines={1} accessibilityLabel={`Why this matches you: ${event.blurb}`}>
-            {event.blurb}
+        <TouchableOpacity
+          style={styles.whyRow}
+          onPress={() => setWhyExpanded((v) => !v)}
+          activeOpacity={0.7}
+          hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+          accessibilityLabel={`Why this match. ${whyThis}`}
+        >
+          <Ionicons
+            name="information-circle-outline"
+            size={13}
+            color={COLORS.accentLight}
+            style={{ marginTop: 1 }}
+          />
+          <Text
+            style={styles.blurb}
+            numberOfLines={whyExpanded ? 0 : 1}
+          >
+            {whyThis}
           </Text>
-        ) : null}
+        </TouchableOpacity>
         {category && (
           <View style={styles.catRow}>
             <Ionicons name={category.icon as any} size={13} color={category.color} />
@@ -173,15 +211,18 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: 10,
     right: 10,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: "rgba(0,0,0,0.45)",
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "rgba(0,0,0,0.55)",
     alignItems: "center",
     justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
   },
   saveBtnActive: {
-    backgroundColor: "rgba(255,107,107,0.2)",
+    backgroundColor: "rgba(255,107,107,0.32)",
+    borderColor: COLORS.hot + "88",
   },
   timeChip: {
     position: "absolute",
@@ -254,7 +295,18 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: COLORS.warm,
   },
-  blurb: { color: "#9090b0", fontSize: 12, marginTop: 4 },
+  whyRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 5,
+    marginTop: 4,
+  },
+  blurb: {
+    color: COLORS.muted,
+    fontSize: 12,
+    flex: 1,
+    lineHeight: 16,
+  },
   sourceAttr: {
     fontSize: 10,
     color: COLORS.muted,

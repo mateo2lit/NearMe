@@ -89,8 +89,8 @@ export default function SearchOverlay({
           </View>
         ) : matches.length === 0 ? (
           <View style={styles.empty}>
-            <Text style={styles.emptyTitle}>No matches</Text>
-            <Text style={styles.emptyBody}>Nothing matches "{query}". Try different keywords.</Text>
+            <Text style={styles.emptyTitle}>No luck with "{query}"</Text>
+            <Text style={styles.emptyBody}>Try a vibe (live music, trivia, speed dating) or a venue name.</Text>
           </View>
         ) : (
           <FlatList

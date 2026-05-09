@@ -88,15 +88,15 @@ export function RatingPrompt({ visible, userId, onClose }: Props) {
 
           {mode === "prefilter" && (
             <>
-              <Text style={styles.title}>Enjoying NearMe?</Text>
-              <Text style={styles.body}>Quick gut check — your honest take.</Text>
+              <Text style={styles.title}>Is NearMe earning its keep?</Text>
+              <Text style={styles.body}>Honest answer — it helps us tune what you see.</Text>
               <View style={styles.thumbsRow}>
-                <TouchableOpacity style={styles.thumbBtn} onPress={handleThumbsDown}>
-                  <Text style={styles.thumbEmoji}>👎</Text>
+                <TouchableOpacity style={styles.thumbBtn} onPress={handleThumbsDown} activeOpacity={0.75}>
+                  <Ionicons name="thumbs-down-outline" size={26} color={COLORS.muted} style={{ marginBottom: 6 }} />
                   <Text style={styles.thumbLabel}>Not really</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.thumbBtn, styles.thumbBtnUp]} onPress={handleThumbsUp}>
-                  <Text style={styles.thumbEmoji}>👍</Text>
+                <TouchableOpacity style={[styles.thumbBtn, styles.thumbBtnUp]} onPress={handleThumbsUp} activeOpacity={0.75}>
+                  <Ionicons name="thumbs-up" size={26} color={COLORS.accent} style={{ marginBottom: 6 }} />
                   <Text style={[styles.thumbLabel, styles.thumbLabelUp]}>Loving it</Text>
                 </TouchableOpacity>
               </View>
@@ -129,8 +129,8 @@ export function RatingPrompt({ visible, userId, onClose }: Props) {
 
           {mode === "thanks" && (
             <>
-              <Text style={styles.title}>Thank you 💛</Text>
-              <Text style={styles.body}>We hear you. Working on it.</Text>
+              <Text style={styles.title}>Got it — thank you</Text>
+              <Text style={styles.body}>We read every note. Already on it.</Text>
             </>
           )}
         </Pressable>
@@ -192,7 +192,6 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.accent + "20",
     borderColor: COLORS.accent,
   },
-  thumbEmoji: { fontSize: 28, marginBottom: 6 },
   thumbLabel: { fontSize: 13, fontWeight: "700", color: COLORS.muted },
   thumbLabelUp: { color: COLORS.accent },
   input: {

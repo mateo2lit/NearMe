@@ -47,6 +47,9 @@ export default function MapScreen() {
   const [events, setEvents] = useState<Event[]>([]);
   const [region, setRegion] = useState<Region | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
+  const [savedOnly, setSavedOnly] = useState(false);
+  const [clusterIds, setClusterIds] = useState<string[] | null>(null); // peek: just this cluster's events
   const mapRef = useRef<any>(null);
   const carouselRef = useRef<ScrollView>(null);
 
@@ -74,11 +77,29 @@ export default function MapScreen() {
     }
   }, [location.loading, location.lat, location.lng]);
 
-  const now = new Date();
-  const visible = events.filter((e) => matchesWhen(e, when, now));
+  // Sync saved IDs from storage so the "saved only" toggle stays current.
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      const raw = await AsyncStorage.getItem("@nearme_saved");
+      if (!alive) return;
+      setSavedIds(new Set(raw ? JSON.parse(raw) : []));
+    };
+    load();
+    const t = setInterval(load, 4000);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
 
+  const now = new Date();
+  const whenMatched = events.filter((e) => matchesWhen(e, when, now));
+  const visible = savedOnly ? whenMatched.filter((e) => savedIds.has(e.id)) : whenMatched;
+
+  // Cluster peek wins over viewport — when the user taps a cluster, the
+  // carousel shows just that cluster's events instead of everything in view.
   const inViewport = sortByStartTime(
-    region
+    clusterIds
+      ? visible.filter((e) => clusterIds.includes(e.id))
+      : region
       ? visible.filter((e) => {
           const latOK = Math.abs(e.lat - region.latitude) < region.latitudeDelta / 2;
           const lngOK = Math.abs(e.lng - region.longitude) < region.longitudeDelta / 2;
@@ -158,7 +179,29 @@ export default function MapScreen() {
             longitudeDelta: 0.06,
           }
         }
-        onRegionChangeComplete={(r: Region) => setRegion(r)}
+        onRegionChangeComplete={(r: Region) => {
+          setRegion(r);
+          // Drop cluster peek the moment the user pans/zooms — they're past it.
+          if (clusterIds) setClusterIds(null);
+        }}
+        onClusterPress={(_cluster: any, markers?: any[]) => {
+          // Show only the cluster's events in the carousel instead of full
+          // viewport. Markers expose props.coordinate; we match back by lat/lng
+          // since the library doesn't surface custom marker IDs cleanly.
+          const ids: string[] = [];
+          for (const m of markers || []) {
+            const c = m?.properties?.coordinate || m?.coordinate;
+            if (!c) continue;
+            const match = visible.find(
+              (e) => Math.abs(e.lat - c.latitude) < 1e-5 && Math.abs(e.lng - c.longitude) < 1e-5,
+            );
+            if (match) ids.push(match.id);
+          }
+          if (ids.length) {
+            setClusterIds(ids);
+            carouselRef.current?.scrollTo({ x: 0, animated: true });
+          }
+        }}
         showsUserLocation
         showsMyLocationButton={false}
         clusterColor={COLORS.accent}
@@ -192,9 +235,38 @@ export default function MapScreen() {
         <WhenSegmented value={when} onChange={setWhen} />
       </View>
 
-      <TouchableOpacity style={styles.recenter} onPress={recenter} accessibilityLabel="Recenter map">
-        <Ionicons name="locate" size={20} color={COLORS.text} />
-      </TouchableOpacity>
+      <View style={styles.rightActions} pointerEvents="box-none">
+        <TouchableOpacity
+          style={[styles.iconBtn, savedOnly && styles.iconBtnActive]}
+          onPress={() => setSavedOnly((v) => !v)}
+          accessibilityLabel={savedOnly ? "Show all events" : "Show only saved events"}
+        >
+          <Ionicons
+            name={savedOnly ? "heart" : "heart-outline"}
+            size={18}
+            color={savedOnly ? COLORS.hot : COLORS.text}
+          />
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.iconBtn} onPress={recenter} accessibilityLabel="Recenter map">
+          <Ionicons name="locate" size={18} color={COLORS.text} />
+        </TouchableOpacity>
+      </View>
+
+      {clusterIds ? (
+        <View style={styles.clusterPeekWrap} pointerEvents="box-none">
+          <TouchableOpacity
+            style={styles.clusterPeekChip}
+            onPress={() => setClusterIds(null)}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="layers-outline" size={13} color={COLORS.accent} />
+            <Text style={styles.clusterPeekText}>
+              Peeking {clusterIds.length} stacked event{clusterIds.length === 1 ? "" : "s"}
+            </Text>
+            <Ionicons name="close" size={13} color={COLORS.muted} />
+          </TouchableOpacity>
+        </View>
+      ) : null}
 
       {inViewport.length > 0 && (
         <View style={styles.bottomWrap}>
@@ -229,12 +301,44 @@ const styles = StyleSheet.create({
     fontSize: 12, fontWeight: "600", color: COLORS.muted, marginTop: 2,
     textShadowColor: "rgba(0,0,0,0.8)", textShadowRadius: 4,
   },
-  recenter: {
-    position: "absolute", bottom: 120, right: 20,
+  rightActions: {
+    position: "absolute",
+    bottom: 120,
+    right: 20,
+    gap: 10,
+  },
+  iconBtn: {
     width: 46, height: 46, borderRadius: 23,
     backgroundColor: COLORS.card + "ee",
     alignItems: "center", justifyContent: "center",
     borderWidth: 1, borderColor: COLORS.border,
+  },
+  iconBtnActive: {
+    borderColor: COLORS.hot,
+    backgroundColor: COLORS.hot + "1A",
+  },
+  clusterPeekWrap: {
+    position: "absolute",
+    top: 150,
+    left: 0, right: 0,
+    alignItems: "center",
+  },
+  clusterPeekChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    backgroundColor: COLORS.card + "ee",
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: COLORS.accent + "55",
+  },
+  clusterPeekText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: COLORS.text,
+    letterSpacing: 0.2,
   },
   topWhenWrap: {
     position: "absolute", top: 100, left: 0, right: 0,

@@ -54,7 +54,7 @@ export default function SkeletonCard() {
 const styles = StyleSheet.create({
   card: {
     width: CARD_WIDTH,
-    borderRadius: RADIUS.lg,
+    borderRadius: RADIUS.md,
     backgroundColor: COLORS.card,
     overflow: "hidden",
     borderWidth: 1,
@@ -62,7 +62,7 @@ const styles = StyleSheet.create({
   },
   image: {
     width: "100%",
-    height: 200,
+    height: 160,
     backgroundColor: COLORS.cardAlt,
   },
   info: {

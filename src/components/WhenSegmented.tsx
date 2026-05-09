@@ -1,4 +1,5 @@
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from "react-native";
+import * as Haptics from "expo-haptics";
 import { COLORS, RADIUS, SPACING } from "../constants/theme";
 import { WhenFilter } from "../hooks/useWhenFilter";
 
@@ -28,8 +29,11 @@ export default function WhenSegmented({ value, onChange }: Props) {
           <TouchableOpacity
             key={o.id}
             style={[styles.chip, active && styles.chipActive]}
-            onPress={() => onChange(o.id)}
-            activeOpacity={0.8}
+            onPress={() => {
+              if (!active) Haptics.selectionAsync().catch(() => {});
+              onChange(o.id);
+            }}
+            activeOpacity={0.7}
           >
             <Text style={[styles.text, active && styles.textActive]}>{o.label}</Text>
           </TouchableOpacity>

@@ -60,73 +60,73 @@ const { width, height } = Dimensions.get("window");
 interface Option {
   id: string;
   label: string;
-  emoji: string;
+  icon: React.ComponentProps<typeof Ionicons>["name"];
   description?: string;
   tags?: string[];
   categories?: string[];
 }
 
 const GOALS: Option[] = [
-  { id: "meet-people", label: "Meet new people", emoji: "🤝", description: "Social mixers, groups, new friends", tags: ["social"], categories: ["community", "nightlife"] },
-  { id: "find-partner", label: "Find a partner", emoji: "💕", description: "Singles events, date ideas, mixers", tags: ["date-night"], categories: ["nightlife", "food", "arts"] },
-  { id: "get-active", label: "Get more active", emoji: "💪", description: "Pickup sports, fitness, running clubs", tags: ["active"], categories: ["sports", "fitness"] },
-  { id: "drinks-nightlife", label: "Go out more", emoji: "🍻", description: "Bars, happy hours, nightlife", tags: ["drinking", "21+"], categories: ["nightlife", "food"] },
-  { id: "live-music", label: "Discover music", emoji: "🎶", description: "Concerts, live bands, DJ sets", tags: ["live-music"], categories: ["music"] },
-  { id: "try-food", label: "Try new foods", emoji: "🍽️", description: "Restaurants, food events, tastings", tags: ["food"], categories: ["food"] },
-  { id: "explore-arts", label: "Explore culture", emoji: "🎨", description: "Galleries, theater, museums", tags: [], categories: ["arts", "movies"] },
-  { id: "family-fun", label: "Family time", emoji: "👨‍👩‍👧", description: "Activities for the whole family", tags: ["family", "all-ages"], categories: ["community", "outdoors"] },
-  { id: "outdoor-fun", label: "Get outdoors", emoji: "🌳", description: "Parks, hikes, outdoor adventures", tags: ["outdoor"], categories: ["outdoors", "fitness"] },
+  { id: "meet-people", label: "Meet new people", icon: "people-outline", description: "Social mixers, groups, new friends", tags: ["social"], categories: ["community", "nightlife"] },
+  { id: "find-partner", label: "Find a partner", icon: "heart-outline", description: "Singles events, date ideas, mixers", tags: ["date-night"], categories: ["nightlife", "food", "arts"] },
+  { id: "get-active", label: "Get more active", icon: "barbell-outline", description: "Pickup sports, fitness, running clubs", tags: ["active"], categories: ["sports", "fitness"] },
+  { id: "drinks-nightlife", label: "Go out more", icon: "wine-outline", description: "Bars, happy hours, nightlife", tags: ["drinking", "21+"], categories: ["nightlife", "food"] },
+  { id: "live-music", label: "Discover music", icon: "musical-notes-outline", description: "Concerts, live bands, DJ sets", tags: ["live-music"], categories: ["music"] },
+  { id: "try-food", label: "Try new foods", icon: "restaurant-outline", description: "Restaurants, food events, tastings", tags: ["food"], categories: ["food"] },
+  { id: "explore-arts", label: "Explore culture", icon: "color-palette-outline", description: "Galleries, theater, museums", tags: [], categories: ["arts", "movies"] },
+  { id: "family-fun", label: "Family time", icon: "happy-outline", description: "Activities for the whole family", tags: ["family", "all-ages"], categories: ["community", "outdoors"] },
+  { id: "outdoor-fun", label: "Get outdoors", icon: "leaf-outline", description: "Parks, hikes, outdoor adventures", tags: ["outdoor"], categories: ["outdoors", "fitness"] },
 ];
 
 const VIBES: Option[] = [
-  { id: "chill", label: "Chill & relaxed", emoji: "😌", description: "Low-key hangs, coffee shops, quiet spots" },
-  { id: "social", label: "Social & lively", emoji: "🎉", description: "Packed bars, groups, lively scenes" },
-  { id: "adventurous", label: "Adventurous", emoji: "🚀", description: "Try new things, meet strangers" },
-  { id: "romantic", label: "Romantic", emoji: "🌹", description: "Intimate, date-night vibes" },
-  { id: "energetic", label: "High-energy", emoji: "⚡", description: "Dancing, parties, late nights" },
+  { id: "chill", label: "Chill & relaxed", icon: "cafe-outline", description: "Low-key hangs, coffee shops, quiet spots" },
+  { id: "social", label: "Social & lively", icon: "people-outline", description: "Packed bars, groups, lively scenes" },
+  { id: "adventurous", label: "Adventurous", icon: "compass-outline", description: "Try new things, meet strangers" },
+  { id: "romantic", label: "Romantic", icon: "heart-outline", description: "Intimate, date-night vibes" },
+  { id: "energetic", label: "High-energy", icon: "flash-outline", description: "Dancing, parties, late nights" },
 ];
 
 const SCHEDULES: Option[] = [
-  { id: "weekday-evenings", label: "Weekday evenings", emoji: "🌆", description: "After-work hangs" },
-  { id: "weekend-mornings", label: "Weekend mornings", emoji: "☀️", description: "Brunch, markets, runs" },
-  { id: "weekend-afternoons", label: "Weekend afternoons", emoji: "🌞", description: "Day drinking, activities" },
-  { id: "weekend-nights", label: "Weekend nights", emoji: "🌙", description: "The main event" },
-  { id: "anytime", label: "I'm flexible", emoji: "🤷", description: "Show me everything" },
+  { id: "weekday-evenings", label: "Weekday evenings", icon: "moon-outline", description: "After-work hangs" },
+  { id: "weekend-mornings", label: "Weekend mornings", icon: "sunny-outline", description: "Brunch, markets, runs" },
+  { id: "weekend-afternoons", label: "Weekend afternoons", icon: "partly-sunny-outline", description: "Day drinking, activities" },
+  { id: "weekend-nights", label: "Weekend nights", icon: "sparkles-outline", description: "The main event" },
+  { id: "anytime", label: "I'm flexible", icon: "shuffle-outline", description: "Show me everything" },
 ];
 
 const BUDGETS: Option[] = [
-  { id: "free", label: "Free stuff only", emoji: "🆓", description: "$0 - keep it cheap", tags: ["free"] },
-  { id: "budget", label: "Budget friendly", emoji: "💵", description: "Under $25" },
-  { id: "moderate", label: "Happy to spend", emoji: "💳", description: "$25 - $75" },
-  { id: "premium", label: "Money's no issue", emoji: "💎", description: "Whatever looks good" },
+  { id: "free", label: "Free stuff only", icon: "gift-outline", description: "$0 - keep it cheap", tags: ["free"] },
+  { id: "budget", label: "Budget friendly", icon: "cash-outline", description: "Under $25" },
+  { id: "moderate", label: "Happy to spend", icon: "card-outline", description: "$25 - $75" },
+  { id: "premium", label: "Money's no issue", icon: "diamond-outline", description: "Whatever looks good" },
 ];
 
 const SOCIAL_STYLES: Option[] = [
-  { id: "solo", label: "Solo explorer", emoji: "🧭", description: "Comfortable going alone, meet new people" },
-  { id: "small-group", label: "Close friends", emoji: "👯", description: "Prefer hanging with 1-3 friends" },
-  { id: "big-group", label: "The whole crew", emoji: "🎊", description: "Love big group energy" },
-  { id: "mix", label: "Mix of both", emoji: "🎭", description: "Depends on the night" },
+  { id: "solo", label: "Solo explorer", icon: "compass-outline", description: "Comfortable going alone, meet new people" },
+  { id: "small-group", label: "Close friends", icon: "people-outline", description: "Prefer hanging with 1-3 friends" },
+  { id: "big-group", label: "The whole crew", icon: "people-circle-outline", description: "Love big group energy" },
+  { id: "mix", label: "Mix of both", icon: "swap-horizontal-outline", description: "Depends on the night" },
 ];
 
 const BLOCKERS: Option[] = [
-  { id: "dont-know", label: "Don't know what's happening", emoji: "🤷", description: "This is why we built this" },
-  { id: "no-one", label: "No one to go with", emoji: "😔", description: "We'll show social & singles events" },
-  { id: "too-busy", label: "Too busy to plan ahead", emoji: "⏰", description: "We'll show what's tonight/this week" },
-  { id: "too-expensive", label: "Too expensive", emoji: "💸", description: "We'll surface free & cheap events", tags: ["free"] },
-  { id: "wrong-scene", label: "Can't find my scene", emoji: "🎯", description: "Our AI will get it right" },
+  { id: "dont-know", label: "Don't know what's happening", icon: "help-circle-outline", description: "This is why we built this" },
+  { id: "no-one", label: "No one to go with", icon: "person-outline", description: "We'll show social & singles events" },
+  { id: "too-busy", label: "Too busy to plan ahead", icon: "time-outline", description: "We'll show what's tonight/this week" },
+  { id: "too-expensive", label: "Too expensive", icon: "trending-down-outline", description: "We'll surface free & cheap events", tags: ["free"] },
+  { id: "wrong-scene", label: "Can't find my scene", icon: "locate-outline", description: "Our AI will get it right" },
 ];
 
 const HAPPY_HOUR_OPTIONS: Option[] = [
   {
     id: "show",
     label: "Show happy hours",
-    emoji: "🍸",
+    icon: "wine-outline",
     description: "Bar specials, $2 off, 2-for-1, weekday wind-downs — all in the feed.",
   },
   {
     id: "hide",
     label: "Hide happy hours",
-    emoji: "🙅",
+    icon: "eye-off-outline",
     description: "Keep the feed focused on bigger events — concerts, singles nights, food events, sports.",
   },
 ];
@@ -138,16 +138,32 @@ const STEPS: StepKey[] = ["welcome", "goals", "vibe", "social", "schedule", "blo
 
 // Curated list of cities the database is well-populated for. One-tap for the
 // user (or App Review tester) to pick a city that's guaranteed to have events.
-// Centered on the city's geographic center.
+// Anything not on this list is reachable via the free-text search above.
 const CITY_PRESETS: Array<{ label: string; lat: number; lng: number }> = [
   { label: "New York, NY", lat: 40.7128, lng: -74.0060 },
+  { label: "Brooklyn, NY", lat: 40.6782, lng: -73.9442 },
   { label: "Los Angeles, CA", lat: 34.0522, lng: -118.2437 },
-  { label: "Miami, FL", lat: 25.7617, lng: -80.1918 },
-  { label: "Boca Raton, FL", lat: 26.3587, lng: -80.0831 },
-  { label: "Chicago, IL", lat: 41.8781, lng: -87.6298 },
-  { label: "Austin, TX", lat: 30.2672, lng: -97.7431 },
   { label: "San Francisco, CA", lat: 37.7749, lng: -122.4194 },
   { label: "Seattle, WA", lat: 47.6062, lng: -122.3321 },
+  { label: "Portland, OR", lat: 45.5152, lng: -122.6784 },
+  { label: "Chicago, IL", lat: 41.8781, lng: -87.6298 },
+  { label: "Austin, TX", lat: 30.2672, lng: -97.7431 },
+  { label: "Dallas, TX", lat: 32.7767, lng: -96.7970 },
+  { label: "Houston, TX", lat: 29.7604, lng: -95.3698 },
+  { label: "Denver, CO", lat: 39.7392, lng: -104.9903 },
+  { label: "Phoenix, AZ", lat: 33.4484, lng: -112.0740 },
+  { label: "Atlanta, GA", lat: 33.7490, lng: -84.3880 },
+  { label: "Nashville, TN", lat: 36.1627, lng: -86.7816 },
+  { label: "Boston, MA", lat: 42.3601, lng: -71.0589 },
+  { label: "Philadelphia, PA", lat: 39.9526, lng: -75.1652 },
+  { label: "Washington, DC", lat: 38.9072, lng: -77.0369 },
+  { label: "Miami, FL", lat: 25.7617, lng: -80.1918 },
+  { label: "Boca Raton, FL", lat: 26.3587, lng: -80.0831 },
+  { label: "Orlando, FL", lat: 28.5383, lng: -81.3792 },
+  { label: "Tampa, FL", lat: 27.9506, lng: -82.4572 },
+  { label: "San Diego, CA", lat: 32.7157, lng: -117.1611 },
+  { label: "Las Vegas, NV", lat: 36.1699, lng: -115.1398 },
+  { label: "Minneapolis, MN", lat: 44.9778, lng: -93.2650 },
 ];
 
 export default function Onboarding() {
@@ -502,7 +518,7 @@ function WelcomeStep({ onNext }: { onNext: () => void }) {
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
           />
-          <Text style={styles.welcomeEmoji}>✨</Text>
+          <Ionicons name="sparkles" size={56} color="#fff" />
         </View>
       </Animated.View>
 
@@ -512,13 +528,15 @@ function WelcomeStep({ onNext }: { onNext: () => void }) {
       </Text>
 
       <View style={styles.welcomeFeatures}>
-        {[
-          { icon: "🧠", text: "AI matched to your goals" },
-          { icon: "📍", text: "Real-time events near you" },
-          { icon: "🎯", text: "No scrolling — just the good stuff" },
-        ].map((f, i) => (
+        {([
+          { icon: "bulb-outline", text: "AI matched to your goals" },
+          { icon: "location-outline", text: "Real-time events near you" },
+          { icon: "filter-outline", text: "No scrolling — just the good stuff" },
+        ] as Array<{ icon: React.ComponentProps<typeof Ionicons>["name"]; text: string }>).map((f, i) => (
           <View key={i} style={styles.welcomeFeature}>
-            <Text style={styles.welcomeFeatureIcon}>{f.icon}</Text>
+            <View style={styles.welcomeFeatureIconWrap}>
+              <Ionicons name={f.icon} size={20} color={COLORS.accentLight} />
+            </View>
             <Text style={styles.welcomeFeatureText}>{f.text}</Text>
           </View>
         ))}
@@ -582,9 +600,15 @@ function QuestionStep({ title, subtitle, options, selected, onChange, onNext, ca
                   key={opt.id}
                   style={[styles.optionCard, isSelected && styles.optionCardSelected]}
                   onPress={() => toggle(opt.id)}
-                  activeOpacity={0.7}
+                  activeOpacity={0.75}
                 >
-                  <Text style={styles.optionEmoji}>{opt.emoji}</Text>
+                  <View style={[styles.optionIconWrap, isSelected && styles.optionIconWrapActive]}>
+                    <Ionicons
+                      name={opt.icon}
+                      size={20}
+                      color={isSelected ? COLORS.accent : COLORS.muted}
+                    />
+                  </View>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.optionLabel}>
                       {opt.label}
@@ -732,47 +756,28 @@ function LocationStep({
 
         <View style={styles.locDividerRow}>
           <View style={styles.locDividerLine} />
-          <Text style={styles.locDividerText}>OR PICK A CITY</Text>
+          <Text style={styles.locDividerText}>OR SEARCH ANY CITY</Text>
           <View style={styles.locDividerLine} />
         </View>
 
-        {/* City chips */}
-        <View style={styles.locChipGrid}>
-          {CITY_PRESETS.map((c) => {
-            const selected =
-              location.lat === c.lat && location.lng === c.lng;
-            return (
-              <TouchableOpacity
-                key={c.label}
-                style={[styles.locCityChip, selected && styles.locCityChipSelected]}
-                onPress={() => handlePickCity(c)}
-                activeOpacity={0.7}
-              >
-                <Text style={[styles.locCityChipText, selected && styles.locCityChipTextSelected]}>
-                  {c.label}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-
-        <View style={styles.locDividerRow}>
-          <View style={styles.locDividerLine} />
-          <Text style={styles.locDividerText}>OR ENTER ADDRESS</Text>
-          <View style={styles.locDividerLine} />
-        </View>
-
-        <View style={styles.locAddressRow}>
+        {/* Search input (primary, free-text) */}
+        <View style={styles.locSearchWrap}>
+          <Ionicons name="search" size={16} color={COLORS.muted} />
           <TextInput
-            style={styles.locAddressInput}
+            style={styles.locSearchInput}
             value={addressInput}
             onChangeText={setAddressInput}
-            placeholder="City, state or full address"
+            placeholder="Type any city, neighborhood, or full address"
             placeholderTextColor={COLORS.muted}
             returnKeyType="search"
             onSubmitEditing={handleSubmitAddress}
             autoCapitalize="words"
           />
+          {!!addressInput && (
+            <TouchableOpacity onPress={() => setAddressInput("")} hitSlop={8}>
+              <Ionicons name="close-circle" size={16} color={COLORS.muted} />
+            </TouchableOpacity>
+          )}
           <TouchableOpacity
             style={[
               styles.locAddressBtn,
@@ -789,6 +794,32 @@ function LocationStep({
             )}
           </TouchableOpacity>
         </View>
+
+        <Text style={styles.locQuickPickLabel}>Quick picks</Text>
+
+        {/* Quick-pick chips (horizontally scrollable now we ship more cities) */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.locChipScroll}
+        >
+          {CITY_PRESETS.map((c) => {
+            const selected =
+              location.lat === c.lat && location.lng === c.lng;
+            return (
+              <TouchableOpacity
+                key={c.label}
+                style={[styles.locCityChip, selected && styles.locCityChipSelected]}
+                onPress={() => handlePickCity(c)}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.locCityChipText, selected && styles.locCityChipTextSelected]}>
+                  {c.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
 
         <View style={{ height: 24 }} />
       </ScrollView>
@@ -993,7 +1024,7 @@ function BuildingStep({
           />
         </Animated.View>
         <View style={styles.buildingCore}>
-          <Text style={{ fontSize: 40 }}>🧠</Text>
+          <Ionicons name="sparkles" size={40} color={COLORS.accentLight} />
         </View>
       </View>
 
@@ -1127,16 +1158,11 @@ function TeaserStep({
   // Real count — no fabrication
   const totalMatches = events.length;
 
-  const goalEmojis: Record<string, string> = {
-    "meet-people": "🤝",
-    "find-partner": "💕",
-    "get-active": "💪",
-    "drinks-nightlife": "🍻",
-    "live-music": "🎶",
-    "try-food": "🍽️",
-    "explore-arts": "🎨",
-    "family-fun": "👨‍👩‍👧",
-    "outdoor-fun": "🌳",
+  // Lookup goal icons from the canonical GOALS list so adding/renaming a goal
+  // doesn't require updating two places.
+  const goalIconFor = (id: string): React.ComponentProps<typeof Ionicons>["name"] => {
+    const found = GOALS.find((g) => g.id === id);
+    return found?.icon ?? "star-outline";
   };
 
   return (
@@ -1177,7 +1203,7 @@ function TeaserStep({
             <View style={styles.goalBubbles}>
               {goals.slice(0, 4).map((g) => (
                 <View key={g} style={styles.goalBubble}>
-                  <Text style={{ fontSize: 14 }}>{goalEmojis[g] || "⭐"}</Text>
+                  <Ionicons name={goalIconFor(g)} size={14} color={COLORS.accentLight} />
                 </View>
               ))}
               {goals.length > 4 && (
@@ -1800,8 +1826,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  welcomeFeatureIcon: {
-    fontSize: 24,
+  welcomeFeatureIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: COLORS.accent + "22",
+    alignItems: "center",
+    justifyContent: "center",
   },
   welcomeFeatureText: {
     fontSize: 15,
@@ -1898,8 +1929,19 @@ const styles = StyleSheet.create({
     borderColor: COLORS.accent,
     backgroundColor: COLORS.accent + "22", // bump tint so the selected card reads stronger against the dark bg
   },
-  optionEmoji: {
-    fontSize: 28,
+  optionIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: COLORS.cardAlt,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  optionIconWrapActive: {
+    backgroundColor: COLORS.accent + "22",
+    borderColor: COLORS.accent + "55",
   },
   optionLabel: {
     fontSize: 16,
@@ -2842,10 +2884,34 @@ const styles = StyleSheet.create({
     color: COLORS.muted,
     letterSpacing: 1,
   },
-  locChipGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
+  locChipScroll: {
+    paddingRight: 12,
     gap: 8,
+  },
+  locQuickPickLabel: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: COLORS.muted,
+    letterSpacing: 1,
+    marginTop: 18,
+    marginBottom: 10,
+  },
+  locSearchWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: RADIUS.pill,
+    paddingHorizontal: 14,
+    paddingVertical: 4,
+  },
+  locSearchInput: {
+    flex: 1,
+    fontSize: 14,
+    color: COLORS.text,
+    paddingVertical: 10,
   },
   locCityChip: {
     paddingHorizontal: 14,
@@ -2867,28 +2933,14 @@ const styles = StyleSheet.create({
   locCityChipTextSelected: {
     color: COLORS.accent,
   },
-  locAddressRow: {
-    flexDirection: "row",
-    gap: 8,
-  },
-  locAddressInput: {
-    flex: 1,
-    backgroundColor: COLORS.card,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: RADIUS.lg,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 14,
-    color: COLORS.text,
-  },
   locAddressBtn: {
-    paddingHorizontal: 18,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
     backgroundColor: COLORS.accent,
-    borderRadius: RADIUS.lg,
+    borderRadius: RADIUS.pill,
     alignItems: "center",
     justifyContent: "center",
-    minWidth: 60,
+    minWidth: 56,
   },
   locAddressBtnText: {
     color: "#fff",

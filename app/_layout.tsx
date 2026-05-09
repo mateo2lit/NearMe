@@ -5,10 +5,12 @@ import { StatusBar } from "expo-status-bar";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { COLORS } from "../src/constants/theme";
 import { configureIap } from "../src/services/iap";
+import { configureNotifications } from "../src/services/reminders";
 
 export default function RootLayout() {
   useEffect(() => {
     configureIap().catch(() => {});
+    configureNotifications().catch(() => {});
   }, []);
 
   return (

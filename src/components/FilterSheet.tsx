@@ -6,7 +6,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { TAGS_BY_DIMENSION, DIMENSION_LABELS } from "../constants/tags";
 import { CATEGORIES } from "../constants/categories";
 import { EventCategory } from "../types";
-import { COLORS, RADIUS, SPACING, DEFAULT_RADIUS_MILES } from "../constants/theme";
+import { COLORS, RADIUS, SPACING, DEFAULT_RADIUS_MILES, SHEET_HEIGHT } from "../constants/theme";
 
 export interface FilterValue {
   categories: EventCategory[];
@@ -21,6 +21,8 @@ interface Props {
   onClose: () => void;
   onApply: (v: FilterValue) => void;
 }
+
+const RADIUS_OPTIONS = [5, 10, 25, 50, 100];
 
 export default function FilterSheet({ visible, initial, liveCount, onClose, onApply }: Props) {
   const [value, setValue] = useState<FilterValue>(initial);
@@ -69,7 +71,26 @@ export default function FilterSheet({ visible, initial, liveCount, onClose, onAp
           </View>
         </View>
         <ScrollView contentContainerStyle={{ padding: SPACING.md, paddingBottom: 120 }}>
-          <Text style={styles.sectionLabel}>CATEGORY</Text>
+          <Text style={styles.sectionLabel}>RADIUS</Text>
+          <View style={styles.radiusRow}>
+            {RADIUS_OPTIONS.map((r) => {
+              const on = value.radiusMiles === r;
+              return (
+                <TouchableOpacity
+                  key={r}
+                  style={[styles.radiusBtn, on && styles.radiusBtnActive]}
+                  onPress={() => setValue((v) => ({ ...v, radiusMiles: r }))}
+                  activeOpacity={0.75}
+                >
+                  <Text style={[styles.radiusBtnText, on && styles.radiusBtnTextActive]}>
+                    {r} mi
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <Text style={[styles.sectionLabel, { marginTop: SPACING.lg }]}>CATEGORY</Text>
           <View style={styles.pillRow}>
             {CATEGORIES.map((c) => {
               const on = value.categories.includes(c.id);
@@ -128,7 +149,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    height: "85%",
+    height: SHEET_HEIGHT,
     backgroundColor: COLORS.bg,
     borderTopLeftRadius: RADIUS.lg,
     borderTopRightRadius: RADIUS.lg,
@@ -191,6 +212,31 @@ const styles = StyleSheet.create({
   },
   pillTextActive: {
     color: "#fff",
+  },
+  radiusRow: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  radiusBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLORS.card,
+    alignItems: "center",
+    borderWidth: 1.5,
+    borderColor: COLORS.border,
+  },
+  radiusBtnActive: {
+    backgroundColor: COLORS.accent + "1A",
+    borderColor: COLORS.accent,
+  },
+  radiusBtnText: {
+    color: COLORS.muted,
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  radiusBtnTextActive: {
+    color: COLORS.accentLight,
   },
   footer: {
     position: "absolute",

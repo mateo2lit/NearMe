@@ -10,24 +10,23 @@ interface Props {
   foundCount?: number;
 }
 
-// Voice: warm, casual, confident — the user is paying for a personal AI agent
-// (project_ai_robot_voice memory). Each line should sound like the AI is
-// hand-picking for them, not like a generic spinner.
+// Voice: warm, confident, curated — every line should sound like a personal AI
+// agent assembling tonight's picks for the user, not a generic spinner.
 const GENERIC_MESSAGES = [
-  "Reading your area's mood…",
-  "Asking around about tonight…",
-  "Hand-picking the best of this week…",
-  "Pulling fresh picks from your block…",
-  "Filtering out the FOMO…",
+  "Curating tonight's picks…",
+  "Reading the room around you…",
+  "Hand-picking your week…",
+  "Surfacing the hidden gems…",
+  "Filtering out the noise…",
 ];
 
 function localMessages(neighborhood: string): string[] {
   return [
-    `Reading ${neighborhood}'s mood…`,
-    `Checking spots in ${neighborhood}…`,
-    `Hand-picking the best of ${neighborhood} this week…`,
-    `Asking around ${neighborhood} about tonight…`,
-    "Filtering out the FOMO…",
+    `Curating ${neighborhood} tonight…`,
+    `Reading ${neighborhood}'s scene…`,
+    `Hand-picking ${neighborhood} this week…`,
+    `Surfacing hidden gems in ${neighborhood}…`,
+    "Filtering out the noise…",
   ];
 }
 

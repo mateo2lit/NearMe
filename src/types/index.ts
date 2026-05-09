@@ -73,11 +73,11 @@ export type VenueCategory =
 
 export type EventSource =
   | "ticketmaster"
-  | "seatgeek"
   | "google_places"
   | "scraped"
   | "municipal"
   | "community"
+  | "reddit"
   | "claude";
 
 export type SwipeAction = "save" | "skip";

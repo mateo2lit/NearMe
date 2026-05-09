@@ -39,6 +39,7 @@ export default function SettingsScreen() {
   const [hiddenCategories, setHiddenCategories] = useState<EventCategory[]>([]);
   const [hiddenTags, setHiddenTags] = useState<string[]>([]);
   const [happyHourEnabled, setHappyHourEnabled] = useState(true);
+  const [remindersEnabled, setRemindersEnabled] = useState(true);
 
   useEffect(() => {
     (async () => {
@@ -51,6 +52,7 @@ export default function SettingsScreen() {
         setHiddenCategories(prefs.hiddenCategories || []);
         setHiddenTags(prefs.hiddenTags || []);
         setHappyHourEnabled(prefs.happyHourEnabled ?? true);
+        setRemindersEnabled(prefs.remindersEnabled ?? true);
         if (prefs.customLocation) {
           setCustomLocation(prefs.customLocation);
         }
@@ -105,6 +107,38 @@ export default function SettingsScreen() {
   const toggleHappyHour = async (v: boolean) => {
     setHappyHourEnabled(v);
     await savePrefs({ happyHourEnabled: v });
+  };
+
+  const toggleReminders = async (v: boolean) => {
+    setRemindersEnabled(v);
+    await savePrefs({ remindersEnabled: v });
+    if (v) {
+      // Lazily request permission + reconcile existing saved events when the
+      // user opts in. Imports are inline so settings.tsx stays light.
+      const [savedRaw, { ensurePermissions, syncReminders }] = await Promise.all([
+        AsyncStorage.getItem("@nearme_saved_events"),
+        import("../../src/services/reminders"),
+      ]);
+      const granted = await ensurePermissions();
+      if (granted && savedRaw) {
+        try {
+          const events = JSON.parse(savedRaw);
+          await syncReminders(events, { quietHours: { start: 22, end: 8 } });
+        } catch { /* ignore */ }
+      }
+    } else {
+      // Cancel everything that's currently scheduled.
+      const [savedRaw, { cancelReminderForEvent }] = await Promise.all([
+        AsyncStorage.getItem("@nearme_saved_events"),
+        import("../../src/services/reminders"),
+      ]);
+      if (savedRaw) {
+        try {
+          const events = JSON.parse(savedRaw);
+          for (const e of events) await cancelReminderForEvent(e.id);
+        } catch { /* ignore */ }
+      }
+    }
   };
 
   const setCustomAddress = async () => {
@@ -191,7 +225,7 @@ export default function SettingsScreen() {
               onPress={useCurrentLocation}
               activeOpacity={0.7}
             >
-              <Ionicons name="navigate" size={16} color={COLORS.secondary} />
+              <Ionicons name="navigate" size={16} color={COLORS.accent} />
               <Text style={styles.gpsBtnText}>Use GPS</Text>
             </TouchableOpacity>
           )}
@@ -316,6 +350,23 @@ export default function SettingsScreen() {
         <Switch
           value={happyHourEnabled}
           onValueChange={toggleHappyHour}
+          trackColor={{ false: COLORS.border, true: COLORS.accent }}
+          thumbColor="#fff"
+        />
+      </View>
+
+      {/* Saved-event reminders */}
+      <Text style={styles.sectionTitle}>Reminders</Text>
+      <View style={styles.toggleRow}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.toggleTitle}>Remind me about saved events</Text>
+          <Text style={styles.toggleSubtitle}>
+            One ping the day before and a morning-of nudge. Quiet 10 PM – 8 AM.
+          </Text>
+        </View>
+        <Switch
+          value={remindersEnabled}
+          onValueChange={toggleReminders}
           trackColor={{ false: COLORS.border, true: COLORS.accent }}
           thumbColor="#fff"
         />
@@ -473,14 +524,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: RADIUS.pill,
-    backgroundColor: COLORS.secondary + "15",
+    backgroundColor: COLORS.accent + "15",
     borderWidth: 1,
-    borderColor: COLORS.secondary + "40",
+    borderColor: COLORS.accent + "40",
   },
   gpsBtnText: {
     fontSize: 12,
     fontWeight: "600",
-    color: COLORS.secondary,
+    color: COLORS.accent,
   },
   addressInputRow: {
     flexDirection: "row",

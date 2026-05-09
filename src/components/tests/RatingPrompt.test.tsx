@@ -11,7 +11,7 @@ describe("RatingPrompt", () => {
       );
     });
     const json = JSON.stringify(instance.toJSON());
-    expect(json).toContain("Enjoying NearMe");
+    expect(json).toContain("earning its keep");
   });
 
   it("returns null when visible=false", () => {
