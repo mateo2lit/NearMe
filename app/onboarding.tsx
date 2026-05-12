@@ -19,7 +19,16 @@ import { BlurView } from "expo-blur";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { COLORS, GRADIENTS, RADIUS } from "../src/constants/theme";
+import {
+  COLORS,
+  GRADIENTS,
+  RADIUS,
+  GOAL_PALETTES,
+  DEFAULT_PALETTE,
+  MOTION,
+  SHADOWS,
+  type GoalPalette,
+} from "../src/constants/theme";
 import { fetchNearbyEvents, triggerLocationSync, effectiveStart } from "../src/services/events";
 import { setFeedHandoff, getFeedHandoff } from "../src/services/eventCache";
 import { CelebrateStep } from "../src/components/CelebrateStep";
@@ -327,93 +336,94 @@ export default function Onboarding() {
 
       {step === "goals" && (
         <QuestionStep
-          title="What brings you here?"
-          subtitle="NearMe's AI will curate events that help you hit your goals. Pick all that apply."
+          title="What do you want out of the next month?"
+          subtitle="Your AI agent will plan the nights that get you there. Pick everything that applies."
           options={GOALS}
           multi
           selected={goals}
           onChange={setGoals}
           onNext={goNext}
           canContinue={goals.length > 0}
-          continueLabel={goals.length > 0 ? `Continue (${goals.length} selected)` : "Pick at least one"}
+          continueLabel={goals.length > 0 ? `Continue (${goals.length} picked)` : "Pick at least one"}
+          paletteFor={(id) => GOAL_PALETTES[id] || DEFAULT_PALETTE}
         />
       )}
 
       {step === "vibe" && (
         <QuestionStep
-          title="What's your vibe?"
-          subtitle="This helps our AI match you to the right scene"
+          title="What energy do you want?"
+          subtitle="Your agent will read the room and only surface nights that match."
           options={VIBES}
           selected={vibe ? [vibe] : []}
           onChange={(arr) => setVibe(arr[0] || "")}
           onNext={goNext}
           canContinue={!!vibe}
-          continueLabel="Continue"
+          continueLabel="That's me"
         />
       )}
 
       {step === "social" && (
         <QuestionStep
-          title="How do you like to go out?"
-          subtitle="Solo, with friends, or a mix?"
+          title="Solo, plus-one, or pack?"
+          subtitle="How you like to roll — I'll match you to events where it fits."
           options={SOCIAL_STYLES}
           selected={social ? [social] : []}
           onChange={(arr) => setSocial(arr[0] || "")}
           onNext={goNext}
           canContinue={!!social}
-          continueLabel="Continue"
+          continueLabel="Got it"
         />
       )}
 
       {step === "schedule" && (
         <QuestionStep
-          title="When are you free?"
-          subtitle="We'll prioritize events during your available times"
+          title="When can I show up for you?"
+          subtitle="I'll prioritize nights you're actually free."
           options={SCHEDULES}
           selected={schedule ? [schedule] : []}
           onChange={(arr) => setSchedule(arr[0] || "")}
           onNext={goNext}
           canContinue={!!schedule}
-          continueLabel="Continue"
+          continueLabel="Lock it in"
         />
       )}
 
       {step === "blocker" && (
         <QuestionStep
-          title="What's holding you back?"
-          subtitle="What's the hardest part about going out more? We'll fix it."
+          title="What usually gets in the way?"
+          subtitle="Tell me — I'll route around it so you actually go out."
           options={BLOCKERS}
           selected={blocker ? [blocker] : []}
           onChange={(arr) => setBlocker(arr[0] || "")}
           onNext={goNext}
           canContinue={!!blocker}
-          continueLabel="Continue"
+          continueLabel="I'll handle it"
         />
       )}
 
       {step === "budget" && (
         <QuestionStep
-          title="What's your budget?"
-          subtitle="One more question after this"
+          title="What am I working with?"
+          subtitle="Last quick one. I'll stay inside this."
           options={BUDGETS}
           selected={budget ? [budget] : []}
           onChange={(arr) => setBudget(arr[0] || "")}
           onNext={goNext}
           canContinue={!!budget}
-          continueLabel="Continue"
+          continueLabel="Set the budget"
         />
       )}
 
       {step === "happy-hour" && (
         <QuestionStep
-          title="Happy hours in your feed?"
-          subtitle="Bars publish a lot of these — up to you whether they belong in your feed."
+          title="Happy hours — in or out?"
+          subtitle="Bars publish a ton of these. Up to you whether they belong in your feed."
           options={HAPPY_HOUR_OPTIONS}
           selected={happyHour ? [happyHour] : []}
           onChange={(arr) => setHappyHour(arr[0] || "")}
           onNext={goNext}
           canContinue={!!happyHour}
-          continueLabel="Build my feed"
+          continueLabel="Start building"
           contextBlock={
             <>
               <View style={styles.contextCard}>
@@ -492,69 +502,88 @@ function Header({ progress, onBack, stepIdx, totalSteps }: { progress: number; o
 // ─── Welcome Step ────────────────────────────────────────────
 
 function WelcomeStep({ onNext }: { onNext: () => void }) {
-  const bounceAnim = useRef(new Animated.Value(0)).current;
+  const spinAnim = useRef(new Animated.Value(0)).current;
+  const floatAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     Animated.loop(
+      Animated.timing(spinAnim, {
+        toValue: 1,
+        duration: 9000,
+        useNativeDriver: true,
+      })
+    ).start();
+    Animated.loop(
       Animated.sequence([
-        Animated.timing(bounceAnim, { toValue: 1, duration: 1500, useNativeDriver: true }),
-        Animated.timing(bounceAnim, { toValue: 0, duration: 1500, useNativeDriver: true }),
+        Animated.timing(floatAnim, { toValue: 1, duration: 2200, useNativeDriver: true }),
+        Animated.timing(floatAnim, { toValue: 0, duration: 2200, useNativeDriver: true }),
       ])
     ).start();
   }, []);
 
-  const translateY = bounceAnim.interpolate({
+  const spin = spinAnim.interpolate({
     inputRange: [0, 1],
-    outputRange: [0, -10],
+    outputRange: ["0deg", "360deg"],
+  });
+  const translateY = floatAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, -8],
   });
 
   return (
     <View style={[styles.container, { justifyContent: "center", paddingHorizontal: 32 }]}>
       <Animated.View style={{ alignItems: "center", transform: [{ translateY }] }}>
         <View style={styles.welcomeIconWrap}>
-          <LinearGradient
-            colors={GRADIENTS.accent as any}
-            style={StyleSheet.absoluteFillObject}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-          />
-          <Ionicons name="sparkles" size={56} color="#fff" />
+          <Animated.View
+            style={[styles.welcomeIconRing, { transform: [{ rotate: spin }] }]}
+          >
+            <LinearGradient
+              colors={GRADIENTS.iridescent as any}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={StyleSheet.absoluteFillObject}
+            />
+          </Animated.View>
+          <View style={styles.welcomeIconCore}>
+            <Text style={styles.welcomeEmojiBig}>✨</Text>
+          </View>
         </View>
       </Animated.View>
 
-      <Text style={styles.welcomeTitle}>AI-powered event discovery</Text>
+      <Text style={styles.welcomeKicker}>YOUR PERSONAL AI EVENT AGENT</Text>
+      <Text style={styles.welcomeTitle}>Plans the night.{"\n"}You just show up.</Text>
       <Text style={styles.welcomeSubtitle}>
-        Tell us your goals. We'll find the perfect events to help you meet people, get active, and actually go out more.
+        Tell your agent what you're after — dating, sports, friends, music — and it'll find the events that actually move you forward.
       </Text>
 
       <View style={styles.welcomeFeatures}>
         {([
-          { icon: "bulb-outline", text: "AI matched to your goals" },
-          { icon: "location-outline", text: "Real-time events near you" },
-          { icon: "filter-outline", text: "No scrolling — just the good stuff" },
-        ] as Array<{ icon: React.ComponentProps<typeof Ionicons>["name"]; text: string }>).map((f, i) => (
+          { icon: "navigate-outline", emoji: "🎯", text: "Matched to your goals, not the algorithm's" },
+          { icon: "flash-outline", emoji: "⚡", text: "Real events happening near you — tonight, this weekend" },
+          { icon: "shield-checkmark-outline", emoji: "🛡️", text: "No noise. No scrolling. No spam." },
+        ] as Array<{ icon: React.ComponentProps<typeof Ionicons>["name"]; emoji: string; text: string }>).map((f, i) => (
           <View key={i} style={styles.welcomeFeature}>
             <View style={styles.welcomeFeatureIconWrap}>
-              <Ionicons name={f.icon} size={20} color={COLORS.accentLight} />
+              <Text style={{ fontSize: 18 }}>{f.emoji}</Text>
             </View>
             <Text style={styles.welcomeFeatureText}>{f.text}</Text>
           </View>
         ))}
       </View>
 
-      <TouchableOpacity style={styles.primaryBtn} onPress={onNext} activeOpacity={0.85}>
+      <TouchableOpacity style={[styles.primaryBtn, SHADOWS.glow("rgba(124,108,240,0.55)")]} onPress={onNext} activeOpacity={0.85}>
         <LinearGradient
           colors={GRADIENTS.accent as any}
           style={styles.btnGradient}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 0 }}
         >
-          <Text style={styles.primaryBtnText}>Get started</Text>
+          <Text style={styles.primaryBtnText}>Meet your agent</Text>
           <Ionicons name="arrow-forward" size={20} color="#fff" />
         </LinearGradient>
       </TouchableOpacity>
 
-      <Text style={styles.takesText}>Takes about a minute</Text>
+      <Text style={styles.takesText}>Takes 60 seconds. No card required.</Text>
     </View>
   );
 }
@@ -575,7 +604,7 @@ interface QuestionStepProps {
   footerNote?: string;
 }
 
-function QuestionStep({ title, subtitle, options, selected, onChange, onNext, canContinue, continueLabel, multi, contextBlock, footerNote }: QuestionStepProps) {
+function QuestionStep({ title, subtitle, options, selected, onChange, onNext, canContinue, continueLabel, multi, contextBlock, footerNote, paletteFor }: QuestionStepProps & { paletteFor?: (optionId: string) => GoalPalette }) {
   const toggle = (id: string) => {
     if (multi) {
       onChange(selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]);
@@ -583,6 +612,14 @@ function QuestionStep({ title, subtitle, options, selected, onChange, onNext, ca
       onChange([id]);
     }
   };
+
+  // The continue button takes the color of the first-selected option's
+  // palette — when the user picks "find a partner" the CTA feels coral; when
+  // they pick "get active" it feels orange. Falls back to the default purple
+  // gradient before they've picked anything.
+  const ctaPalette = paletteFor && selected.length
+    ? paletteFor(selected[0])
+    : DEFAULT_PALETTE;
 
   return (
     <>
@@ -594,33 +631,15 @@ function QuestionStep({ title, subtitle, options, selected, onChange, onNext, ca
           {contextBlock ? <View style={styles.contextWrap}>{contextBlock}</View> : null}
           <View style={styles.optionList}>
             {options.map((opt) => {
-              const isSelected = selected.includes(opt.id);
+              const palette = paletteFor ? paletteFor(opt.id) : DEFAULT_PALETTE;
               return (
-                <TouchableOpacity
+                <OptionRow
                   key={opt.id}
-                  style={[styles.optionCard, isSelected && styles.optionCardSelected]}
+                  option={opt}
+                  palette={palette}
+                  selected={selected.includes(opt.id)}
                   onPress={() => toggle(opt.id)}
-                  activeOpacity={0.75}
-                >
-                  <View style={[styles.optionIconWrap, isSelected && styles.optionIconWrapActive]}>
-                    <Ionicons
-                      name={opt.icon}
-                      size={20}
-                      color={isSelected ? COLORS.accent : COLORS.muted}
-                    />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.optionLabel}>
-                      {opt.label}
-                    </Text>
-                    {opt.description && <Text style={styles.optionDescription}>{opt.description}</Text>}
-                  </View>
-                  {isSelected && (
-                    <View style={styles.optionCheck}>
-                      <Ionicons name="checkmark" size={16} color="#fff" />
-                    </View>
-                  )}
-                </TouchableOpacity>
+                />
               );
             })}
           </View>
@@ -636,13 +655,13 @@ function QuestionStep({ title, subtitle, options, selected, onChange, onNext, ca
 
       <View style={styles.bottomBar}>
         <TouchableOpacity
-          style={[styles.primaryBtn, !canContinue && { opacity: 0.4 }]}
+          style={[styles.primaryBtn, !canContinue && { opacity: 0.4 }, canContinue && SHADOWS.glow(ctaPalette.edge)]}
           onPress={onNext}
           disabled={!canContinue}
           activeOpacity={0.85}
         >
           <LinearGradient
-            colors={canContinue ? (GRADIENTS.accent as any) : [COLORS.muted, COLORS.muted]}
+            colors={canContinue ? [ctaPalette.from, ctaPalette.to] : [COLORS.muted, COLORS.muted]}
             style={styles.btnGradient}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 0 }}
@@ -653,6 +672,85 @@ function QuestionStep({ title, subtitle, options, selected, onChange, onNext, ca
         </TouchableOpacity>
       </View>
     </>
+  );
+}
+
+// Single option card — used for goals, vibes, schedules, etc. Goals pass
+// their per-goal palette; other steps use DEFAULT_PALETTE. When palette.emoji
+// is set we show the emoji in a gradient pill; otherwise we fall back to the
+// Ionicon in a tinted circle.
+function OptionRow({
+  option,
+  palette,
+  selected,
+  onPress,
+}: {
+  option: Option;
+  palette: GoalPalette;
+  selected: boolean;
+  onPress: () => void;
+}) {
+  const scaleAnim = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    Animated.spring(scaleAnim, {
+      toValue: selected ? 1.015 : 1,
+      friction: 6,
+      tension: 120,
+      useNativeDriver: true,
+    }).start();
+  }, [selected]);
+
+  return (
+    <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
+      <TouchableOpacity
+        style={[
+          styles.optionCard,
+          selected && {
+            backgroundColor: palette.tint,
+            borderColor: palette.edge,
+            ...SHADOWS.glow(palette.edge),
+          },
+        ]}
+        onPress={onPress}
+        activeOpacity={0.78}
+      >
+        {palette.emoji ? (
+          <View style={styles.optionEmojiShell}>
+            <LinearGradient
+              colors={[palette.from, palette.to]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={StyleSheet.absoluteFillObject}
+            />
+            <Text style={styles.optionEmoji}>{palette.emoji}</Text>
+          </View>
+        ) : (
+          <View
+            style={[
+              styles.optionIconTint,
+              {
+                backgroundColor: selected ? palette.tint : COLORS.cardAlt,
+                borderColor: selected ? palette.edge : COLORS.border,
+              },
+            ]}
+          >
+            <Ionicons name={option.icon} size={20} color={selected ? palette.solid : COLORS.muted} />
+          </View>
+        )}
+
+        <View style={{ flex: 1 }}>
+          <Text style={styles.optionLabel}>{option.label}</Text>
+          {option.description && <Text style={styles.optionDescription}>{option.description}</Text>}
+        </View>
+
+        {selected && (
+          <View style={[styles.optionCheck, { backgroundColor: palette.solid }]}>
+            <Ionicons name="checkmark" size={16} color="#fff" />
+          </View>
+        )}
+      </TouchableOpacity>
+    </Animated.View>
   );
 }
 
@@ -715,9 +813,9 @@ function LocationStep({
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
-        <Text style={styles.stepTitle}>Where are you?</Text>
+        <Text style={styles.stepTitle}>Where should I look?</Text>
         <Text style={styles.stepSubtitle}>
-          We'll find local events around this spot. You can change it anytime in Settings.
+          Drop a pin, pick a city, or let me use your GPS. I'll search around it. You can change this anytime.
         </Text>
 
         {/* Current detected/chosen location */}
@@ -872,29 +970,30 @@ function BuildingStep({
   const progressAnim = useRef(new Animated.Value(0)).current;
   const spinAnim = useRef(new Animated.Value(0)).current;
 
-  // Dynamic task list based on user's actual answers
+  // Dynamic task list based on user's actual answers — phrased as an AI
+  // agent narrating its own work, not a passive progress bar.
   const goalLabels = goals
     .map((id) => GOALS.find((g) => g.id === id)?.label)
     .filter((s): s is string => Boolean(s));
   const goalLine =
     goalLabels.length === 0
-      ? "Reading your preferences"
+      ? "Loading your goals"
       : goalLabels.length === 1
-        ? `Honed in on ${goalLabels[0].toLowerCase()}`
+        ? `Locking in: ${goalLabels[0].toLowerCase()}`
         : goalLabels.length === 2
-          ? `Balancing ${goalLabels[0].toLowerCase()} and ${goalLabels[1].toLowerCase()}`
-          : `Weighing your ${goalLabels.length} priorities`;
-  const vibeLabel = VIBES.find((v) => v.id === vibe)?.label.toLowerCase() || vibe || "custom";
+          ? `Balancing ${goalLabels[0].toLowerCase()} + ${goalLabels[1].toLowerCase()}`
+          : `Weaving together ${goalLabels.length} priorities`;
+  const vibeLabel = VIBES.find((v) => v.id === vibe)?.label.toLowerCase() || vibe || "your";
   const blockerLabel = BLOCKERS.find((b) => b.id === blocker)?.label.toLowerCase();
 
   const tasks = [
     goalLine,
-    "Sweeping venues within 15 miles of you",
+    "Calling every venue within 15 miles",
     blockerLabel
-      ? `Solving for "${blockerLabel}"`
-      : "Matching events to your preferences",
-    `Calibrating for a ${vibeLabel} vibe`,
-    "Ranking your top picks",
+      ? `Working around "${blockerLabel}"`
+      : "Cross-referencing what's actually worth your night",
+    `Tuning for a ${vibeLabel} energy`,
+    "Picking the one event you'd kick yourself for missing",
   ];
 
   useEffect(() => {
@@ -1002,33 +1101,38 @@ function BuildingStep({
     outputRange: ["0%", "100%"],
   });
 
-  // Honest subtitle based on current task
+  // Agent-voice status. Reads like the AI is narrating its own search,
+  // not a generic loading spinner.
   const statusLines = [
-    "Reviewing your answers...",
-    "Calling local venues...",
-    "Scoring events for your goals...",
-    "Matching to your vibe...",
-    "Finalizing your picks...",
-    "Ready!",
+    "Reading what you came here for…",
+    "Pulling the neighborhood into focus…",
+    "Cross-checking every event against your goals…",
+    "Filtering out the noise…",
+    "Locking in your top pick…",
+    "Ready.",
   ];
+
+  // Use the user's first selected goal to color the ring + progress bar —
+  // makes the loading state feel personal to what they asked for.
+  const heroPalette = primaryPaletteForGoals(goals);
 
   return (
     <View style={[styles.container, { justifyContent: "center", paddingHorizontal: 32 }]}>
       <View style={styles.buildingIconWrap}>
-        <Animated.View style={{ transform: [{ rotate: spin }] }}>
+        <Animated.View style={[styles.buildingRing, { transform: [{ rotate: spin }] }]}>
           <LinearGradient
-            colors={GRADIENTS.accent as any}
-            style={styles.buildingRing}
+            colors={GRADIENTS.iridescent as any}
+            style={StyleSheet.absoluteFillObject}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
           />
         </Animated.View>
         <View style={styles.buildingCore}>
-          <Ionicons name="sparkles" size={40} color={COLORS.accentLight} />
+          <Text style={{ fontSize: 44 }}>🧠</Text>
         </View>
       </View>
 
-      <Text style={styles.buildingTitle}>Curating your feed</Text>
+      <Text style={styles.buildingTitle}>Your agent is on it.</Text>
       <Text style={styles.buildingCount}>
         {statusLines[Math.min(currentTask, statusLines.length - 1)]}
       </Text>
@@ -1036,7 +1140,7 @@ function BuildingStep({
       <View style={styles.buildingProgress}>
         <Animated.View style={[styles.buildingProgressFill, { width: progressWidth }]}>
           <LinearGradient
-            colors={GRADIENTS.accent as any}
+            colors={[heroPalette.from, heroPalette.to] as any}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 0 }}
             style={StyleSheet.absoluteFillObject}
@@ -1050,8 +1154,8 @@ function BuildingStep({
             <View
               style={[
                 styles.taskDot,
-                i < currentTask && styles.taskDotDone,
-                i === currentTask && styles.taskDotActive,
+                i < currentTask && { borderColor: heroPalette.solid, backgroundColor: heroPalette.solid },
+                i === currentTask && { borderColor: heroPalette.edge, backgroundColor: heroPalette.tint },
               ]}
             >
               {i < currentTask && <Ionicons name="checkmark" size={12} color="#fff" />}
@@ -1074,45 +1178,99 @@ function BuildingStep({
 
 // ─── Teaser Step ─────────────────────────────────────────────
 
+// The onboarding hero is the single highest-leverage event the user ever
+// sees — it decides whether they pay. The 2026-05-11 strip-club / hookah
+// incident exposed how easily a weak-but-recent match (category-only +
+// today's date) used to top the score table. The rules below are deliberately
+// stricter than the in-app feed scoring:
+//
+//   - Adult/strip-club content is excluded outright (defense in depth — the
+//     edge-function filter + discover_events RPC also drop these).
+//   - 21+ content scores positively only if the user picked a goal where
+//     21+ is implied (going out, finding a partner, live music).
+//   - Family-tagged events lose points if the user picked grown-up goals
+//     exclusively.
+//   - Pure category matches are weak (2 pts). A real *tag* match is what
+//     qualifies an event to be the hero — recency alone can't drag a
+//     mis-matched event into the slot.
+//   - Multi-goal matches get a big boost — an event that hits two of the
+//     user's selected goals is the "perfect for you" pick.
+//   - pickBestMatch enforces a minimum score floor; if nothing clears the
+//     bar, the TeaserStep falls back to "we're still building your feed"
+//     instead of showing a weak hero.
+
+const HERO_MIN_SCORE = 8;
+
+const NIGHTLIFE_LEANING_GOALS = new Set([
+  "drinks-nightlife",
+  "find-partner",
+  "live-music",
+]);
+
 function scoreEventForGoals(event: Event, selectedGoalIds: string[]): number {
+  // Hard exclusion — adult content can never be the hero. The edge-function
+  // filter and discover_events RPC already block these; this is a third
+  // line of defense for any stale client cache.
+  if (event.tags?.includes("adult")) return -Infinity;
+
   const goalDefs = GOALS.filter((g) => selectedGoalIds.includes(g.id));
-  let score = 0;
+
+  let tagHits = 0;
+  let categoryHits = 0;
+  let goalsHit = 0;
 
   for (const g of goalDefs) {
-    // Tag matches (high weight)
+    let scoredThisGoal = false;
     for (const t of g.tags || []) {
-      if (event.tags?.includes(t)) score += 3;
+      if (event.tags?.includes(t)) {
+        tagHits++;
+        scoredThisGoal = true;
+      }
     }
-    // Category matches
     for (const c of g.categories || []) {
-      if (event.category === c) score += 2;
+      if (event.category === c) {
+        categoryHits++;
+        scoredThisGoal = true;
+      }
     }
+    if (scoredThisGoal) goalsHit++;
   }
 
-  // Extra boost for singles events when user wants to find a partner
+  let score = tagHits * 5 + categoryHits * 2;
+
+  // Multi-goal match — "this hits everything you came for"
+  if (goalsHit >= 2) score += 12;
+  if (goalsHit >= 3) score += 6;
+
+  // Singles boost when user is looking for a partner
   if (selectedGoalIds.includes("find-partner") && event.tags?.includes("singles")) {
-    score += 10;
+    score += 15;
   }
 
-  // Heavy recency bias — the app's promise is events happening soon, so
-  // a perfect match 2 weeks out is a worse teaser than a strong match tonight.
+  // 21+ is only welcome when the user picked a goal that implies it.
+  const wantsNightlife = selectedGoalIds.some((g) => NIGHTLIFE_LEANING_GOALS.has(g));
+  if (event.tags?.includes("21+") && !wantsNightlife) {
+    score -= 18;
+  }
+
+  // Family-coded events get penalized when the user picked grown-up goals
+  // exclusively (a kids' carnival isn't the hero for someone who picked
+  // "find a partner + go out more").
+  const wantsFamily = selectedGoalIds.includes("family-fun");
+  if (event.tags?.includes("family") && !wantsFamily && selectedGoalIds.length > 0) {
+    score -= 8;
+  }
+
+  // Recency — still meaningful but never dominant. A perfect match 4 days
+  // out beats a generic match tonight.
   if (event.start_time) {
     const daysUntil = (effectiveStart(event).getTime() - Date.now()) / 86_400_000;
-    if (daysUntil < 0) {
-      score = -1; // already past — never pick
-    } else if (daysUntil < 1) {
-      score += 20;
-    } else if (daysUntil < 2) {
-      score += 14;
-    } else if (daysUntil < 4) {
-      score += 8; // this weekend
-    } else if (daysUntil < 7) {
-      score += 3;
-    } else if (daysUntil < 14) {
-      score += 0;
-    } else {
-      score -= 5; // actively penalize far-future events
-    }
+    if (daysUntil < 0) return -Infinity;
+    if (daysUntil < 1) score += 10;
+    else if (daysUntil < 2) score += 7;
+    else if (daysUntil < 4) score += 5;
+    else if (daysUntil < 7) score += 2;
+    else if (daysUntil > 14) score -= 5;
   }
 
   return score;
@@ -1120,9 +1278,24 @@ function scoreEventForGoals(event: Event, selectedGoalIds: string[]): number {
 
 function pickBestMatch(events: Event[], goals: string[]): Event | undefined {
   if (!events.length) return undefined;
-  const scored = events.map((e) => ({ event: e, score: scoreEventForGoals(e, goals) }));
+  const scored = events
+    .map((e) => ({ event: e, score: scoreEventForGoals(e, goals) }))
+    .filter((s) => Number.isFinite(s.score) && s.score >= HERO_MIN_SCORE);
+  if (!scored.length) return undefined;
   scored.sort((a, b) => b.score - a.score);
   return scored[0].event;
+}
+
+// Map the user's selected goals into a single representative palette for
+// the screen accent (the hero card border, the building ring stops, etc).
+// When multiple are selected we pick the first — the order in the GOALS
+// list is intentional, with the most personality-driving goals (dating,
+// nightlife) earlier so they win the accent.
+function primaryPaletteForGoals(goalIds: string[]): GoalPalette {
+  for (const id of goalIds) {
+    if (GOAL_PALETTES[id]) return GOAL_PALETTES[id];
+  }
+  return DEFAULT_PALETTE;
 }
 
 function TeaserStep({
@@ -1150,20 +1323,25 @@ function TeaserStep({
   const teaserEvent = pickBestMatch(events, goals);
   // Sort remaining events by score too (for the blurred stack)
   const remainingEvents = events
-    .filter((e) => e.id !== teaserEvent?.id)
+    .filter((e) => e.id !== teaserEvent?.id && !e.tags?.includes("adult"))
     .map((e) => ({ event: e, score: scoreEventForGoals(e, goals) }))
+    .filter((s) => Number.isFinite(s.score))
     .sort((a, b) => b.score - a.score)
     .map((s) => s.event);
 
-  // Real count — no fabrication
-  const totalMatches = events.length;
+  // Real count — no fabrication. Excludes adult content even from the
+  // numeric total so the headline matches what we're willing to show.
+  const totalMatches = events.filter((e) => !e.tags?.includes("adult")).length;
 
-  // Lookup goal icons from the canonical GOALS list so adding/renaming a goal
-  // doesn't require updating two places.
-  const goalIconFor = (id: string): React.ComponentProps<typeof Ionicons>["name"] => {
-    const found = GOALS.find((g) => g.id === id);
-    return found?.icon ?? "star-outline";
-  };
+  // Palette = first selected goal's color so the hero adopts its energy.
+  const heroPalette = primaryPaletteForGoals(goals);
+
+  // Honest match percentage derived from the actual score. The score range
+  // for a strong multi-goal+singles+tag-match hit is 30-50; we map that to
+  // 88-97% so it reads as "great match" without claiming 100%.
+  const matchPct = teaserEvent
+    ? Math.min(97, 78 + Math.round(Math.max(0, scoreEventForGoals(teaserEvent, goals)) * 0.5))
+    : 0;
 
   return (
     <View style={[styles.container, { paddingTop: 60 }]}>
@@ -1173,42 +1351,50 @@ function TeaserStep({
         contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 160 }}
       >
         <View style={styles.teaserHero}>
-          <View style={styles.teaserBadge}>
-            <Ionicons name="sparkles" size={14} color={COLORS.accent} />
-            <Text style={styles.teaserBadgeText}>YOUR AI MATCHES</Text>
+          <View style={[styles.teaserBadge, { backgroundColor: heroPalette.tint, borderColor: heroPalette.edge }]}>
+            <Ionicons name="sparkles" size={14} color={heroPalette.solid} />
+            <Text style={[styles.teaserBadgeText, { color: heroPalette.solid }]}>YOUR AGENT FOUND IT</Text>
           </View>
-          {totalMatches > 0 ? (
+          {teaserEvent ? (
             <>
               <Text style={styles.teaserTitle}>
-                Found <Text style={{ color: COLORS.accent }}>{totalMatches}</Text>{"\n"}
-                event{totalMatches === 1 ? "" : "s"} near you
+                This is the one{"\n"}
+                <Text style={{ color: heroPalette.solid }}>worth showing up for.</Text>
               </Text>
               <Text style={styles.teaserSubtitle}>
-                Matched to your goals and vibe. Here's your top pick.
+                Out of {totalMatches} events nearby, your agent locked onto this one — it hits everything you said you wanted.
               </Text>
             </>
           ) : (
             <>
               <Text style={styles.teaserTitle}>
-                Your feed is{"\n"}being built
+                Your agent is{"\n"}
+                <Text style={{ color: heroPalette.solid }}>still on the hunt.</Text>
               </Text>
               <Text style={styles.teaserSubtitle}>
-                We're gathering fresh events in your area right now.
+                Fresh events are landing right now. Start your trial — by the time you tap Discover, your feed is ready.
               </Text>
             </>
           )}
 
-          {/* Goals bubble */}
+          {/* Goals chips — show the user's goals back to them so the hero
+              feels personalized, with each in its own color. */}
           {goals.length > 0 && (
             <View style={styles.goalBubbles}>
-              {goals.slice(0, 4).map((g) => (
-                <View key={g} style={styles.goalBubble}>
-                  <Ionicons name={goalIconFor(g)} size={14} color={COLORS.accentLight} />
-                </View>
-              ))}
-              {goals.length > 4 && (
-                <View style={[styles.goalBubble, { backgroundColor: COLORS.accent + "20" }]}>
-                  <Text style={{ fontSize: 12, fontWeight: "700", color: COLORS.accentLight }}>+{goals.length - 4}</Text>
+              {goals.slice(0, 5).map((g) => {
+                const p = GOAL_PALETTES[g] || DEFAULT_PALETTE;
+                return (
+                  <View
+                    key={g}
+                    style={[styles.goalBubble, { backgroundColor: p.tint, borderColor: p.edge }]}
+                  >
+                    <Text style={{ fontSize: 16 }}>{p.emoji || "✨"}</Text>
+                  </View>
+                );
+              })}
+              {goals.length > 5 && (
+                <View style={styles.goalBubble}>
+                  <Text style={{ fontSize: 11, fontWeight: "800", color: COLORS.text }}>+{goals.length - 5}</Text>
                 </View>
               )}
             </View>
@@ -1216,17 +1402,17 @@ function TeaserStep({
         </View>
 
         {/* Only show teaser if we have a real event */}
-        {teaserEvent && <TeaserCard event={teaserEvent} />}
+        {teaserEvent && <TeaserCard event={teaserEvent} palette={heroPalette} matchPct={matchPct} />}
 
-        {/* If no events found at all, show an honest message */}
+        {/* If no events qualify for the hero, show an honest message */}
         {!teaserEvent && (
           <View style={styles.noEventsCard}>
-            <View style={styles.noEventsIcon}>
-              <Ionicons name="radio" size={28} color={COLORS.accent} />
+            <View style={[styles.noEventsIcon, { backgroundColor: heroPalette.tint }]}>
+              <Ionicons name="radio" size={28} color={heroPalette.solid} />
             </View>
-            <Text style={styles.noEventsTitle}>Still syncing your area</Text>
+            <Text style={styles.noEventsTitle}>Still scanning your area</Text>
             <Text style={styles.noEventsText}>
-              Our AI is still gathering events for your location. Start your trial and your feed will fill up in a minute or two.
+              Your agent is pulling in fresh events right now. Start your trial — by the time you land on Discover, the feed is full.
             </Text>
           </View>
         )}
@@ -1236,10 +1422,10 @@ function TeaserStep({
           <View style={styles.lockedSection}>
             <View style={styles.lockedDivider}>
               <View style={styles.lockedLine} />
-              <View style={styles.lockedCountBadge}>
-                <Ionicons name="lock-closed" size={12} color={COLORS.accent} />
-                <Text style={styles.lockedCountText}>
-                  {remainingEvents.length} MORE MATCH{remainingEvents.length === 1 ? "" : "ES"}
+              <View style={[styles.lockedCountBadge, { borderColor: heroPalette.edge }]}>
+                <Ionicons name="lock-closed" size={12} color={heroPalette.solid} />
+                <Text style={[styles.lockedCountText, { color: heroPalette.solid }]}>
+                  +{remainingEvents.length} MORE WAITING
                 </Text>
               </View>
               <View style={styles.lockedLine} />
@@ -1256,39 +1442,41 @@ function TeaserStep({
         )}
       </Animated.ScrollView>
 
-      {/* Sticky bottom CTA */}
+      {/* Sticky bottom CTA — colored to match the hero palette */}
       <View style={styles.teaserBottomBar}>
         <LinearGradient
           colors={["transparent", COLORS.bg] as any}
           style={styles.teaserGradientFade}
           pointerEvents="none"
         />
-        <TouchableOpacity style={styles.primaryBtn} onPress={onUnlock} activeOpacity={0.85}>
+        <TouchableOpacity
+          style={[styles.primaryBtn, SHADOWS.glow(heroPalette.edge)]}
+          onPress={onUnlock}
+          activeOpacity={0.85}
+        >
           <LinearGradient
-            colors={GRADIENTS.accent as any}
+            colors={[heroPalette.from, heroPalette.to]}
             style={styles.btnGradient}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 0 }}
           >
             <Ionicons name="lock-open" size={18} color="#fff" />
             <Text style={styles.primaryBtnText}>
-              {totalMatches > 1
-                ? `Unlock all ${totalMatches} events`
-                : totalMatches === 1
-                ? "Unlock the full feed"
-                : "Continue"}
+              {teaserEvent
+                ? `Unlock this${totalMatches > 1 ? ` + ${totalMatches - 1} more` : ""}`
+                : "Build my feed"}
             </Text>
           </LinearGradient>
         </TouchableOpacity>
         <Text style={styles.teaserBottomText}>
-          Start your free trial to see all events
+          Free trial. Cancel any time.
         </Text>
       </View>
     </View>
   );
 }
 
-function TeaserCard({ event }: { event: Event }) {
+function TeaserCard({ event, palette, matchPct }: { event: Event; palette: GoalPalette; matchPct: number }) {
   const img = getEventImage(event.image_url, event.category, event.subcategory, event.title, event.description, event.tags);
   const startDate = effectiveStart(event);
   const dayName = startDate.toLocaleDateString([], { weekday: "short" }).toUpperCase();
@@ -1296,38 +1484,52 @@ function TeaserCard({ event }: { event: Event }) {
   const monthName = startDate.toLocaleDateString([], { month: "short" }).toUpperCase();
   const timeStr = startDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
+  // "Tonight" / "Tomorrow" / specific day — better than just a date block.
+  const daysUntil = Math.floor((startDate.getTime() - Date.now()) / 86_400_000);
+  const whenLabel =
+    daysUntil <= 0
+      ? "TONIGHT"
+      : daysUntil === 1
+        ? "TOMORROW"
+        : daysUntil < 7
+          ? dayName
+          : `${dayName} ${dayNum} ${monthName}`;
+
   return (
-    <View style={styles.teaserCard}>
+    <View style={[styles.teaserCard, { borderColor: palette.edge, ...SHADOWS.glow(palette.edge) }]}>
       <View style={styles.teaserCardImage}>
         <Image source={{ uri: img }} style={{ width: "100%", height: "100%" }} />
         <LinearGradient
-          colors={["transparent", "rgba(15,15,26,0.95)"]}
+          colors={["transparent", "rgba(15,15,26,0.4)", "rgba(15,15,26,0.97)"] as any}
           style={StyleSheet.absoluteFillObject}
         />
-        <View style={styles.teaserMatchBadge}>
+        <View style={[styles.teaserMatchBadge, { backgroundColor: palette.solid }]}>
           <Ionicons name="flash" size={12} color="#fff" />
-          <Text style={styles.teaserMatchText}>98% MATCH</Text>
+          <Text style={styles.teaserMatchText}>{matchPct}% MATCH</Text>
+        </View>
+        <View style={styles.teaserWhenChip}>
+          <Text style={styles.teaserWhenChipText}>{whenLabel} · {timeStr}</Text>
         </View>
         <View style={styles.teaserCardTitleWrap}>
-          <Text style={styles.teaserCardTitle} numberOfLines={2}>{event.title}</Text>
+          <Text style={styles.teaserCardTitle} numberOfLines={3}>{event.title}</Text>
         </View>
       </View>
 
       <View style={styles.teaserCardMeta}>
-        <View style={styles.teaserDateBlock}>
-          <Text style={styles.teaserDateDay}>{dayName}</Text>
+        <View style={[styles.teaserDateBlock, { backgroundColor: palette.tint, borderColor: palette.edge }]}>
+          <Text style={[styles.teaserDateDay, { color: palette.solid }]}>{dayName}</Text>
           <Text style={styles.teaserDateNum}>{dayNum}</Text>
-          <Text style={styles.teaserDateMonth}>{monthName}</Text>
+          <Text style={[styles.teaserDateMonth, { color: palette.solid }]}>{monthName}</Text>
         </View>
         <View style={{ flex: 1 }}>
           <View style={styles.teaserMetaRow}>
-            <Ionicons name="time-outline" size={14} color={COLORS.accent} />
+            <Ionicons name="time-outline" size={14} color={palette.solid} />
             <Text style={styles.teaserMetaText}>{timeStr}</Text>
           </View>
           <View style={styles.teaserMetaRow}>
-            <Ionicons name="location-outline" size={14} color={COLORS.accent} />
+            <Ionicons name="location-outline" size={14} color={palette.solid} />
             <Text style={styles.teaserMetaText} numberOfLines={1}>
-              {event.venue?.name || event.address?.split(",")[0] || "Boca Raton"}
+              {event.venue?.name || event.address?.split(",")[0] || "Nearby"}
             </Text>
           </View>
         </View>
@@ -1512,23 +1714,19 @@ function PaywallStep({ onSubscribe, onBack }: { onSubscribe: () => void; onBack:
             />
             <Text style={{ fontSize: 48 }}>🔓</Text>
           </TouchableOpacity>
-          <Text style={styles.paywallTitle}>Unlock your matches</Text>
+          <Text style={styles.paywallTitle}>Unlock your agent.</Text>
           <Text style={styles.paywallSubtitle}>
-            Your AI has curated events to help you hit your goals. Start your free trial to see them all.
+            Your AI just curated a feed for you. Start your free trial to see every match — and let your agent plan the next month for you.
           </Text>
         </View>
 
         {/* Real data proof */}
         <View style={styles.dataProofCard}>
-          <Text style={styles.dataProofHeader}>POWERED BY</Text>
+          <Text style={styles.dataProofHeader}>YOUR AGENT SEARCHES</Text>
           <View style={styles.dataProofSources}>
             <View style={styles.dataSourceChip}>
               <Ionicons name="ticket" size={13} color={COLORS.accent} />
               <Text style={styles.dataSourceText}>Ticketmaster</Text>
-            </View>
-            <View style={styles.dataSourceChip}>
-              <Ionicons name="musical-notes" size={13} color={COLORS.accent} />
-              <Text style={styles.dataSourceText}>SeatGeek</Text>
             </View>
             <View style={styles.dataSourceChip}>
               <Ionicons name="calendar" size={13} color={COLORS.accent} />
@@ -1539,8 +1737,12 @@ function PaywallStep({ onSubscribe, onBack }: { onSubscribe: () => void; onBack:
               <Text style={styles.dataSourceText}>Google Places</Text>
             </View>
             <View style={styles.dataSourceChip}>
+              <Ionicons name="people" size={13} color={COLORS.accent} />
+              <Text style={styles.dataSourceText}>Reddit (local)</Text>
+            </View>
+            <View style={styles.dataSourceChip}>
               <Ionicons name="sparkles" size={13} color={COLORS.accent} />
-              <Text style={styles.dataSourceText}>AI scanner</Text>
+              <Text style={styles.dataSourceText}>AI venue scanner</Text>
             </View>
           </View>
           <View style={styles.dataStatsRow}>
@@ -1785,25 +1987,47 @@ const styles = StyleSheet.create({
   },
   // Welcome
   welcomeIconWrap: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
+    width: 152,
+    height: 152,
     alignSelf: "center",
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 32,
+    marginBottom: 30,
+  },
+  welcomeIconRing: {
+    position: "absolute",
+    width: 152,
+    height: 152,
+    borderRadius: 76,
     overflow: "hidden",
   },
-  welcomeEmoji: {
+  welcomeIconCore: {
+    width: 124,
+    height: 124,
+    borderRadius: 62,
+    backgroundColor: COLORS.bg,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  welcomeEmojiBig: {
     fontSize: 56,
   },
+  welcomeKicker: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: COLORS.accentLight,
+    textAlign: "center",
+    letterSpacing: 2,
+    marginBottom: 12,
+  },
   welcomeTitle: {
-    fontSize: 32,
+    fontSize: 36,
     fontWeight: "800",
     color: COLORS.text,
     textAlign: "center",
-    letterSpacing: -1,
-    marginBottom: 12,
+    letterSpacing: -1.2,
+    marginBottom: 14,
+    lineHeight: 40,
   },
   welcomeSubtitle: {
     fontSize: 16,
@@ -1827,10 +2051,12 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
   },
   welcomeFeatureIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: COLORS.accent + "22",
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: COLORS.cardAlt,
+    borderWidth: 1,
+    borderColor: COLORS.border,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -1838,6 +2064,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: COLORS.text,
     fontWeight: "600",
+    flex: 1,
   },
   takesText: {
     color: COLORS.muted,
@@ -1851,21 +2078,22 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   stepTitle: {
-    fontSize: 28,
+    fontSize: 32,
     fontWeight: "800",
     color: COLORS.text,
-    marginTop: 8,
-    marginBottom: 8,
-    letterSpacing: -0.5,
+    marginTop: 6,
+    marginBottom: 10,
+    letterSpacing: -0.8,
+    lineHeight: 38,
   },
   stepSubtitle: {
     fontSize: 15,
     color: COLORS.muted,
-    marginBottom: 20,
-    lineHeight: 21,
+    marginBottom: 22,
+    lineHeight: 22,
   },
   optionList: {
-    gap: 10,
+    gap: 12,
   },
   contextWrap: {
     marginBottom: 14,
@@ -1918,40 +2146,48 @@ const styles = StyleSheet.create({
   optionCard: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 14,
-    padding: 16,
-    borderRadius: RADIUS.md,
+    gap: 16,
+    padding: 18,
+    borderRadius: RADIUS.lg,
     backgroundColor: COLORS.card,
     borderWidth: 2,
     borderColor: COLORS.border,
   },
-  optionCardSelected: {
-    borderColor: COLORS.accent,
-    backgroundColor: COLORS.accent + "22", // bump tint so the selected card reads stronger against the dark bg
-  },
-  optionIconWrap: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+  optionEmojiShell: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: COLORS.cardAlt,
-    borderWidth: 1,
-    borderColor: COLORS.border,
+    overflow: "hidden",
   },
-  optionIconWrapActive: {
-    backgroundColor: COLORS.accent + "22",
-    borderColor: COLORS.accent + "55",
+  optionEmoji: {
+    fontSize: 26,
+    marginTop: -1,
+    // emoji rendering needs a slight nudge to look optically centered
+    textShadowColor: "rgba(0,0,0,0.2)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+  },
+  optionIconTint: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1.5,
   },
   optionLabel: {
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: "700",
     color: COLORS.text,
+    letterSpacing: -0.2,
   },
   optionDescription: {
     fontSize: 13,
     color: COLORS.muted,
-    marginTop: 2,
+    marginTop: 3,
+    lineHeight: 18,
   },
   optionCheck: {
     width: 26,
@@ -1991,40 +2227,42 @@ const styles = StyleSheet.create({
   },
   // Building
   buildingIconWrap: {
-    width: 140,
-    height: 140,
+    width: 156,
+    height: 156,
     alignSelf: "center",
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 24,
+    marginBottom: 26,
   },
   buildingRing: {
-    width: 140,
-    height: 140,
-    borderRadius: 70,
+    width: 156,
+    height: 156,
+    borderRadius: 78,
     position: "absolute",
+    overflow: "hidden",
   },
   buildingCore: {
-    width: 110,
-    height: 110,
-    borderRadius: 55,
+    width: 128,
+    height: 128,
+    borderRadius: 64,
     backgroundColor: COLORS.bg,
     alignItems: "center",
     justifyContent: "center",
   },
   buildingTitle: {
-    fontSize: 24,
+    fontSize: 28,
     fontWeight: "800",
     color: COLORS.text,
     textAlign: "center",
-    marginBottom: 8,
-    letterSpacing: -0.5,
+    marginBottom: 10,
+    letterSpacing: -0.8,
   },
   buildingCount: {
-    fontSize: 15,
-    color: COLORS.muted,
+    fontSize: 16,
+    color: COLORS.text,
     textAlign: "center",
     marginBottom: 28,
+    fontWeight: "500",
   },
   buildingProgress: {
     height: 6,
@@ -2076,42 +2314,45 @@ const styles = StyleSheet.create({
   teaserBadge: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 5,
-    backgroundColor: COLORS.accent + "20",
-    paddingHorizontal: 12,
-    paddingVertical: 5,
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
     borderRadius: RADIUS.pill,
-    marginBottom: 16,
+    borderWidth: 1,
+    marginBottom: 18,
   },
   teaserBadgeText: {
-    color: COLORS.accent,
     fontSize: 11,
     fontWeight: "800",
-    letterSpacing: 1,
+    letterSpacing: 1.2,
   },
   teaserTitle: {
-    fontSize: 34,
+    fontSize: 36,
     fontWeight: "800",
     color: COLORS.text,
     textAlign: "center",
-    letterSpacing: -1,
-    marginBottom: 10,
-    lineHeight: 40,
+    letterSpacing: -1.2,
+    marginBottom: 12,
+    lineHeight: 42,
   },
   teaserSubtitle: {
     fontSize: 15,
     color: COLORS.muted,
     textAlign: "center",
-    marginBottom: 16,
+    marginBottom: 18,
+    lineHeight: 22,
+    paddingHorizontal: 6,
   },
   goalBubbles: {
     flexDirection: "row",
-    gap: 6,
+    gap: 8,
+    flexWrap: "wrap",
+    justifyContent: "center",
   },
   goalBubble: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: COLORS.card,
     alignItems: "center",
     justifyContent: "center",
@@ -2149,54 +2390,64 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   teaserCard: {
-    borderRadius: RADIUS.lg,
+    borderRadius: RADIUS.xl,
     backgroundColor: COLORS.card,
     borderWidth: 2,
-    borderColor: COLORS.accent + "40",
     overflow: "hidden",
-    elevation: 10,
-    shadowColor: COLORS.accent,
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.3,
-    shadowRadius: 20,
     marginBottom: 4,
   },
   teaserCardImage: {
     width: "100%",
-    height: 180,
+    height: 240,
     position: "relative",
   },
   teaserMatchBadge: {
     position: "absolute",
-    top: 12,
-    right: 12,
+    top: 14,
+    right: 14,
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
-    backgroundColor: COLORS.success + "ee",
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingHorizontal: 11,
+    paddingVertical: 6,
     borderRadius: RADIUS.pill,
   },
   teaserMatchText: {
     color: "#fff",
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: "800",
-    letterSpacing: 0.5,
+    letterSpacing: 0.6,
+  },
+  teaserWhenChip: {
+    position: "absolute",
+    top: 14,
+    left: 14,
+    backgroundColor: "rgba(15,15,26,0.78)",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: RADIUS.pill,
+  },
+  teaserWhenChipText: {
+    color: "#fff",
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.6,
   },
   teaserCardTitleWrap: {
     position: "absolute",
-    bottom: 12,
-    left: 14,
-    right: 14,
+    bottom: 16,
+    left: 18,
+    right: 18,
   },
   teaserCardTitle: {
     color: "#fff",
-    fontSize: 19,
+    fontSize: 24,
     fontWeight: "800",
-    textShadowColor: "rgba(0,0,0,0.5)",
+    letterSpacing: -0.4,
+    lineHeight: 28,
+    textShadowColor: "rgba(0,0,0,0.55)",
     textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 6,
+    textShadowRadius: 8,
   },
   teaserCardMeta: {
     flexDirection: "row",
@@ -2205,31 +2456,29 @@ const styles = StyleSheet.create({
     padding: 14,
   },
   teaserDateBlock: {
-    width: 48,
-    height: 48,
-    borderRadius: RADIUS.sm,
-    backgroundColor: COLORS.accent + "15",
+    width: 56,
+    height: 56,
+    borderRadius: RADIUS.md,
     alignItems: "center",
     justifyContent: "center",
+    borderWidth: 1,
   },
   teaserDateDay: {
     fontSize: 10,
-    fontWeight: "700",
-    color: COLORS.accent,
-    letterSpacing: 0.5,
+    fontWeight: "800",
+    letterSpacing: 0.8,
   },
   teaserDateNum: {
-    fontSize: 18,
+    fontSize: 22,
     fontWeight: "800",
     color: COLORS.text,
     marginTop: -2,
-    lineHeight: 20,
+    lineHeight: 24,
   },
   teaserDateMonth: {
     fontSize: 9,
-    fontWeight: "700",
-    color: COLORS.accent,
-    letterSpacing: 0.5,
+    fontWeight: "800",
+    letterSpacing: 0.8,
     marginTop: -1,
   },
   teaserMetaRow: {

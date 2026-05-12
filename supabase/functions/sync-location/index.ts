@@ -7,6 +7,7 @@ import {
   mapPriceLevel,
 } from "../_shared/category-mapper.ts";
 import { geohashEncode } from "../_shared/geohash.ts";
+import { detectAdultSignal, isAdultVenue } from "../_shared/adult-filter.ts";
 
 /**
  * Strip HTML/markup from a description and cap its length. Schema.org JSON-LD
@@ -80,31 +81,12 @@ const VENUE_TYPES = [
   "art_gallery", "museum",
 ];
 
-// Adult / strip-club venues should never reach the feed. Filter both on initial
-// venue sync (so they're not stored) and on scan-time as a backstop for any
-// already-stored entries. Detection is conservative — only obvious markers.
-const ADULT_NAME_PATTERN = /\b(strip\s*club|topless|gentlemen'?s?\s*club|adult\s+(?:club|entertainment)|nude\s+(?:dance|dancers)|exotic\s+dance|exotic\s+club)\b/i;
-const ADULT_NAME_BLOCKLIST = new Set<string>([
-  "diamond dolls",
-  "tootsie's cabaret",
-  "tootsies cabaret",
-  "hustler club",
-  "pure platinum",
-  "the office gentlemens club",
-  "club madonna",
-  "scarlett's cabaret",
-  "scarletts cabaret",
-  "rachel's",
-  "rachels gentlemens club",
-]);
-
-function isAdultVenue(name: string | null | undefined, types?: string[]): boolean {
-  if (types?.includes("adult_entertainment_club")) return true;
-  if (!name) return false;
-  const lc = name.trim().toLowerCase();
-  if (ADULT_NAME_BLOCKLIST.has(lc)) return true;
-  return ADULT_NAME_PATTERN.test(name);
-}
+// Adult / strip-club / hookah-lounge filtering lives in _shared/adult-filter.ts
+// so every ingestion path (Google Places venue sync, Ticketmaster, Eventbrite,
+// Reddit, venue scraping) hits the same rules. We apply two filters:
+//   1. Hard hits → drop the row entirely (never reaches the DB).
+//   2. Soft hits → ingest, but the `adult` tag is added so discover_events
+//      can exclude these and the onboarding hero picker skips them.
 
 // ─── Venue Sync ──────────────────────────────────────────────
 
@@ -194,6 +176,20 @@ async function fetchTicketmaster(lat: number, lng: number, radiusMiles: number) 
       const eLng = venue?.location?.longitude ? parseFloat(venue.location.longitude) : null;
       if (!eLat || !eLng) continue;
 
+      // Adult-content guard. TM lists adult-venue events (strip-club hookah
+      // nights, "men's club" specials) under generic nightlife — they sail
+      // through the venue-name filter because the venue lookup uses Google
+      // Places. Hard hit → drop. Soft hit → keep but emit `adult` tag.
+      const adultSignal = detectAdultSignal({
+        title: e.name,
+        description: e.info,
+        venueName: venue?.name,
+      });
+      if (adultSignal.hard) {
+        console.log(`[tm] drop adult: "${e.name}" @ ${venue?.name || "unknown"}`);
+        continue;
+      }
+
       const { category, subcategory } = mapTMCategory(e.classifications);
       const bestImage = e.images?.sort((a: any, b: any) => (b.width || 0) - (a.width || 0))?.[0];
       const address = [venue?.address?.line1, venue?.city?.name, venue?.state?.stateCode].filter(Boolean).join(", ");
@@ -201,6 +197,7 @@ async function fetchTicketmaster(lat: number, lng: number, radiusMiles: number) 
         category, subcategory, title: e.name, description: e.info,
         is_free: false, start_time: e.dates?.start?.dateTime || null, ticket_url: e.url,
       });
+      if (adultSignal.soft) tags.push("adult");
 
       events.push({
         source: "ticketmaster", source_id: e.id,
@@ -290,12 +287,25 @@ async function fetchEventbrite(
     const eLng = venue?.longitude ? parseFloat(venue.longitude) : null;
     if (!eLat || !eLng) continue;
 
+    // Adult-content guard. Eventbrite hosts a wide variety of listings —
+    // many strip clubs and adult venues self-publish here.
+    const adultSignal = detectAdultSignal({
+      title: eb.name?.text,
+      description: eb.description?.text,
+      venueName: venue?.name,
+    });
+    if (adultSignal.hard) {
+      console.log(`[eb] drop adult: "${eb.name?.text}" @ ${venue?.name || "unknown"}`);
+      continue;
+    }
+
     const is_free = eb.is_free || false;
     const tags = generateTags({
       category: "community", subcategory: "event",
       title: eb.name?.text || "", description: eb.description?.text,
       is_free, start_time: eb.start?.utc || null, ticket_url: eb.url,
     });
+    if (adultSignal.soft) tags.push("adult");
     events.push({
       source: "community", source_id: `eb-${eb.id}`,
       title: eb.name?.text || "",
@@ -447,6 +457,20 @@ Return ONLY the JSON array. If no real events, return [].`,
 
       for (const ev of extracted) {
         if (!ev.title || !ev.start_time) continue;
+
+        // Adult-content guard. Reddit posts about local events sometimes
+        // reference strip-club nights or hookah lounges hosting BYOB hookah
+        // events. Drop hard hits; tag soft.
+        const adultSignal = detectAdultSignal({
+          title: ev.title,
+          description: ev.description,
+          venueName: ev.venue_name,
+        });
+        if (adultSignal.hard) {
+          console.log(`[reddit:${sub}] drop adult: "${ev.title}"`);
+          continue;
+        }
+
         const tags = generateTags({
           category: ev.category || "community",
           subcategory: ev.subcategory || "event",
@@ -454,6 +478,7 @@ Return ONLY the JSON array. If no real events, return [].`,
           is_free: ev.is_free || false,
           start_time: ev.start_time, ticket_url: ev.source_url,
         });
+        if (adultSignal.soft) tags.push("adult");
         events.push({
           source: "reddit",
           source_id: `rd-${sub}-${ev.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 50)}`,
@@ -679,18 +704,36 @@ async function scanVenues(
             });
           }
 
-          return events.map((e: any) => ({
-            venue_id: venue.id, source: "scraped",
-            source_id: `${venue.id}-${e.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 60)}`,
-            title: e.title, description: e.description,
-            category: e.category, subcategory: e.subcategory,
-            lat: venue.lat, lng: venue.lng, address: venue.address,
-            image_url: null, start_time: e.start_time, end_time: e.end_time,
-            is_recurring: e.is_recurring, recurrence_rule: e.recurrence_rule,
-            is_free: e.is_free, price_min: e.price_min, price_max: e.price_max,
-            ticket_url: null, source_url: venue.website,
-            tags: generateTags({ ...e, venue_category: venue.category }),
-          }));
+          // Adult guard on each extracted event. The venue itself passed the
+          // ingestion-time filter, but Claude/schema.org can still pull adult
+          // event titles (e.g. a "lounge" that hosts cabaret-themed nights).
+          const passing: any[] = [];
+          for (const e of events) {
+            const adultSignal = detectAdultSignal({
+              title: e.title,
+              description: e.description,
+              venueName: venue.name,
+            });
+            if (adultSignal.hard) {
+              console.log(`[scanner] drop adult: "${e.title}" @ ${venue.name}`);
+              continue;
+            }
+            const tags = generateTags({ ...e, venue_category: venue.category });
+            if (adultSignal.soft) tags.push("adult");
+            passing.push({
+              venue_id: venue.id, source: "scraped",
+              source_id: `${venue.id}-${e.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 60)}`,
+              title: e.title, description: e.description,
+              category: e.category, subcategory: e.subcategory,
+              lat: venue.lat, lng: venue.lng, address: venue.address,
+              image_url: null, start_time: e.start_time, end_time: e.end_time,
+              is_recurring: e.is_recurring, recurrence_rule: e.recurrence_rule,
+              is_free: e.is_free, price_min: e.price_min, price_max: e.price_max,
+              ticket_url: null, source_url: venue.website,
+              tags,
+            });
+          }
+          return passing;
         } catch {
           return [];
         }
