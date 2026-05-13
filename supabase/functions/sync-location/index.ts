@@ -81,12 +81,13 @@ const VENUE_TYPES = [
   "art_gallery", "museum",
 ];
 
-// Adult / strip-club / hookah-lounge filtering lives in _shared/adult-filter.ts
-// so every ingestion path (Google Places venue sync, Ticketmaster, Eventbrite,
-// Reddit, venue scraping) hits the same rules. We apply two filters:
-//   1. Hard hits → drop the row entirely (never reaches the DB).
-//   2. Soft hits → ingest, but the `adult` tag is added so discover_events
-//      can exclude these and the onboarding hero picker skips them.
+// Adult / strip-club filtering lives in _shared/adult-filter.ts so every
+// ingestion path (Google Places venue sync, Ticketmaster, Eventbrite,
+// Reddit, venue scraping) hits the same rules. Hard hits are dropped
+// entirely — soft tier was removed after migration 011 because the
+// previous "tag as adult" approach was too easily false-positive on
+// legit hookah lounges, theatrical burlesque, pole fitness, and any
+// venue whose name happened to match a generic blocklisted brand.
 
 // ─── Venue Sync ──────────────────────────────────────────────
 
@@ -197,7 +198,6 @@ async function fetchTicketmaster(lat: number, lng: number, radiusMiles: number) 
         category, subcategory, title: e.name, description: e.info,
         is_free: false, start_time: e.dates?.start?.dateTime || null, ticket_url: e.url,
       });
-      if (adultSignal.soft) tags.push("adult");
 
       events.push({
         source: "ticketmaster", source_id: e.id,
@@ -305,7 +305,6 @@ async function fetchEventbrite(
       title: eb.name?.text || "", description: eb.description?.text,
       is_free, start_time: eb.start?.utc || null, ticket_url: eb.url,
     });
-    if (adultSignal.soft) tags.push("adult");
     events.push({
       source: "community", source_id: `eb-${eb.id}`,
       title: eb.name?.text || "",
@@ -478,7 +477,6 @@ Return ONLY the JSON array. If no real events, return [].`,
           is_free: ev.is_free || false,
           start_time: ev.start_time, ticket_url: ev.source_url,
         });
-        if (adultSignal.soft) tags.push("adult");
         events.push({
           source: "reddit",
           source_id: `rd-${sub}-${ev.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 50)}`,
@@ -719,7 +717,6 @@ async function scanVenues(
               continue;
             }
             const tags = generateTags({ ...e, venue_category: venue.category });
-            if (adultSignal.soft) tags.push("adult");
             passing.push({
               venue_id: venue.id, source: "scraped",
               source_id: `${venue.id}-${e.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 60)}`,

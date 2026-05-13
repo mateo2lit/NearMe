@@ -1199,7 +1199,13 @@ function BuildingStep({
 //     bar, the TeaserStep falls back to "we're still building your feed"
 //     instead of showing a weak hero.
 
-const HERO_MIN_SCORE = 8;
+// Floor for the onboarding hero pick. Was 8 in 1.0.4 but that was tuned for
+// a feed packed with strong matches; in sparser markets (or after over-
+// aggressive filtering in 010) it triggered the "still looking" fallback
+// even when 100+ events were available. A single tag match (5pts) + minimal
+// recency (2pts) = 7 clears 5. A category-only match plus recency ≥ 5
+// (i.e. event is in the next 4 days) also clears.
+const HERO_MIN_SCORE = 5;
 
 const NIGHTLIFE_LEANING_GOALS = new Set([
   "drinks-nightlife",

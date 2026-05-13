@@ -1,27 +1,31 @@
 /**
- * Adult / strip-club / hookah-lounge filter.
+ * Adult / strip-club filter.
  *
  * Single source of truth used by every ingestion path (Ticketmaster,
- * Eventbrite, Reddit, venue scraper, Google Places venue sync) AND by the
- * client-side hero picker as a backstop.
+ * Eventbrite, Reddit, venue scraper, Google Places venue sync).
  *
- * Two classes of signal:
- *   - HARD: name/title/desc explicitly identifies adult entertainment.
- *     Reject outright — never reaches the DB.
- *   - SOFT: marker words that frequently co-occur with adult venues
- *     (e.g. "hookah", "topless rooftop") but can be legit. Emit the
- *     `adult` tag for soft hits too so the hero picker can avoid them,
- *     and let normal feed surface them for users who explicitly opted
- *     into nightlife.
+ * Detection is intentionally conservative — only obvious markers. The
+ * earlier (2026-05-12) version had a "soft" tier that flagged hookah
+ * lounges, burlesque shows, pole-fitness classes, and any "men's club"
+ * as adult, which mass-deleted legitimate events from the feed. That
+ * tier has been removed: if a venue/title/description doesn't match
+ * the unambiguous adult-entertainment pattern, it stays in the feed.
+ *
+ * The onboarding hero scorer still penalizes `21+` events for users
+ * who didn't pick a nightlife-leaning goal, which is a softer guard
+ * for the hookah-night-at-a-bar case without nuking the row from the
+ * whole feed.
  */
 
 // Names/phrases that unambiguously identify an adult-entertainment venue.
-// Matched as whole words (regex \b) to avoid false hits on substrings.
-const HARD_ADULT_PATTERN = /\b(strip\s*club|stripclub|topless|gentlemen'?s?\s*club|adult\s+(?:club|entertainment|cabaret)|nude\s+(?:dance|dancers|bar|club)|exotic\s+(?:dance|dancers|club)|burlesque\s+club|peep\s+show|bikini\s+bar)\b/i;
+// Matched as whole words (\b) so substrings like "stripping wallpaper" or
+// "expose" don't false-fire. Burlesque must be paired with "club" since
+// theatrical burlesque is a legit performance art form.
+const HARD_ADULT_PATTERN = /\b(strip\s*club|stripclub|topless\s+(?:bar|club|dance|dancers)|gentlemen'?s?\s*club|adult\s+(?:club|entertainment|cabaret)|nude\s+(?:dance|dancers|bar|club)|exotic\s+(?:dance|dancers|club)|burlesque\s+club|peep\s+show|bikini\s+bar|lap\s+dance)\b/i;
 
-// Specific venue names that appeared in the wild. Keep this list in sync with
-// migration 008_cleanup_adult_venues.sql. Lowercase, no punctuation
-// normalization done at match time.
+// Specific venue names that are unambiguous adult-entertainment brands.
+// Keep this tight — generic names like "Deja Vu", "Cheetah Lounge", or
+// "Solid Gold" are too easily false-positive on legit local businesses.
 const HARD_ADULT_NAMES = new Set<string>([
   "diamond dolls",
   "tootsie's cabaret",
@@ -32,15 +36,10 @@ const HARD_ADULT_NAMES = new Set<string>([
   "club madonna",
   "scarlett's cabaret",
   "scarletts cabaret",
-  "rachel's",
   "rachels gentlemens club",
-  "cheetah lounge",
-  "solid gold",
-  "deja vu showgirls",
-  "deja vu",
-  "sapphire gentlemen's club",
-  "sapphire club",
   "spearmint rhino",
+  "deja vu showgirls",
+  "sapphire gentlemen's club",
 ]);
 
 // Google Places `types` that mark a venue as adult entertainment.
@@ -50,15 +49,8 @@ const HARD_PLACES_TYPES = new Set<string>([
   "strip_club",
 ]);
 
-// Markers that frequently co-occur with adult venues but are sometimes
-// legitimate (hookah lounges in bona-fide hookah restaurants, themed nights
-// at regular bars, etc). Emit the `adult` tag so the hero picker skips them,
-// but don't reject the row outright.
-const SOFT_ADULT_PATTERN = /\b(hookah\s+(?:lounge|bar|night)|shisha\s+(?:lounge|bar)|cabaret\s+night|burlesque(?:\s+show)?|pole\s+dancing|exotic\s+dancers?|lap\s+dance|bachelor\s+party\s+(?:special|event)|men'?s?\s+club\b)\b/i;
-
 export interface AdultSignal {
   hard: boolean;
-  soft: boolean;
   reason: string | null;
 }
 
@@ -81,8 +73,8 @@ export function isAdultVenue(
  * Inspect an event's text + venue for adult signals.
  *
  * Hard hit → caller should drop the event entirely.
- * Soft hit → caller should emit the `adult` tag so the row is queryable but
- *   excluded from the onboarding hero pick + hidden from default feed.
+ * No soft tier — false-positive damage outweighs the value of marginal
+ * coverage. The hero picker's 21+ penalty handles the borderline cases.
  */
 export function detectAdultSignal(input: {
   title?: string | null;
@@ -93,18 +85,14 @@ export function detectAdultSignal(input: {
   const { title, description, venueName, venueTypes } = input;
 
   if (isAdultVenue(venueName, venueTypes ?? undefined)) {
-    return { hard: true, soft: true, reason: `adult venue: ${venueName}` };
+    return { hard: true, reason: `adult venue: ${venueName}` };
   }
 
   const haystack = `${title || ""} ${description || ""}`;
 
   if (HARD_ADULT_PATTERN.test(haystack)) {
-    return { hard: true, soft: true, reason: "hard adult pattern in title/desc" };
+    return { hard: true, reason: "hard adult pattern in title/desc" };
   }
 
-  if (SOFT_ADULT_PATTERN.test(haystack)) {
-    return { hard: false, soft: true, reason: "soft adult marker in title/desc" };
-  }
-
-  return { hard: false, soft: false, reason: null };
+  return { hard: false, reason: null };
 }
