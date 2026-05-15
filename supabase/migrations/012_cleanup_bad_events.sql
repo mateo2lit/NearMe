@@ -65,11 +65,12 @@ where e.venue_id = v.id
 
 -- Title-level brand check (catches "Evening Admission at Cheetah" where the
 -- venue is stored under a different name in Google Places or where the venue
--- relation is missing).
+-- relation is missing). Apostrophes in regex must be doubled inside SQL
+-- single-quoted string literals.
 update events
 set tags = array_append(coalesce(tags, '{}'), 'adult')
 where not (coalesce(tags, '{}') @> array['adult'])
-  and title ~* '\m(cheetah(?:\s+(?:lounge|club|pompano|hallandale))?|solid\s+gold|goldfingers?|foxxxes|foxxxy\s+lady|foxy\s+lady|penthouse\s+club|wishing\s+well\s+lounge|bare\s+elegance|the\s+body\s+shop|the\s+dollhouse|thee\s+dollhouse|spearmint\s+rhino|hustler\s+club|tootsies?\s+cabaret|diamond\s+dolls|scarlett'?s?\s+cabaret|deja\s+vu\s+showgirls)\M';
+  and title ~* '\m(cheetah(?:\s+(?:lounge|club|pompano|hallandale))?|solid\s+gold|goldfingers?|foxxxes|foxxxy\s+lady|foxy\s+lady|penthouse\s+club|wishing\s+well\s+lounge|bare\s+elegance|the\s+body\s+shop|the\s+dollhouse|thee\s+dollhouse|spearmint\s+rhino|hustler\s+club|tootsies?\s+cabaret|diamond\s+dolls|scarlett''?s?\s+cabaret|deja\s+vu\s+showgirls)\M';
 
 -- ──────────────────────────────────────────────────────────────────────────
 -- 2. Delete scraped events with generic placeholder titles
