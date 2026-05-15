@@ -9,6 +9,7 @@ import {
 import { geohashEncode } from "../_shared/geohash.ts";
 import { detectAdultSignal, isAdultVenue } from "../_shared/adult-filter.ts";
 import { validateScrapedEvent, normalizeDayOfWeek } from "../_shared/scraper-quality.ts";
+import { fetchMeetupEvents } from "../_shared/meetup-fetcher.ts";
 
 /**
  * Strip HTML/markup from a description and cap its length. Schema.org JSON-LD
@@ -233,6 +234,7 @@ async function fetchEventbrite(
     { q: "", label: "general" },
     { q: "singles dating speed dating mixer", label: "dating" },
     { q: "happy hour trivia karaoke", label: "bar-nights" },
+    { q: "pickleball basketball volleyball pickup soccer running club tennis", label: "pickup-sports" },
   ];
 
   const MAX_PAGES_PER_QUERY = 4; // up to ~200 per query at 50/page
@@ -326,12 +328,24 @@ async function fetchEventbrite(
 
 // ─── Reddit local subreddits ─────────────────────────────────
 
-// Location → subreddit mapping. Mixes city subs (events, food, nightlife) with
-// nearby university subs (college sports, college events). The goal is broader
-// coverage of locally-interesting stuff — especially sports — than what TM and
-// Eventbrite alone surface.
+// National sports subreddits — added to every location so a local
+// "pickup pickleball at Patch Reef" post from r/pickleball or
+// r/PickupBasketball can surface no matter where the user is. These
+// subs are high-noise; the Claude extractor's location filter cuts most.
+const NATIONAL_SPORTS_SUBS = [
+  "pickleball",
+  "PickupBasketball",
+  "RunningClub",
+  "Volleyball",
+  "tennis",
+];
+
+// Location → subreddit mapping. Mixes city subs (events, food, nightlife)
+// with nearby university subs (college sports, college events). The goal
+// is broader coverage of locally-interesting stuff — especially sports —
+// than what TM and Eventbrite alone surface.
 function subredditsForLocation(lat: number, lng: number): string[] {
-  const subs: string[] = [];
+  const subs: string[] = [...NATIONAL_SPORTS_SUBS];
   // Boca / South Florida — FAU is the dominant local college; UMiami next door
   if (lat > 25.7 && lat < 26.8 && lng > -80.5 && lng < -79.8) {
     subs.push("BocaRaton", "southflorida", "florida", "FAU", "Miami", "MiamiHurricanes");
@@ -984,15 +998,78 @@ serve(async (req: Request) => {
       `[variety] well-covered=[${categoryHint.wellCovered.join(",")}] under=[${categoryHint.underRepresented.join(",")}]`,
     );
 
-    // 4. Claude-driven sources + neighborhood lookup, all in parallel
-    const [reddit, scraped, neighborhoodInfo] = await Promise.all([
+    // 4. Claude-driven sources + neighborhood lookup, all in parallel.
+    // Meetup is the primary source for pickup-sports (pickleball especially)
+    // that don't appear on TM/EB. Best-effort — Cloudflare-protected, often
+    // returns nothing, but free when it works.
+    const [reddit, scraped, neighborhoodInfo, meetupRaw] = await Promise.all([
       fetchRedditEvents(lat, lng, { categoryHint }),
       scanVenues(lat, lng, radiusMiles * 1609.34, { categoryHint }),
       fetchNeighborhood(lat, lng),
+      ANTHROPIC_API_KEY
+        ? fetchMeetupEvents({ lat, lng, anthropicKey: ANTHROPIC_API_KEY })
+        : Promise.resolve([]),
     ]);
 
+    // Convert Meetup extracts into event rows, applying the same quality +
+    // adult guards as every other source. Source-id is derived from the
+    // title slug since Meetup pages may not give us a stable group id.
+    const meetup: any[] = [];
+    for (const ev of meetupRaw) {
+      if (!ev.title || !ev.start_time) continue;
+      const quality = validateScrapedEvent({
+        title: ev.title,
+        description: ev.description,
+        venueName: ev.venue_name,
+      });
+      if (!quality.ok) {
+        console.log(`[meetup] drop quality: ${quality.reason}`);
+        continue;
+      }
+      const adultSignal = detectAdultSignal({
+        title: ev.title,
+        description: ev.description,
+        venueName: ev.venue_name,
+      });
+      if (adultSignal.hard) {
+        console.log(`[meetup] drop adult: "${ev.title}"`);
+        continue;
+      }
+      const tags = generateTags({
+        category: ev.category || "sports",
+        subcategory: ev.subcategory || "event",
+        title: ev.title,
+        description: ev.description,
+        is_free: ev.is_free,
+        start_time: ev.start_time,
+        ticket_url: ev.source_url,
+      });
+      meetup.push({
+        source: "meetup",
+        source_id: `meetup-${ev.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 60)}-${ev.start_time.slice(0, 10)}`,
+        title: ev.title,
+        description: ev.description,
+        category: ev.category || "sports",
+        subcategory: ev.subcategory || "event",
+        lat, lng, // Meetup events don't always expose venue lat/lng — use user's location as a best-effort
+        address: ev.address_hint || ev.venue_name || "",
+        image_url: null,
+        start_time: ev.start_time,
+        end_time: null,
+        is_recurring: false,
+        recurrence_rule: null,
+        is_free: ev.is_free,
+        price_min: null,
+        price_max: null,
+        ticket_url: ev.source_url,
+        source_url: ev.source_url,
+        tags,
+      });
+    }
+    console.log(`[meetup] ${meetup.length} after filtering`);
+
     // 5. Dedupe and upsert
-    const all = [...tm, ...eb, ...reddit, ...scraped].filter((e) => e.start_time);
+    const all = [...tm, ...eb, ...reddit, ...scraped, ...meetup].filter((e) => e.start_time);
     const seen = new Set<string>();
     const unique = all.filter((e) => {
       const key = `${e.source}:${e.source_id}`;
@@ -1032,6 +1109,7 @@ serve(async (req: Request) => {
         eventbrite: eb.length,
         reddit: reddit.length,
         scraped: scraped.length,
+        meetup: meetup.length,
         upserted: unique.length,
         neighborhood: neighborhoodInfo?.neighborhood || null,
         nearby_neighborhoods: neighborhoodInfo?.nearby || [],
