@@ -8,6 +8,7 @@ import {
 } from "../_shared/category-mapper.ts";
 import { geohashEncode } from "../_shared/geohash.ts";
 import { detectAdultSignal, isAdultVenue } from "../_shared/adult-filter.ts";
+import { validateScrapedEvent, normalizeDayOfWeek } from "../_shared/scraper-quality.ts";
 
 /**
  * Strip HTML/markup from a description and cap its length. Schema.org JSON-LD
@@ -325,28 +326,39 @@ async function fetchEventbrite(
 
 // ─── Reddit local subreddits ─────────────────────────────────
 
-// Simple city → subreddit mapping. Add more over time.
+// Location → subreddit mapping. Mixes city subs (events, food, nightlife) with
+// nearby university subs (college sports, college events). The goal is broader
+// coverage of locally-interesting stuff — especially sports — than what TM and
+// Eventbrite alone surface.
 function subredditsForLocation(lat: number, lng: number): string[] {
-  const subs = [];
-  // Boca / South Florida
+  const subs: string[] = [];
+  // Boca / South Florida — FAU is the dominant local college; UMiami next door
   if (lat > 25.7 && lat < 26.8 && lng > -80.5 && lng < -79.8) {
-    subs.push("BocaRaton", "southflorida", "florida");
+    subs.push("BocaRaton", "southflorida", "florida", "FAU", "Miami", "MiamiHurricanes");
   }
-  // Austin
+  // Austin — Longhorns dominate the local sports scene
   else if (lat > 30.1 && lat < 30.5 && lng > -97.9 && lng < -97.5) {
-    subs.push("Austin", "texas");
+    subs.push("Austin", "texas", "LonghornNation", "UTAustin");
   }
-  // NYC
+  // NYC — Columbia + NYU + St. John's
   else if (lat > 40.5 && lat < 40.9 && lng > -74.1 && lng < -73.7) {
-    subs.push("nyc", "AskNYC");
+    subs.push("nyc", "AskNYC", "Columbia", "nyu");
   }
-  // LA
+  // LA — UCLA + USC
   else if (lat > 33.7 && lat < 34.3 && lng > -118.7 && lng < -118.1) {
-    subs.push("LosAngeles", "AskLosAngeles");
+    subs.push("LosAngeles", "AskLosAngeles", "ucla", "USC");
   }
-  // Chicago
+  // Chicago — Northwestern + UChicago + DePaul
   else if (lat > 41.6 && lat < 42.1 && lng > -87.9 && lng < -87.5) {
-    subs.push("chicago", "AskChicago");
+    subs.push("chicago", "AskChicago", "NUFootball", "Northwestern", "uchicago");
+  }
+  // Orlando — UCF (Knights are huge locally)
+  else if (lat > 28.3 && lat < 28.7 && lng > -81.5 && lng < -81.1) {
+    subs.push("orlando", "ucf", "UCFKnights");
+  }
+  // Tampa — USF Bulls + Bucs
+  else if (lat > 27.8 && lat < 28.1 && lng > -82.6 && lng < -82.3) {
+    subs.push("tampa", "USF", "tampabaybuccaneers");
   }
   return subs;
 }
@@ -397,7 +409,9 @@ async function fetchRedditEvents(
   const events: any[] = [];
   for (const sub of subs.slice(0, 2)) {
     try {
-      const url = `https://www.reddit.com/r/${sub}/search.json?q=event+OR+tonight+OR+this+weekend&restrict_sr=1&sort=new&limit=25&t=week`;
+      // Query broadened to include sports terms — college subreddits surface
+      // game/watch-party announcements more than generic "event" posts.
+      const url = `https://www.reddit.com/r/${sub}/search.json?q=event+OR+tonight+OR+this+weekend+OR+game+OR+tailgate+OR+watch+party+OR+vs.&restrict_sr=1&sort=new&limit=25&t=week`;
       const res = await timeoutFetch(url, {
         headers: { "User-Agent": "NearMe-Bot/1.0" },
       });
@@ -427,14 +441,22 @@ async function fetchRedditEvents(
           messages: [{
             role: "user",
             content: `Extract specific local events from these Reddit posts about r/${sub}. Only include real, upcoming events with clear dates/venues. Skip general discussion posts.
+
+PRIORITIZE these high-value local-flavor event types:
+- College sports games (football, basketball, baseball, hockey, soccer, lacrosse) — extract opponent + date + venue (campus stadium)
+- Tailgates, watch parties, alumni gatherings
+- Local club / intramural sports meetups
+- College events (move-in, homecoming, lectures, concerts on campus)
+- Singles / dating events, mixers, speed dating
+- Bar trivia, karaoke, open mic, themed nights with specific times
 ${varietyHintBlock(opts?.categoryHint)}
 
 Posts:
 ${postTexts}
 
 Return a JSON array. Each event:
-- title (specific)
-- description (1 sentence)
+- title (specific — e.g., "FAU vs UAB Football" NOT "Football Game")
+- description (1-2 sentences describing what attendees do)
 - category (music|sports|food|nightlife|arts|community|fitness|outdoors|movies)
 - subcategory
 - venue_name (if mentioned)
@@ -442,6 +464,8 @@ Return a JSON array. Each event:
 - start_time (ISO 8601 if date/time clear, null if vague)
 - is_free (boolean)
 - source_url (the reddit permalink)
+
+Drop anything where title is generic ("Event", "Game Night", "Weekly Special") or description is empty — those aren't actionable.
 
 Return ONLY the JSON array. If no real events, return [].`,
           }],
@@ -457,9 +481,18 @@ Return ONLY the JSON array. If no real events, return [].`,
       for (const ev of extracted) {
         if (!ev.title || !ev.start_time) continue;
 
-        // Adult-content guard. Reddit posts about local events sometimes
-        // reference strip-club nights or hookah lounges hosting BYOB hookah
-        // events. Drop hard hits; tag soft.
+        // Quality bar — same rules as the venue scraper.
+        const quality = validateScrapedEvent({
+          title: ev.title,
+          description: ev.description,
+          venueName: ev.venue_name,
+        });
+        if (!quality.ok) {
+          console.log(`[reddit:${sub}] drop quality: ${quality.reason}`);
+          continue;
+        }
+
+        // Adult-content guard.
         const adultSignal = detectAdultSignal({
           title: ev.title,
           description: ev.description,
@@ -596,16 +629,25 @@ Return ONLY valid JSON array. If nothing found, return [].`,
     const parsed = JSON.parse(m[0]);
     if (!Array.isArray(parsed)) return [];
 
-    return parsed.map((item: any) => ({
-      title: item.title || "", description: item.description || "",
-      category: item.category || "community", subcategory: item.subcategory || "event",
-      start_time: getNextOccurrence(item.day_of_week, item.time),
-      end_time: null,
-      is_recurring: !!item.day_of_week,
-      recurrence_rule: item.day_of_week ? `every ${item.day_of_week}` : null,
-      is_free: item.is_free || false,
-      price_min: item.price || null, price_max: null,
-    }));
+    return parsed.map((item: any) => {
+      // Normalize day-of-week to canonical full name (sunday..saturday) so
+      // effectiveStart() on the client always parses the rule. "weds",
+      // "WEDNESDAY", "wednesdays" all collapse to "wednesday".
+      const canonicalDay = normalizeDayOfWeek(item.day_of_week);
+      return {
+        title: item.title || "",
+        description: item.description || "",
+        category: item.category || "community",
+        subcategory: item.subcategory || "event",
+        start_time: getNextOccurrence(canonicalDay, item.time),
+        end_time: null,
+        is_recurring: !!canonicalDay,
+        recurrence_rule: canonicalDay ? `every ${canonicalDay}` : null,
+        is_free: item.is_free || false,
+        price_min: item.price || null,
+        price_max: null,
+      };
+    });
   } catch (err) {
     console.error("[claude] error:", err);
     return [];
@@ -702,11 +744,22 @@ async function scanVenues(
             });
           }
 
-          // Adult guard on each extracted event. The venue itself passed the
-          // ingestion-time filter, but Claude/schema.org can still pull adult
-          // event titles (e.g. a "lounge" that hosts cabaret-themed nights).
+          // Scraped events get a quality bar + adult guard before persistence.
+          // Quality bar rejects ghost events (generic "Weekly Event" titles,
+          // missing/short descriptions, titles that are just the venue name).
+          // Adult guard catches strip-club nights that slipped past venue-level
+          // filtering.
           const passing: any[] = [];
           for (const e of events) {
+            const quality = validateScrapedEvent({
+              title: e.title,
+              description: e.description,
+              venueName: venue.name,
+            });
+            if (!quality.ok) {
+              console.log(`[scanner] drop quality: ${quality.reason} @ ${venue.name}`);
+              continue;
+            }
             const adultSignal = detectAdultSignal({
               title: e.title,
               description: e.description,

@@ -5,12 +5,29 @@ type EventLike = {
   recurrence_rule?: string | null;
 };
 
+// Accept full names AND abbreviations — recurrence rules in the wild come in
+// many shapes ("every wednesday", "every Weds", "every WED"). If we can't
+// resolve the day, effectiveStart falls back to the original (stored) time
+// which used to mean a recurring event would stay forever-pinned to its
+// original date.
 const DAY_MAP: Record<string, number> = {
-  sunday: 0, monday: 1, tuesday: 2, wednesday: 3,
-  thursday: 4, friday: 5, saturday: 6,
+  sun: 0, sunday: 0, sundays: 0,
+  mon: 1, monday: 1, mondays: 1,
+  tue: 2, tues: 2, tuesday: 2, tuesdays: 2,
+  wed: 3, weds: 3, wednesday: 3, wednesdays: 3,
+  thu: 4, thur: 4, thurs: 4, thursday: 4, thursdays: 4,
+  fri: 5, friday: 5, fridays: 5,
+  sat: 6, saturday: 6, saturdays: 6,
 };
 
 const DEFAULT_DURATION_MS = 3 * 3600_000;
+
+// Cap for "is this event currently in progress" checks. Events legitimately
+// can run longer (music festivals, all-day fairs), but for the purpose of
+// surfacing in a "happening right now" row, anything more than 6 hours past
+// its start is almost certainly bad data (a recurring Wednesday event still
+// "happening" at 7pm Thursday is the canonical example).
+const MAX_LIVE_HOURS = 6;
 
 function rawDuration(event: EventLike): number {
   if (!event.end_time) return DEFAULT_DURATION_MS;
@@ -129,7 +146,12 @@ export function isHappeningNow(
   const start = effectiveStart(event).getTime();
   const end = effectiveEnd(event).getTime();
   const n = now.getTime();
-  return start <= n && end > n;
+  // Currently in progress, but reject events whose stored start is too far
+  // back (data error: long-since-ended event with a bad end_time still
+  // claiming to be live).
+  if (start > n) return false;
+  if (n - start > MAX_LIVE_HOURS * 3600_000) return false;
+  return end > n;
 }
 
 export function isHappeningNowOrSoon(
@@ -140,6 +162,10 @@ export function isHappeningNowOrSoon(
   const start = effectiveStart(event).getTime();
   const n = now.getTime();
   if (start > n) return start <= n + soonHours * 3600_000;
+  // Already started — same safety check as isHappeningNow: anything more than
+  // MAX_LIVE_HOURS past its start can't be "happening now" regardless of what
+  // end_time says, because that's almost always stale data.
+  if (n - start > MAX_LIVE_HOURS * 3600_000) return false;
   const end = effectiveEnd(event).getTime();
   return end > n;
 }

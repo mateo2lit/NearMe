@@ -78,8 +78,10 @@ const SUBCATEGORY_IMAGES: Record<string, string> = {
   speed_dating:   "https://images.unsplash.com/photo-1522202176988-66273c2fd55f?w=600",
   singles_mixer:  "https://images.unsplash.com/photo-1529333166437-7750a6dd5a70?w=600",
   matchmaking:    "https://images.unsplash.com/photo-1522202176988-66273c2fd55f?w=600",
-  date_night:     "https://images.unsplash.com/photo-1469371670807-013ccf25f16a?w=600", // dating-intimacy
-  couples:        "https://images.unsplash.com/photo-1469371670807-013ccf25f16a?w=600", // dating-intimacy
+  // 2026-05-14: replaced wedding-aisle photo with a restaurant/cocktails shot
+  // that actually reads as "date night out" rather than a ceremony.
+  date_night:     "https://images.unsplash.com/photo-1551024601-bec78aea704b?w=600", // cocktails
+  couples:        "https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=600", // restaurant dinner
   paint_sip:      "https://images.unsplash.com/photo-1460661419201-fd4cecdf8a8b?w=600",
   tasting:        "https://images.unsplash.com/photo-1510812431401-41d2bd2722f3?w=600",
 
@@ -253,13 +255,26 @@ export function getEventImage(
     return SUBCATEGORY_IMAGES[subcategory];
   }
 
-  // 4. Tag match — auto-generated from title+desc; broad signals
+  // 4. Tag match — auto-generated from title+desc; broad signals.
+  // Date-night and couples tags are SUPPRESSED for generic nightlife/
+  // community events because the tag-generator emits them for every
+  // nightlife row regardless of content. Without this guard, an event
+  // called "Weekly Event" at a club gets a cocktails photo by accident
+  // of being categorized nightlife; we want the actual nightlife photo.
   if (tags?.length) {
-    const priority = ["date-night", "couples", "singles"];
+    const isGenericNightlife = category === "nightlife" || category === "community";
+    // Skip date-night/couples as priority if the event is a generic nightlife
+    // pick — the tag came from the category, not from real content.
+    const priority = isGenericNightlife
+      ? ["singles", "live-music", "happy-hour"]
+      : ["date-night", "couples", "singles"];
     for (const p of priority) {
       if (tags.includes(p) && TAG_IMAGES[p]) return TAG_IMAGES[p];
     }
     for (const tag of tags) {
+      // Even in the fall-through loop, never let date-night/couples win
+      // for a generic nightlife/community event.
+      if (isGenericNightlife && (tag === "date-night" || tag === "couples")) continue;
       if (TAG_IMAGES[tag]) return TAG_IMAGES[tag];
     }
   }

@@ -28,6 +28,13 @@ function buildPickedForYou(picks: Event[]): RowBuilder {
 // 12-hour window: at 8pm Friday, captures events through 8am Saturday so
 // late-night and early-Saturday-morning options surface alongside what's
 // already in progress. Sorted by soonest so the urgency reads correctly.
+//
+// Row title is "Live & Up Next" rather than "Happening Now" because the
+// window mixes truly-live events with ones starting in the next few hours.
+// "Happening Now" label was misleading when the row included not-yet-started
+// events (the 2026-05-14 confusion: a recurring Wednesday comedy night that
+// looked "happening now" on Thursday — actually it was a stale-data bug, but
+// the row label also wasn't helping).
 const HAPPENING_SOON_HOURS = 12;
 
 const happeningNow: RowBuilder = (events, now) => {
@@ -36,11 +43,8 @@ const happeningNow: RowBuilder = (events, now) => {
       isHappeningNowOrSoon(e, HAPPENING_SOON_HOURS, now)
     )
   );
-  // Always render this row when ANY event is happening now/soon — the
-  // "what's live right now" affordance is the most time-critical thing
-  // on the feed and must surface even when only 1-2 things qualify.
   return filtered.length >= 1
-    ? { id: "happening-now", title: "Happening Now", icon: "flame", events: filtered }
+    ? { id: "happening-now", title: "Live & Up Next", icon: "flame", events: filtered }
     : null;
 };
 
