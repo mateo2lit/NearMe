@@ -10,6 +10,10 @@ import { geohashEncode } from "../_shared/geohash.ts";
 import { detectAdultSignal, isAdultVenue } from "../_shared/adult-filter.ts";
 import { validateScrapedEvent, normalizeDayOfWeek } from "../_shared/scraper-quality.ts";
 import { fetchMeetupEvents } from "../_shared/meetup-fetcher.ts";
+import { fetchCollegeSports } from "../_shared/espn-sports.ts";
+import { fetchPickleheadsEvents } from "../_shared/pickleheads.ts";
+import { fetchUniversityEvents } from "../_shared/university-events.ts";
+import { fetchHighSchoolSports } from "../_shared/highschool-sports.ts";
 
 /**
  * Strip HTML/markup from a description and cap its length. Schema.org JSON-LD
@@ -50,6 +54,9 @@ const TM_API_KEY = Deno.env.get("TICKETMASTER_API_KEY");
 const GOOGLE_API_KEY = Deno.env.get("GOOGLE_PLACES_API_KEY");
 const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
 const EVENTBRITE_TOKEN = Deno.env.get("EVENTBRITE_TOKEN");
+// Optional: Meetup GraphQL bearer token. When set, the Meetup fetcher
+// uses the official API instead of HTML scraping. See meetup-fetcher.ts.
+const MEETUP_API_TOKEN = Deno.env.get("MEETUP_API_TOKEN");
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
@@ -998,16 +1005,58 @@ serve(async (req: Request) => {
       `[variety] well-covered=[${categoryHint.wellCovered.join(",")}] under=[${categoryHint.underRepresented.join(",")}]`,
     );
 
-    // 4. Claude-driven sources + neighborhood lookup, all in parallel.
-    // Meetup is the primary source for pickup-sports (pickleball especially)
-    // that don't appear on TM/EB. Best-effort — Cloudflare-protected, often
-    // returns nothing, but free when it works.
-    const [reddit, scraped, neighborhoodInfo, meetupRaw] = await Promise.all([
+    // 4. Claude-driven + API sources + neighborhood lookup, all in parallel.
+    // Wide net: Meetup for pickup sports, ESPN for college sports, Pickleheads
+    // for pickleball court schedules, university events for college campuses,
+    // HS sports via Places-discovered schools. Each is best-effort — any one
+    // returning [] just means that source had no data for this location.
+    const radiusMeters = radiusMiles * 1609.34;
+    const [
+      reddit,
+      scraped,
+      neighborhoodInfo,
+      meetupRaw,
+      espnRaw,
+      pickleheadsRaw,
+      uniRaw,
+      hsRaw,
+    ] = await Promise.all([
       fetchRedditEvents(lat, lng, { categoryHint }),
-      scanVenues(lat, lng, radiusMiles * 1609.34, { categoryHint }),
+      scanVenues(lat, lng, radiusMeters, { categoryHint }),
       fetchNeighborhood(lat, lng),
       ANTHROPIC_API_KEY
-        ? fetchMeetupEvents({ lat, lng, anthropicKey: ANTHROPIC_API_KEY })
+        ? fetchMeetupEvents({
+            lat, lng,
+            anthropicKey: ANTHROPIC_API_KEY,
+            meetupToken: MEETUP_API_TOKEN || undefined,
+          })
+        : Promise.resolve([]),
+      fetchCollegeSports({
+        lat, lng,
+        googleApiKey: GOOGLE_API_KEY || undefined,
+        daysForward: 14,
+      }),
+      GOOGLE_API_KEY && ANTHROPIC_API_KEY
+        ? fetchPickleheadsEvents({
+            lat, lng,
+            googleApiKey: GOOGLE_API_KEY,
+            anthropicKey: ANTHROPIC_API_KEY,
+          })
+        : Promise.resolve([]),
+      GOOGLE_API_KEY
+        ? fetchUniversityEvents({
+            lat, lng,
+            radiusMeters,
+            googleApiKey: GOOGLE_API_KEY,
+          })
+        : Promise.resolve([]),
+      GOOGLE_API_KEY && ANTHROPIC_API_KEY
+        ? fetchHighSchoolSports({
+            lat, lng,
+            radiusMeters,
+            googleApiKey: GOOGLE_API_KEY,
+            anthropicKey: ANTHROPIC_API_KEY,
+          })
         : Promise.resolve([]),
     ]);
 
@@ -1068,8 +1117,199 @@ serve(async (req: Request) => {
     }
     console.log(`[meetup] ${meetup.length} after filtering`);
 
+    // ESPN college sports — already shape-clean since the source has structured
+    // venue + competitor info. Still apply adult guard (irrelevant for sports
+    // but cheap safety) and let generateTags add the `active` + sport-specific
+    // tags so the hero scorer picks these up for users with "get-active".
+    const espn: any[] = [];
+    for (const ev of espnRaw) {
+      if (!ev.title || !ev.start_time) continue;
+      const adultSignal = detectAdultSignal({
+        title: ev.title,
+        description: ev.description,
+        venueName: ev.venue_name,
+      });
+      if (adultSignal.hard) continue;
+      const tags = generateTags({
+        category: "sports",
+        subcategory: ev.subcategory,
+        title: ev.title,
+        description: ev.description,
+        is_free: ev.is_free,
+        start_time: ev.start_time,
+        ticket_url: ev.source_url,
+      });
+      espn.push({
+        source: "espn",
+        source_id: ev.source_id,
+        title: ev.title,
+        description: ev.description,
+        category: "sports",
+        subcategory: ev.subcategory,
+        lat, lng, // venue lat/lng absent from ESPN — use user's coords so geofence matches
+        address: `${ev.venue_name}, ${ev.city}, ${ev.state}`,
+        image_url: null,
+        start_time: ev.start_time,
+        end_time: null,
+        is_recurring: false,
+        recurrence_rule: null,
+        is_free: ev.is_free,
+        price_min: null, price_max: null,
+        ticket_url: ev.source_url,
+        source_url: ev.source_url,
+        tags,
+      });
+    }
+    console.log(`[espn] ${espn.length} after filtering`);
+
+    // Pickleheads — pickleball court schedules.
+    const pickleheads: any[] = [];
+    for (const ev of pickleheadsRaw) {
+      if (!ev.title || !ev.start_time) continue;
+      const quality = validateScrapedEvent({
+        title: ev.title,
+        description: ev.description,
+        venueName: ev.venue_name,
+      });
+      if (!quality.ok) {
+        console.log(`[pickleheads] drop quality: ${quality.reason}`);
+        continue;
+      }
+      const tags = generateTags({
+        category: "sports",
+        subcategory: "pickleball",
+        title: ev.title,
+        description: ev.description,
+        is_free: ev.is_free,
+        start_time: ev.start_time,
+        ticket_url: ev.source_url,
+      });
+      pickleheads.push({
+        source: "pickleheads",
+        source_id: ev.source_id,
+        title: ev.title,
+        description: ev.description,
+        category: "sports",
+        subcategory: "pickleball",
+        lat, lng,
+        address: ev.address_hint || ev.venue_name || "",
+        image_url: null,
+        start_time: ev.start_time,
+        end_time: null,
+        is_recurring: false,
+        recurrence_rule: null,
+        is_free: ev.is_free,
+        price_min: null, price_max: null,
+        ticket_url: ev.source_url,
+        source_url: ev.source_url,
+        tags,
+      });
+    }
+    console.log(`[pickleheads] ${pickleheads.length} after filtering`);
+
+    // University events — Localist/iCal feeds. Already structured.
+    const university: any[] = [];
+    for (const ev of uniRaw) {
+      if (!ev.title || !ev.start_time) continue;
+      const quality = validateScrapedEvent({
+        title: ev.title,
+        description: ev.description,
+        venueName: ev.venue_name,
+      });
+      if (!quality.ok) {
+        console.log(`[uni] drop quality: ${quality.reason}`);
+        continue;
+      }
+      const adultSignal = detectAdultSignal({
+        title: ev.title,
+        description: ev.description,
+        venueName: ev.venue_name,
+      });
+      if (adultSignal.hard) continue;
+      const tags = generateTags({
+        category: ev.category,
+        subcategory: ev.subcategory,
+        title: ev.title,
+        description: ev.description,
+        is_free: ev.is_free,
+        start_time: ev.start_time,
+        ticket_url: ev.source_url,
+      });
+      university.push({
+        source: "university",
+        source_id: ev.source_id,
+        title: ev.title,
+        description: ev.description,
+        category: ev.category,
+        subcategory: ev.subcategory,
+        lat: ev.lat ?? lat,
+        lng: ev.lng ?? lng,
+        address: ev.address_hint || ev.venue_name || "",
+        image_url: null,
+        start_time: ev.start_time,
+        end_time: ev.end_time,
+        is_recurring: false,
+        recurrence_rule: null,
+        is_free: ev.is_free,
+        price_min: null, price_max: null,
+        ticket_url: ev.source_url,
+        source_url: ev.source_url,
+        tags,
+      });
+    }
+    console.log(`[uni] ${university.length} after filtering`);
+
+    // HS sports — Places-discovered schools, Claude-extracted schedules.
+    const hs: any[] = [];
+    for (const ev of hsRaw) {
+      if (!ev.title || !ev.start_time) continue;
+      const quality = validateScrapedEvent({
+        title: ev.title,
+        description: ev.description,
+        venueName: ev.venue_name,
+      });
+      if (!quality.ok) {
+        console.log(`[hs] drop quality: ${quality.reason}`);
+        continue;
+      }
+      const tags = generateTags({
+        category: "sports",
+        subcategory: ev.subcategory,
+        title: ev.title,
+        description: ev.description,
+        is_free: ev.is_free,
+        start_time: ev.start_time,
+        ticket_url: ev.source_url,
+      });
+      hs.push({
+        source: "highschool",
+        source_id: ev.source_id,
+        title: ev.title,
+        description: ev.description,
+        category: "sports",
+        subcategory: ev.subcategory,
+        lat: ev.lat ?? lat,
+        lng: ev.lng ?? lng,
+        address: ev.address_hint || ev.venue_name || "",
+        image_url: null,
+        start_time: ev.start_time,
+        end_time: null,
+        is_recurring: false,
+        recurrence_rule: null,
+        is_free: ev.is_free,
+        price_min: null, price_max: null,
+        ticket_url: ev.source_url,
+        source_url: ev.source_url,
+        tags,
+      });
+    }
+    console.log(`[hs] ${hs.length} after filtering`);
+
     // 5. Dedupe and upsert
-    const all = [...tm, ...eb, ...reddit, ...scraped, ...meetup].filter((e) => e.start_time);
+    const all = [
+      ...tm, ...eb, ...reddit, ...scraped, ...meetup,
+      ...espn, ...pickleheads, ...university, ...hs,
+    ].filter((e) => e.start_time);
     const seen = new Set<string>();
     const unique = all.filter((e) => {
       const key = `${e.source}:${e.source_id}`;
@@ -1110,6 +1350,10 @@ serve(async (req: Request) => {
         reddit: reddit.length,
         scraped: scraped.length,
         meetup: meetup.length,
+        espn: espn.length,
+        pickleheads: pickleheads.length,
+        university: university.length,
+        highschool: hs.length,
         upserted: unique.length,
         neighborhood: neighborhoodInfo?.neighborhood || null,
         nearby_neighborhoods: neighborhoodInfo?.nearby || [],

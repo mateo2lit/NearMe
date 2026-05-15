@@ -35,6 +35,18 @@ interface MeetupOpts {
   lng: number;
   cityName?: string;
   anthropicKey: string;
+  /**
+   * Optional Meetup GraphQL API bearer token. When set, the fetcher uses
+   * the official API instead of HTML scraping — bypasses Cloudflare and
+   * returns structured data. Without it, we fall back to the scrape path
+   * (which is Cloudflare-rate-limited).
+   *
+   * To generate: register an OAuth client at meetup.com/api/oauth/list,
+   * then exchange credentials for a token at
+   * https://secure.meetup.com/oauth2/access. Tokens expire hourly so for
+   * a long-lived deploy use a refresh-token loop.
+   */
+  meetupToken?: string;
   timeoutMs?: number;
 }
 
@@ -169,10 +181,96 @@ Return ONLY a JSON array. If nothing real, return [].`,
 }
 
 /**
+ * Hit Meetup's GraphQL API directly when a bearer token is configured.
+ * Returns structured event data without Cloudflare scraping.
+ */
+async function fetchMeetupViaAPI(opts: MeetupOpts): Promise<MeetupExtract[]> {
+  if (!opts.meetupToken) return [];
+  const out: MeetupExtract[] = [];
+  for (const bucket of MEETUP_KEYWORD_BUCKETS) {
+    const query = `
+      query SearchEvents($query: String!, $lat: Float!, $lon: Float!) {
+        keywordSearch(
+          filter: { query: $query, lat: $lat, lon: $lon, source: EVENTS, radius: 10 }
+          input: { first: 20 }
+        ) {
+          edges {
+            node {
+              result {
+                ... on Event {
+                  id
+                  title
+                  description
+                  dateTime
+                  eventUrl
+                  isAttendingFree: feeSettings { accepts amount }
+                  venue { name address city state lat lng }
+                  group { name }
+                }
+              }
+            }
+          }
+        }
+      }
+    `;
+    try {
+      const res = await fetch("https://api.meetup.com/gql", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${opts.meetupToken}`,
+        },
+        body: JSON.stringify({
+          query,
+          variables: { query: bucket.q, lat: opts.lat, lon: opts.lng },
+        }),
+      });
+      if (!res.ok) {
+        console.log(`[meetup-api:${bucket.label}] http ${res.status}`);
+        continue;
+      }
+      const body = await res.json();
+      const edges = body?.data?.keywordSearch?.edges || [];
+      let count = 0;
+      for (const e of edges) {
+        const n = e?.node?.result;
+        if (!n || !n.id || !n.dateTime) continue;
+        out.push({
+          title: n.title || "",
+          description: n.description || `${bucket.q} via Meetup`,
+          category: "sports",
+          subcategory: bucket.label === "running" ? "running"
+            : bucket.label === "hiking" ? "hiking"
+            : bucket.label === "yoga" ? "yoga"
+            : bucket.label === "singles" ? "singles_mixer"
+            : bucket.label,
+          venue_name: n.venue?.name,
+          address_hint: [n.venue?.address, n.venue?.city, n.venue?.state].filter(Boolean).join(", "),
+          start_time: n.dateTime,
+          is_free: !n.isAttendingFree?.accepts || (n.isAttendingFree?.amount ?? 0) === 0,
+          source_url: n.eventUrl || "https://www.meetup.com",
+        });
+        count++;
+      }
+      console.log(`[meetup-api:${bucket.label}] ${count} events`);
+    } catch (err) {
+      console.error(`[meetup-api:${bucket.label}] error:`, err);
+    }
+  }
+  return out;
+}
+
+/**
  * Fetch + extract Meetup events across all sports/social keyword buckets.
- * Caller integrates the returned shape into the normal event-row pipeline.
+ * Prefers the official API when a token is configured; otherwise falls
+ * back to HTML scraping.
  */
 export async function fetchMeetupEvents(opts: MeetupOpts): Promise<MeetupExtract[]> {
+  if (opts.meetupToken) {
+    const apiResults = await fetchMeetupViaAPI(opts);
+    if (apiResults.length > 0) return apiResults;
+    console.log("[meetup] API returned 0 events — falling back to scrape");
+  }
   const timeoutMs = opts.timeoutMs ?? 8000;
   const all: MeetupExtract[] = [];
 
