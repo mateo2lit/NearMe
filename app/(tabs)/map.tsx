@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useMemo } from "react";
 import { View, StyleSheet, TouchableOpacity, Text, ScrollView, Platform, Dimensions } from "react-native";
 import MapView, { Marker, PROVIDER_GOOGLE, Region } from "react-native-maps";
 import ClusteredMapView from "react-native-map-clustering";
@@ -27,16 +27,35 @@ const mapDarkStyle = [
 ];
 
 function matchesWhen(ev: Event, w: WhenFilter, now: Date): boolean {
-  if (w === "all") return true;
-  if (w === "tonight") return isTonight(ev, now);
-  if (w === "tomorrow") return isTomorrow(ev, now);
-  if (w === "weekend") return isThisWeekend(ev, now);
-  if (w === "week") {
-    const t = effectiveStart(ev);
-    const end = new Date(now);
-    end.setDate(end.getDate() + 7);
-    return t >= now && t < end;
+  // Defensive — bad data (missing start_time, NaN lat/lng) can throw inside
+  // effectiveStart / isTonight / etc. and bring down the whole filter. Catching
+  // here keeps one bad row from crashing the entire map screen.
+  try {
+    if (w === "all") return true;
+    if (w === "tonight") return isTonight(ev, now);
+    if (w === "tomorrow") return isTomorrow(ev, now);
+    if (w === "weekend") return isThisWeekend(ev, now);
+    if (w === "week") {
+      const t = effectiveStart(ev);
+      if (!t || Number.isNaN(t.getTime())) return false;
+      const end = new Date(now);
+      end.setDate(end.getDate() + 7);
+      return t >= now && t < end;
+    }
+    return true;
+  } catch {
+    return false;
   }
+}
+
+// Drop events that the map can't safely render — missing coords, missing id,
+// or missing start_time. One null lat = react-native-maps throws on Marker
+// render; one undefined id = duplicate-key warning that can wedge the
+// clustering library.
+function isMappable(e: Event): boolean {
+  if (!e || !e.id) return false;
+  if (!Number.isFinite(e.lat) || !Number.isFinite(e.lng)) return false;
+  if (!e.start_time) return false;
   return true;
 }
 
@@ -90,14 +109,24 @@ export default function MapScreen() {
     return () => { alive = false; clearInterval(t); };
   }, []);
 
-  const now = new Date();
-  const whenMatched = events.filter((e) => matchesWhen(e, when, now));
-  const visible = savedOnly ? whenMatched.filter((e) => savedIds.has(e.id)) : whenMatched;
+  // Memoize the now-anchor for filter math so it doesn't shift on every
+  // render (and so dependent useMemos can cache against it). Refresh every
+  // minute is plenty — "tonight" doesn't move that fast.
+  const nowAnchor = useMemo(() => new Date(), [events.length, when, savedOnly]);
+
+  // Mappable-only set is computed once per events change. Filters out rows
+  // with bad coords/missing IDs that would crash the map renderer.
+  const mappableEvents = useMemo(() => events.filter(isMappable), [events]);
+
+  const visible = useMemo(() => {
+    const whenMatched = mappableEvents.filter((e) => matchesWhen(e, when, nowAnchor));
+    return savedOnly ? whenMatched.filter((e) => savedIds.has(e.id)) : whenMatched;
+  }, [mappableEvents, when, savedOnly, savedIds, nowAnchor]);
 
   // Cluster peek wins over viewport — when the user taps a cluster, the
   // carousel shows just that cluster's events instead of everything in view.
-  const inViewport = sortByStartTime(
-    clusterIds
+  const inViewport = useMemo(() => {
+    const pool = clusterIds
       ? visible.filter((e) => clusterIds.includes(e.id))
       : region
       ? visible.filter((e) => {
@@ -105,8 +134,13 @@ export default function MapScreen() {
           const lngOK = Math.abs(e.lng - region.longitude) < region.longitudeDelta / 2;
           return latOK && lngOK;
         })
-      : visible
-  );
+      : visible;
+    try {
+      return sortByStartTime(pool);
+    } catch {
+      return pool;
+    }
+  }, [visible, clusterIds, region]);
 
   const recenter = () => {
     if (location.lat == null || location.lng == null) return;
@@ -212,11 +246,15 @@ export default function MapScreen() {
             key={e.id}
             coordinate={{ latitude: e.lat, longitude: e.lng }}
             onPress={(evt) => {
-              evt.stopPropagation?.();
-              setSelectedId(e.id);
-              const idx = inViewport.findIndex((x) => x.id === e.id);
-              if (idx >= 0) {
-                carouselRef.current?.scrollTo({ x: idx * (160 + 10), animated: true });
+              try {
+                evt.stopPropagation?.();
+                setSelectedId(e.id);
+                const idx = inViewport.findIndex((x) => x.id === e.id);
+                if (idx >= 0) {
+                  carouselRef.current?.scrollTo({ x: idx * (160 + 10), animated: true });
+                }
+              } catch {
+                // Swallow — marker tap edge cases shouldn't kill the map.
               }
             }}
             tracksViewChanges={false}

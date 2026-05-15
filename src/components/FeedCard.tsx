@@ -1,9 +1,10 @@
-import { useState } from "react";
-import { View, Text, Image, StyleSheet, Dimensions, TouchableOpacity } from "react-native";
+import { useState, useEffect, useRef } from "react";
+import { View, Text, Image, StyleSheet, Dimensions, TouchableOpacity, Animated } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { Event } from "../types";
 import { formatDistance, effectiveStart, getEventTimeLabel } from "../services/events";
+import { isHappeningNow } from "../lib/time-windows";
 import { CATEGORY_MAP } from "../constants/categories";
 import { TAG_MAP } from "../constants/tags";
 import { getEventImage } from "../constants/images";
@@ -126,6 +127,7 @@ export default function FeedCard({ event, isSaved, onPress, onSave, userInterest
           />
         </TouchableOpacity>
         {event.source === "claude" && <FoundForYouChip />}
+        {isHappeningNow(event) && <LiveBadge />}
         <View style={[styles.timeChip, { backgroundColor: timeLabel.color + "E6" }]}>
           <Text style={styles.timeChipText} numberOfLines={1}>
             {timeLabel.label}
@@ -191,6 +193,56 @@ export default function FeedCard({ event, isSaved, onPress, onSave, userInterest
     </TouchableOpacity>
   );
 }
+
+// Pulsing red "LIVE" badge for the top-left of the card image. Only renders
+// for events that are truly currently in progress (per isHappeningNow which
+// caps at MAX_LIVE_HOURS past start to defend against stale data).
+function LiveBadge() {
+  const pulse = useRef(new Animated.Value(0.55)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1, duration: 800, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0.55, duration: 800, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulse]);
+  return (
+    <View style={liveStyles.wrap}>
+      <Animated.View style={[liveStyles.dot, { opacity: pulse }]} />
+      <Text style={liveStyles.text}>LIVE</Text>
+    </View>
+  );
+}
+
+const liveStyles = StyleSheet.create({
+  wrap: {
+    position: "absolute",
+    top: 10,
+    left: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    backgroundColor: "rgba(220,38,38,0.92)",
+    borderRadius: RADIUS.pill,
+  },
+  dot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#fff",
+  },
+  text: {
+    color: "#fff",
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 1.2,
+  },
+});
 
 const styles = StyleSheet.create({
   card: {
