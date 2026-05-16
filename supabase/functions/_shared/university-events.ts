@@ -32,6 +32,7 @@ interface UniEventExtract {
   start_time: string;
   end_time: string | null;
   is_free: boolean;
+  image_url?: string | null;
   source_url: string;
   university_name: string;
 }
@@ -129,6 +130,46 @@ function originOf(url: string): string | null {
   }
 }
 
+function cleanImageUrl(raw: unknown, baseUrl: string): string | null {
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  try {
+    const url = new URL(raw.trim(), baseUrl);
+    if (!/^https?:$/.test(url.protocol)) return null;
+    const lc = url.toString().toLowerCase();
+    if (
+      lc.endsWith(".svg") ||
+      lc.includes("favicon") ||
+      lc.includes("apple-touch-icon") ||
+      lc.includes("placeholder") ||
+      lc.includes("spacer") ||
+      lc.includes("/logo") ||
+      lc.includes("logo.")
+    ) {
+      return null;
+    }
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function localistImageUrl(e: Record<string, any>, baseUrl: string): string | null {
+  const candidates = [
+    e.photo_url,
+    e.image_url,
+    e.thumbnail_url,
+    e.hero_image_url,
+    e.photo?.url,
+    e.image?.url,
+    e.featured_image?.url,
+  ];
+  for (const candidate of candidates) {
+    const url = cleanImageUrl(candidate, baseUrl);
+    if (url) return url;
+  }
+  return null;
+}
+
 // ─── Localist ────────────────────────────────────────────────
 //
 // Localist's public API: GET <host>/api/2/events.json?days=30&pp=25
@@ -181,6 +222,7 @@ async function tryLocalist(uni: PlacesUniversity): Promise<UniEventExtract[]> {
         start_time: startIso,
         end_time: e.event_instances?.[0]?.event_instance?.end || null,
         is_free: e.ticket_cost ? false : true,
+        image_url: localistImageUrl(e, url),
         source_url: e.localist_url || e.url || uni.website,
         university_name: uni.name,
       });

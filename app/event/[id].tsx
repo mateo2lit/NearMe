@@ -172,7 +172,15 @@ export default function EventDetail() {
         <View style={styles.heroWrap}>
           <Image
             source={{
-              uri: getEventImage(null, event.category, event.subcategory, event.title, event.description, event.tags),
+              uri: getEventImage(
+                null,
+                event.category,
+                event.subcategory,
+                event.title,
+                event.description,
+                event.tags,
+                `${event.venue?.name || ""} ${event.address || ""}`,
+              ),
             }}
             style={styles.heroImage}
           />

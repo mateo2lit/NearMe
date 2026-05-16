@@ -272,7 +272,7 @@ function MoodRail({
   );
 }
 
-function NowActionPanel({
+function NowRail({
   events,
   activeMood,
   cityName,
@@ -288,25 +288,24 @@ function NowActionPanel({
   scouting: boolean;
 }) {
   const primary = events[0];
-  const secondary = events.slice(1, 3);
   const mood = MOOD_BY_KEY[activeMood];
   const locationLabel = cityName ? `near ${cityName}` : "near you";
-  const title = activeMood === "any" ? "Best move right now" : `${mood.label} right now`;
+  const title = activeMood === "any" ? "Happening now & soon" : `${mood.label} happening soon`;
 
   return (
-    <View style={styles.nowPanel}>
-      <View style={styles.nowHeader}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.nowKicker}>OPEN APP. FIND A PLAN.</Text>
-          <Text style={styles.nowTitle}>{title}</Text>
-          <Text style={styles.nowSub}>
-            {primary
-              ? `${events.length} live or soon ${locationLabel}`
-              : `No live picks yet, but the scout can look deeper ${locationLabel}`}
+    <View style={styles.nowRail}>
+      <View style={styles.nowRailHeader}>
+        <View style={styles.nowRailTitleWrap}>
+          <View style={styles.nowRailTitleRow}>
+            <View style={styles.nowLiveDot} />
+            <Text style={styles.nowRailTitle}>{title}</Text>
+          </View>
+          <Text style={styles.nowRailSub}>
+            {primary ? `${events.length} good option${events.length === 1 ? "" : "s"} ${locationLabel}` : `Scout can check deeper ${locationLabel}`}
           </Text>
         </View>
         <TouchableOpacity
-          style={[styles.scoutButton, scouting && styles.scoutButtonActive]}
+          style={[styles.scoutMiniButton, scouting && styles.scoutButtonActive]}
           onPress={onScout}
           activeOpacity={0.75}
           disabled={scouting}
@@ -317,64 +316,49 @@ function NowActionPanel({
             size={16}
             color={scouting ? COLORS.success : COLORS.accentLight}
           />
-          <Text style={styles.scoutText}>{scouting ? "Scouting" : "Scout"}</Text>
+          <Text style={styles.scoutMiniText}>{scouting ? "Scouting" : "Scout"}</Text>
         </TouchableOpacity>
       </View>
 
-      {primary ? (
-        <TouchableOpacity
-          style={styles.nowPrimary}
-          onPress={() => onPressEvent(primary)}
-          activeOpacity={0.9}
-          accessibilityLabel={`Open ${primary.title}`}
+      {events.length > 0 ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.nowCardScroll}
         >
-          <View style={styles.nowLivePill}>
-            <View style={styles.nowLiveDot} />
-            <Text style={styles.nowLiveText}>{urgentLabel(primary, new Date())}</Text>
-          </View>
-          <Text style={styles.nowEventTitle} numberOfLines={2}>
-            {primary.title}
-          </Text>
-          <View style={styles.nowMetaRow}>
-            <Ionicons name="location" size={13} color={COLORS.accentLight} />
-            <Text style={styles.nowMeta} numberOfLines={1}>
-              {(primary.venue?.name || primary.address?.split(",")[0] || "Nearby")}
-              {primary.distance != null ? ` · ${formatDistance(primary.distance)}` : ""}
-            </Text>
-          </View>
-          <View style={styles.nowActionRow}>
-            <Text style={styles.nowReason} numberOfLines={1}>
-              {(primary.tags || []).slice(0, 2).join(" · ") || primary.category}
-            </Text>
-            <Ionicons name="chevron-forward" size={18} color={COLORS.text} />
-          </View>
-        </TouchableOpacity>
-      ) : (
-        <View style={styles.nowEmpty}>
-          <Ionicons name="radio-outline" size={18} color={COLORS.muted} />
-          <Text style={styles.nowEmptyText}>
-            Pull to refresh or tap Scout to check for fresh things happening tonight.
-          </Text>
-        </View>
-      )}
-
-      {secondary.length > 0 && (
-        <View style={styles.nowSecondaryList}>
-          {secondary.map((event) => (
+          {events.map((event) => (
             <TouchableOpacity
               key={event.id}
-              style={styles.nowSecondary}
+              style={styles.nowCard}
               onPress={() => onPressEvent(event)}
-              activeOpacity={0.82}
+              activeOpacity={0.86}
               accessibilityLabel={`Open ${event.title}`}
             >
-              <Text style={styles.nowSecondaryTime}>{urgentLabel(event, new Date())}</Text>
-              <Text style={styles.nowSecondaryTitle} numberOfLines={1}>
+              <Text style={styles.nowCardTime}>{urgentLabel(event, new Date())}</Text>
+              <Text style={styles.nowCardTitle} numberOfLines={2}>
                 {event.title}
+              </Text>
+              <Text style={styles.nowCardMeta} numberOfLines={1}>
+                {(event.venue?.name || event.address?.split(",")[0] || "Nearby")}
+                {event.distance != null ? ` · ${formatDistance(event.distance)}` : ""}
               </Text>
             </TouchableOpacity>
           ))}
-        </View>
+        </ScrollView>
+      ) : (
+        <TouchableOpacity
+          style={styles.nowInlineEmpty}
+          onPress={onScout}
+          activeOpacity={0.78}
+          disabled={scouting}
+          accessibilityLabel="Scout for events happening tonight"
+        >
+          <Ionicons name="radio-outline" size={17} color={COLORS.muted} />
+          <Text style={styles.nowInlineEmptyText}>
+            No right-now picks loaded yet. Scout can look deeper.
+          </Text>
+          <Ionicons name="chevron-forward" size={17} color={COLORS.muted} />
+        </TouchableOpacity>
       )}
     </View>
   );
@@ -809,7 +793,8 @@ export default function DiscoverScreen() {
           ListHeaderComponent={
             flatFeed.length > 0 || rows.length > 0 ? (
               <View style={{ paddingTop: 4 }}>
-                <NowActionPanel
+                <MoodRail active={activeMood} onChange={setActiveMood} />
+                <NowRail
                   events={nowQueue}
                   activeMood={activeMood}
                   cityName={location.cityName}
@@ -817,7 +802,6 @@ export default function DiscoverScreen() {
                   onScout={onRefresh}
                   scouting={claude.state.state === "phase1" || claude.state.state === "phase2"}
                 />
-                <MoodRail active={activeMood} onChange={setActiveMood} />
                 {rows.map((r) => (
                   <DiscoveryRow
                     key={r.id}
@@ -938,44 +922,39 @@ const styles = StyleSheet.create({
     borderColor: COLORS.accent + "55",
   },
   feed: { paddingHorizontal: 16, paddingBottom: 24, gap: 16 },
-  nowPanel: {
-    backgroundColor: COLORS.card,
-    borderRadius: RADIUS.lg,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    padding: 16,
-    marginBottom: 16,
-    overflow: "hidden",
+  nowRail: {
+    marginBottom: 18,
   },
-  nowHeader: {
+  nowRailHeader: {
     flexDirection: "row",
-    alignItems: "flex-start",
+    alignItems: "center",
     justifyContent: "space-between",
-    gap: 12,
-    marginBottom: 14,
+    gap: 10,
+    marginBottom: 10,
   },
-  nowKicker: {
-    color: COLORS.accentLight,
-    fontSize: 10,
-    fontWeight: "900",
-    letterSpacing: 1.1,
-    marginBottom: 4,
+  nowRailTitleWrap: {
+    flex: 1,
   },
-  nowTitle: {
+  nowRailTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+  },
+  nowRailTitle: {
     color: COLORS.text,
-    fontSize: 24,
-    lineHeight: 29,
+    fontSize: 16,
+    lineHeight: 21,
     fontWeight: "900",
     letterSpacing: 0,
   },
-  nowSub: {
+  nowRailSub: {
     color: COLORS.muted,
-    fontSize: 13,
-    lineHeight: 18,
-    marginTop: 4,
+    fontSize: 12,
+    lineHeight: 16,
+    marginTop: 2,
     fontWeight: "600",
   },
-  scoutButton: {
+  scoutMiniButton: {
     minHeight: 44,
     flexDirection: "row",
     alignItems: "center",
@@ -991,30 +970,10 @@ const styles = StyleSheet.create({
     borderColor: COLORS.success + "88",
     backgroundColor: COLORS.success + "18",
   },
-  scoutText: {
+  scoutMiniText: {
     color: COLORS.text,
     fontSize: 12,
     fontWeight: "800",
-  },
-  nowPrimary: {
-    backgroundColor: COLORS.cardAlt,
-    borderRadius: RADIUS.md,
-    borderWidth: 1,
-    borderColor: COLORS.accent + "44",
-    padding: 14,
-    gap: 8,
-  },
-  nowLivePill: {
-    alignSelf: "flex-start",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 9,
-    paddingVertical: 5,
-    borderRadius: RADIUS.pill,
-    backgroundColor: COLORS.hot + "20",
-    borderWidth: 1,
-    borderColor: COLORS.hot + "55",
   },
   nowLiveDot: {
     width: 7,
@@ -1022,89 +981,59 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     backgroundColor: COLORS.hot,
   },
-  nowLiveText: {
-    color: COLORS.text,
-    fontSize: 11,
-    fontWeight: "900",
-    letterSpacing: 0.5,
-    textTransform: "uppercase",
-  },
-  nowEventTitle: {
-    color: COLORS.text,
-    fontSize: 19,
-    lineHeight: 24,
-    fontWeight: "900",
-    letterSpacing: 0,
-  },
-  nowMetaRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-  },
-  nowMeta: {
-    flex: 1,
-    color: COLORS.muted,
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  nowActionRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
+  nowCardScroll: {
     gap: 10,
-    paddingTop: 2,
+    paddingRight: 4,
   },
-  nowReason: {
-    flex: 1,
-    color: COLORS.accentLight,
-    fontSize: 12,
-    fontWeight: "800",
-    textTransform: "capitalize",
-  },
-  nowEmpty: {
-    minHeight: 74,
+  nowCard: {
+    width: 216,
+    minHeight: 104,
     borderRadius: RADIUS.md,
+    backgroundColor: COLORS.card,
     borderWidth: 1,
     borderColor: COLORS.border,
-    backgroundColor: COLORS.cardAlt,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingHorizontal: 14,
+    padding: 12,
+    justifyContent: "space-between",
   },
-  nowEmptyText: {
-    flex: 1,
-    color: COLORS.muted,
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: "600",
-  },
-  nowSecondaryList: {
-    gap: 8,
-    marginTop: 10,
-  },
-  nowSecondary: {
-    minHeight: 48,
-    borderRadius: RADIUS.sm,
-    backgroundColor: "rgba(255,255,255,0.035)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.06)",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    justifyContent: "center",
-  },
-  nowSecondaryTime: {
+  nowCardTime: {
+    alignSelf: "flex-start",
     color: COLORS.warm,
     fontSize: 10,
     fontWeight: "900",
-    letterSpacing: 0.7,
+    letterSpacing: 0.6,
     textTransform: "uppercase",
-    marginBottom: 2,
   },
-  nowSecondaryTitle: {
+  nowCardTitle: {
     color: COLORS.text,
-    fontSize: 13,
-    fontWeight: "800",
+    fontSize: 15,
+    lineHeight: 19,
+    fontWeight: "900",
+    marginTop: 5,
+  },
+  nowCardMeta: {
+    color: COLORS.muted,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: "700",
+    marginTop: 7,
+  },
+  nowInlineEmpty: {
+    minHeight: 48,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.card,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 12,
+  },
+  nowInlineEmptyText: {
+    flex: 1,
+    color: COLORS.muted,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: "700",
   },
   moodWrap: {
     marginBottom: 18,

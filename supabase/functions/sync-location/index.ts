@@ -181,6 +181,112 @@ function findDedicatedEventPage(homepageUrl: string, html: string): string | nul
   return best?.url || null;
 }
 
+function decodeHtmlAttr(value: string): string {
+  return value
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .trim();
+}
+
+function attrsFromTag(tag: string): Record<string, string> {
+  const attrs: Record<string, string> = {};
+  const attrRe = /([\w:-]+)\s*=\s*["']([^"']*)["']/g;
+  let m: RegExpExecArray | null;
+  while ((m = attrRe.exec(tag)) !== null) {
+    attrs[m[1].toLowerCase()] = decodeHtmlAttr(m[2]);
+  }
+  return attrs;
+}
+
+function normalizeImageUrl(raw: unknown, pageUrl: string): string | null {
+  if (typeof raw !== "string") return null;
+  const trimmed = decodeHtmlAttr(raw);
+  if (!trimmed || trimmed.startsWith("data:") || trimmed.startsWith("blob:")) return null;
+  try {
+    const url = new URL(trimmed, pageUrl);
+    if (!/^https?:$/.test(url.protocol)) return null;
+    const lc = url.toString().toLowerCase();
+    if (
+      lc.endsWith(".svg") ||
+      lc.includes("favicon") ||
+      lc.includes("apple-touch-icon") ||
+      lc.includes("placeholder") ||
+      lc.includes("spacer") ||
+      lc.includes("/logo") ||
+      lc.includes("logo.")
+    ) {
+      return null;
+    }
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function schemaImageUrl(value: unknown, pageUrl: string): string | null {
+  if (!value) return null;
+  if (typeof value === "string") return normalizeImageUrl(value, pageUrl);
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = schemaImageUrl(item, pageUrl);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    return normalizeImageUrl(obj.url, pageUrl) ||
+      normalizeImageUrl(obj.contentUrl, pageUrl) ||
+      normalizeImageUrl(obj.thumbnailUrl, pageUrl);
+  }
+  return null;
+}
+
+function jsonLdItems(data: any): any[] {
+  const roots = Array.isArray(data) ? data : [data];
+  const out: any[] = [];
+  for (const root of roots) {
+    if (!root || typeof root !== "object") continue;
+    out.push(root);
+    if (Array.isArray(root["@graph"])) out.push(...root["@graph"]);
+  }
+  return out;
+}
+
+function extractPageImage(html: string, pageUrl: string): string | null {
+  const metaRe = /<meta\b[^>]*>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = metaRe.exec(html)) !== null) {
+    const attrs = attrsFromTag(m[0]);
+    const key = (attrs.property || attrs.name || "").toLowerCase();
+    if (key === "og:image" || key === "og:image:url" || key === "twitter:image" || key === "twitter:image:src") {
+      const url = normalizeImageUrl(attrs.content, pageUrl);
+      if (url) return url;
+    }
+  }
+
+  const jsonRe = /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  while ((m = jsonRe.exec(html)) !== null) {
+    try {
+      const data = JSON.parse(m[1]);
+      for (const item of jsonLdItems(data)) {
+        const type = item?.["@type"];
+        const types = Array.isArray(type) ? type : [type];
+        if (types.includes("Event")) {
+          const url = schemaImageUrl(item.image, pageUrl);
+          if (url) return url;
+        }
+      }
+    } catch {
+      // skip invalid JSON-LD
+    }
+  }
+  return null;
+}
+
 function hasLocalEventSignal(text: string): boolean {
   const lc = text.toLowerCase();
   let score = 0;
@@ -780,16 +886,17 @@ Return ONLY the JSON array. If no real events, return [].`,
 
 // ─── Venue Website Scanner ───────────────────────────────────
 
-function extractSchemaOrgEvents(html: string) {
+function extractSchemaOrgEvents(html: string, pageUrl: string) {
   const events: any[] = [];
   const regex = /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
   let match;
   while ((match = regex.exec(html)) !== null) {
     try {
       const data = JSON.parse(match[1]);
-      const items = Array.isArray(data) ? data : [data];
-      for (const item of items) {
-        if (item["@type"] === "Event") {
+      for (const item of jsonLdItems(data)) {
+        const type = item?.["@type"];
+        const types = Array.isArray(type) ? type : [type];
+        if (types.includes("Event")) {
           events.push({
             title: item.name || "",
             description: item.description || "",
@@ -799,6 +906,7 @@ function extractSchemaOrgEvents(html: string) {
             is_free: item.isAccessibleForFree || false,
             price_min: item.offers?.price ? parseFloat(item.offers.price) : null,
             price_max: null,
+            image_url: schemaImageUrl(item.image, pageUrl),
           });
         }
       }
@@ -941,7 +1049,7 @@ async function scanVenues(
 ) {
   const { data: venues } = await supabase
     .from("venues")
-    .select("id, name, website, lat, lng, address, category, rating")
+    .select("id, name, website, lat, lng, address, category, rating, photo_url")
     .not("website", "is", null);
 
   if (!venues?.length) return [];
@@ -990,6 +1098,7 @@ async function scanVenues(
         const previousHealth = healthByVenue.get(venue.id);
         let sourceUrl = venue.website;
         let pageHash: string | null = null;
+        let sourcePageImage: string | null = null;
         try {
           const controller = new AbortController();
           const timer = setTimeout(() => controller.abort(), 8000);
@@ -1034,6 +1143,7 @@ async function scanVenues(
 
           const pageText = stripPageText(html);
           pageHash = await sha1Text(pageText);
+          sourcePageImage = extractPageImage(html, sourceUrl);
           if (previousHealth?.last_page_hash && previousHealth.last_page_hash === pageHash) {
             skippedUnchanged++;
             await recordVenueScanHealth({
@@ -1048,7 +1158,7 @@ async function scanVenues(
             return [];
           }
 
-          let events = extractSchemaOrgEvents(html);
+          let events = extractSchemaOrgEvents(html, sourceUrl);
           if (events.length === 0) {
             if (!hasLocalEventSignal(pageText)) {
               skippedNoSignal++;
@@ -1101,7 +1211,8 @@ async function scanVenues(
               title: e.title, description: e.description,
               category: e.category, subcategory: e.subcategory,
               lat: venue.lat, lng: venue.lng, address: venue.address,
-              image_url: null, start_time: e.start_time, end_time: e.end_time,
+              image_url: e.image_url || sourcePageImage || venue.photo_url || null,
+              start_time: e.start_time, end_time: e.end_time,
               is_recurring: e.is_recurring, recurrence_rule: e.recurrence_rule,
               is_free: e.is_free, price_min: e.price_min, price_max: e.price_max,
               ticket_url: null, source_url: sourceUrl,
@@ -1571,7 +1682,7 @@ serve(async (req: Request) => {
         lat: ev.lat ?? lat,
         lng: ev.lng ?? lng,
         address: ev.address_hint || ev.venue_name || "",
-        image_url: null,
+        image_url: ev.image_url || null,
         start_time: ev.start_time,
         end_time: ev.end_time,
         is_recurring: false,

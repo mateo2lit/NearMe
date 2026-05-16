@@ -71,7 +71,8 @@ export default function FeedCard({ event, isSaved, onPress, onSave, userInterest
   const [whyExpanded, setWhyExpanded] = useState(false);
   const whyThis = buildWhyThis(event, userInterests);
   const category = CATEGORY_MAP[event.category];
-  const fallbackUri = getEventImage(null, event.category, event.subcategory, event.title, event.description, event.tags);
+  const imageContext = `${event.venue?.name || ""} ${event.address || ""}`;
+  const fallbackUri = getEventImage(null, event.category, event.subcategory, event.title, event.description, event.tags, imageContext);
   const realUri = !realFailed && event.image_url ? event.image_url : null;
 
   const startDate = effectiveStart(event);

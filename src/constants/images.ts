@@ -124,7 +124,7 @@ const KEYWORD_IMAGES: [string[], string][] = [
   [["volleyball"],          SUBCATEGORY_IMAGES.volleyball],
   [["soccer", "futsal"],    SUBCATEGORY_IMAGES.soccer],
   [["tennis"],              SUBCATEGORY_IMAGES.tennis],
-  [["bowling", "bowl"],     SUBCATEGORY_IMAGES.bowling],
+  [["bowling", "bowl", "bowlero", "bowlmor", "strikes"], SUBCATEGORY_IMAGES.bowling],
   [["golf"],                SUBCATEGORY_IMAGES.golf],
   [["swim"],                SUBCATEGORY_IMAGES.swimming],
   [["surf"],                SUBCATEGORY_IMAGES.surfing],
@@ -236,13 +236,14 @@ export function getEventImage(
   title?: string,
   description?: string,
   tags?: string[],
+  context?: string,
 ): string {
   // 1. Use the event's own image if it has one
   if (imageUrl) return imageUrl;
 
   // 2. Title/description keyword match — most reliable
-  if (title || description) {
-    const text = `${title || ""} ${description || ""}`.toLowerCase();
+  if (title || description || context) {
+    const text = `${title || ""} ${description || ""} ${context || ""}`.toLowerCase();
     for (const [keywords, image] of KEYWORD_IMAGES) {
       if (keywords.some((kw) => text.includes(kw))) {
         return image;

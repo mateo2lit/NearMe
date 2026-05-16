@@ -228,7 +228,17 @@ export default function SavedScreen() {
                 activeOpacity={0.85}
               >
                 <Image
-                  source={{ uri: getEventImage(item.image_url, item.category, item.subcategory, item.title, item.description, item.tags) }}
+                  source={{
+                    uri: getEventImage(
+                      item.image_url,
+                      item.category,
+                      item.subcategory,
+                      item.title,
+                      item.description,
+                      item.tags,
+                      `${item.venue?.name || ""} ${item.address || ""}`,
+                    ),
+                  }}
                   style={styles.cardImage}
                 />
                 <View style={styles.cardBody}>
