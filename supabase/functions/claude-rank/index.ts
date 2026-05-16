@@ -40,7 +40,7 @@ function buildRankPrompt(profile: ProfileRow, events: EventLite[]): string {
   ].join("\n");
 }
 
-const MAX_EVENT_IDS = 100;
+const MAX_EVENT_IDS = 60;
 
 export async function handleRankRequest(req: RankRequest): Promise<Response> {
   const { body, deps } = req;

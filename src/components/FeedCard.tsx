@@ -56,6 +56,11 @@ function sourceLabel(source: string | undefined | null): string | null {
     case "reddit":        return "from the local roundup";
     case "scraped":       return "via venue page";
     case "claude":        return "hand-picked by your AI";
+    case "meetup":        return "via Meetup";
+    case "espn":          return "via ESPN";
+    case "pickleheads":   return "via Pickleheads";
+    case "university":    return "via campus calendar";
+    case "highschool":    return "via school sports";
     default:              return null;
   }
 }

@@ -26,8 +26,41 @@ interface DiscoverRequest {
   };
 }
 
+const DISCOVERY_RESCUE_THRESHOLD = 20;
+
 function sseFrame(evt: DiscoverEvent): string {
   return `event: ${evt.type}\ndata: ${JSON.stringify(evt)}\n\n`;
+}
+
+function sseResponse(events: DiscoverEvent[]): Response {
+  return new Response(events.map(sseFrame).join(""), {
+    status: 200,
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+    },
+  });
+}
+
+async function countExistingNearbyEvents(
+  supabase: any,
+  body: Required<Pick<DiscoverRequest["body"], "lat" | "lng" | "radius_miles">>,
+): Promise<number> {
+  const { data, error } = await supabase
+    .rpc("discover_events", {
+      user_lat: body.lat,
+      user_lng: body.lng,
+      radius_miles: body.radius_miles,
+      category_filter: null,
+      tag_filter: null,
+    })
+    .limit(DISCOVERY_RESCUE_THRESHOLD);
+  if (error) {
+    console.log(`[claude-discover] existing feed count skipped: ${error.message}`);
+    return 0;
+  }
+  return Array.isArray(data) ? data.length : 0;
 }
 
 export async function handleDiscoverRequest(req: DiscoverRequest): Promise<Response> {
@@ -42,6 +75,46 @@ export async function handleDiscoverRequest(req: DiscoverRequest): Promise<Respo
   const { data: circuit } = await deps.supabase.from("claude_circuit").select().single();
   if (circuit && circuit.enabled === false) {
     return new Response(JSON.stringify({ error: "circuit_open" }), { status: 503 });
+  }
+
+  const existingCount = await countExistingNearbyEvents(deps.supabase, {
+    lat: body.lat,
+    lng: body.lng,
+    radius_miles: body.radius_miles,
+  });
+  if (existingCount >= DISCOVERY_RESCUE_THRESHOLD) {
+    try {
+      await deps.runWriter({
+        phase: "discover",
+        user_id: body.user_id,
+        geohash: body.geohash,
+        started_at: new Date().toISOString(),
+        finished_at: new Date().toISOString(),
+        status: "ok",
+        events_emitted: 0,
+        events_persisted: 0,
+        rejections: [],
+        input_tokens: 0,
+        output_tokens: 0,
+        cached_input_tokens: 0,
+        web_searches: 0,
+        cost_usd: 0,
+        error_message: `skipped_existing_feed:${existingCount}`,
+      });
+    } catch (err) {
+      console.log(`[claude-discover] skip metric write failed: ${(err as Error).message}`);
+    }
+    return sseResponse([
+      { type: "status", text: "Using the strong local picks already found..." },
+      {
+        type: "source_progress",
+        source: "claude_web",
+        status: "done",
+        label: "Hidden gems already loaded",
+        count: 0,
+      },
+      { type: "done" },
+    ]);
   }
 
   const stream = new ReadableStream<Uint8Array>({

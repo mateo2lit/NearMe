@@ -6,8 +6,8 @@ export const SONNET_PRICE = {
 };
 
 export const HAIKU_PRICE = {
-  inputPerM: 0.80,
-  outputPerM: 4,
+  inputPerM: 1,
+  outputPerM: 5,
   cachedInputDiscount: 0.10,
 };
 

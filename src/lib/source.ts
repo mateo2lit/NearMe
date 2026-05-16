@@ -16,6 +16,18 @@ export function getSourceDisplayName(
       return "Community listing";
     case "reddit":
       return "Local roundup";
+    case "claude":
+      return "NearMe AI";
+    case "meetup":
+      return "Meetup";
+    case "espn":
+      return "ESPN";
+    case "pickleheads":
+      return "Pickleheads";
+    case "university":
+      return "Campus calendar";
+    case "highschool":
+      return "School sports";
     case "scraped": {
       if (!sourceUrl) return "source";
       try {

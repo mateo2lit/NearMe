@@ -78,7 +78,12 @@ export type EventSource =
   | "municipal"
   | "community"
   | "reddit"
-  | "claude";
+  | "claude"
+  | "meetup"
+  | "espn"
+  | "pickleheads"
+  | "university"
+  | "highschool";
 
 export type SwipeAction = "save" | "skip";
 

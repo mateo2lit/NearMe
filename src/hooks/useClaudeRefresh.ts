@@ -25,6 +25,12 @@ interface UseClaudeRefreshArgs {
   anonKey: string;
 }
 
+// Sonnet web search is the expensive rescue phase. If the normal feed already
+// has enough cached/structured events, skip discovery and only run cheap Haiku
+// ranking. This preserves the "AI picked this for me" feel without paying for
+// web search on every first open.
+const AI_DISCOVERY_RESCUE_THRESHOLD = 20;
+
 export function useClaudeRefresh(args: UseClaudeRefreshArgs) {
   const [state, dispatch] = useReducer(reduce, initial);
   const abortRef = useRef<AbortController | null>(null);
@@ -59,10 +65,20 @@ export function useClaudeRefresh(args: UseClaudeRefreshArgs) {
 
     dispatch({ type: "COOLDOWN_RESULT", userAllowed, cellFresh });
 
-    if (!userAllowed && cellFresh) return;
-
     const collectedIds: string[] = [...s.knownEventIds];
-    if (!cellFresh) {
+    if (!userAllowed && collectedIds.length === 0) {
+      dispatch({ type: "RANK_RESULT", ranking: [] });
+      return;
+    }
+
+    const shouldRunDiscovery =
+      userAllowed &&
+      !cellFresh &&
+      collectedIds.length < AI_DISCOVERY_RESCUE_THRESHOLD;
+
+    if (!shouldRunDiscovery) {
+      if (!cellFresh) dispatch({ type: "STREAM_DONE" });
+    } else {
       const ac = new AbortController();
       abortRef.current = ac;
       try {

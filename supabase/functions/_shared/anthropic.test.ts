@@ -31,14 +31,14 @@ Deno.test("calcCostUsd — Haiku is cheap", () => {
     cached_input_tokens: 0,
     web_searches: 0,
   });
-  // 3000 * 0.80/1e6 + 600 * 4/1e6 = 0.0024 + 0.0024 = 0.0048
-  assertAlmostEquals(cost, 0.0048, 0.0001);
+  // 3000 * 1/1e6 + 600 * 5/1e6 = 0.003 + 0.003 = 0.006
+  assertAlmostEquals(cost, 0.006, 0.0001);
 });
 
 Deno.test("constants reflect Anthropic public pricing", () => {
   assertEquals(SONNET_PRICE.inputPerM, 3);
   assertEquals(SONNET_PRICE.outputPerM, 15);
-  assertEquals(HAIKU_PRICE.inputPerM, 0.80);
-  assertEquals(HAIKU_PRICE.outputPerM, 4);
+  assertEquals(HAIKU_PRICE.inputPerM, 1);
+  assertEquals(HAIKU_PRICE.outputPerM, 5);
   assertEquals(WEB_SEARCH_PRICE_PER_CALL, 0.01);
 });

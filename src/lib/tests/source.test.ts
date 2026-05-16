@@ -16,6 +16,13 @@ describe("getSourceDisplayName", () => {
   it("maps community", () => {
     expect(getSourceDisplayName("community", null)).toBe("Community listing");
   });
+  it("maps new discovery sources", () => {
+    expect(getSourceDisplayName("meetup", null)).toBe("Meetup");
+    expect(getSourceDisplayName("espn", null)).toBe("ESPN");
+    expect(getSourceDisplayName("pickleheads", null)).toBe("Pickleheads");
+    expect(getSourceDisplayName("university", null)).toBe("Campus calendar");
+    expect(getSourceDisplayName("highschool", null)).toBe("School sports");
+  });
   it("uses domain for scraped with URL", () => {
     expect(
       getSourceDisplayName("scraped", "https://www.eventbrite.com/e/123")

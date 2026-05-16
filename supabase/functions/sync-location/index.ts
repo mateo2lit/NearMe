@@ -45,7 +45,7 @@ function cleanText(raw: string | null | undefined, maxLen = 500): string | null 
 /**
  * On-demand sync for a specific location.
  * Checks cooldown, syncs venues via Google Places, then events from
- * Ticketmaster/SeatGeek/Eventbrite + venue website scanning with Claude.
+ * structured sources plus venue website scanning with Claude.
  */
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -83,6 +83,229 @@ async function timeoutFetch(
     clearTimeout(id);
   }
 }
+
+interface VenueScanHealth {
+  venue_id: string;
+  source_url: string | null;
+  last_scanned_at: string | null;
+  next_scan_at: string | null;
+  last_page_hash: string | null;
+  events_found_last_scan: number | null;
+  events_passed_quality: number | null;
+  consecutive_empty: number | null;
+  consecutive_errors: number | null;
+  avg_quality_score: number | null;
+  total_scans: number | null;
+  total_events_passed: number | null;
+}
+
+type VenueScanOutcome = "passed" | "empty" | "no_signal" | "unchanged" | "error";
+
+function stripPageText(html: string, maxLen = 9000): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#?\w+;/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLen);
+}
+
+async function sha1Text(value: string): Promise<string> {
+  const buf = new TextEncoder().encode(value);
+  const hash = await crypto.subtle.digest("SHA-1", buf);
+  return Array.from(new Uint8Array(hash))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function hoursFromNow(hours: number): string {
+  return new Date(Date.now() + hours * 3600_000).toISOString();
+}
+
+const EVENT_PAGE_POSITIVE = [
+  "events", "calendar", "live music", "shows", "entertainment",
+  "trivia", "karaoke", "open mic", "comedy", "music calendar",
+  "things to do", "whats on", "what's on",
+];
+
+const EVENT_PAGE_NEGATIVE = [
+  "private event", "private events", "wedding", "weddings", "catering",
+  "careers", "jobs", "menu", "menus", "gift card", "contact", "about",
+  "privacy", "terms", "facebook", "instagram", "mailto:", "tel:",
+];
+
+function findDedicatedEventPage(homepageUrl: string, html: string): string | null {
+  let base: URL;
+  try {
+    base = new URL(homepageUrl);
+  } catch {
+    return null;
+  }
+
+  const linkRe = /<a[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  let m: RegExpExecArray | null;
+  let best: { url: string; score: number } | null = null;
+
+  while ((m = linkRe.exec(html)) !== null) {
+    const href = m[1] || "";
+    const label = (m[2] || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    const haystack = `${href} ${label}`.toLowerCase();
+    if (!href || EVENT_PAGE_NEGATIVE.some((needle) => haystack.includes(needle))) continue;
+
+    let url: URL;
+    try {
+      url = new URL(href, base);
+    } catch {
+      continue;
+    }
+    if (!/^https?:$/.test(url.protocol)) continue;
+    if (url.host !== base.host) continue;
+
+    let score = 0;
+    for (const needle of EVENT_PAGE_POSITIVE) {
+      if (haystack.includes(needle)) score += needle.includes(" ") ? 4 : 3;
+    }
+    if (/\/(events?|calendar|shows?|live-music|whats-on|entertainment)(\/|$)/i.test(url.pathname)) {
+      score += 6;
+    }
+    if (score < 4) continue;
+    if (!best || score > best.score) best = { url: url.toString(), score };
+  }
+
+  return best?.url || null;
+}
+
+function hasLocalEventSignal(text: string): boolean {
+  const lc = text.toLowerCase();
+  let score = 0;
+  const signals = [
+    "live music", "event calendar", "events calendar", "upcoming events",
+    "buy tickets", "get tickets", "rsvp", "reserve", "trivia", "karaoke",
+    "open mic", "comedy night", "dj", "showtime", "showtimes", "happy hour",
+    "paint and sip", "tasting", "class schedule", "workshop",
+  ];
+  for (const signal of signals) {
+    if (lc.includes(signal)) score += signal.includes(" ") ? 2 : 1;
+  }
+  if (/\b(mon|tue|wed|thu|fri|sat|sun)(day)?s?\b/.test(lc) && /\b(am|pm)\b/.test(lc)) score += 2;
+  if (/\b\d{1,2}\/\d{1,2}\b/.test(lc) || /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{1,2}\b/.test(lc)) {
+    score += 2;
+  }
+  return score >= 3;
+}
+
+async function loadVenueScanHealth(venueIds: string[]): Promise<Map<string, VenueScanHealth>> {
+  if (venueIds.length === 0) return new Map();
+  const { data, error } = await supabase
+    .from("venue_scan_health")
+    .select("venue_id,source_url,last_scanned_at,next_scan_at,last_page_hash,events_found_last_scan,events_passed_quality,consecutive_empty,consecutive_errors,avg_quality_score,total_scans,total_events_passed")
+    .in("venue_id", venueIds);
+  if (error) {
+    console.log(`[scanner] venue scan health unavailable: ${error.message}`);
+    return new Map();
+  }
+  return new Map((data || []).map((row: VenueScanHealth) => [row.venue_id, row]));
+}
+
+function isVenueDueForScan(health: VenueScanHealth | undefined, nowMs: number): boolean {
+  if (!health?.next_scan_at) return true;
+  return new Date(health.next_scan_at).getTime() <= nowMs;
+}
+
+function venueScanPriority(venue: any, health: VenueScanHealth | undefined): number {
+  const categoryBoost: Record<string, number> = {
+    venue: 30,
+    bar: 26,
+    theater: 24,
+    club: 22,
+    restaurant: 18,
+    park: 16,
+    gym: 14,
+    cinema: 12,
+    stadium: 10,
+    other: 4,
+  };
+  let score = categoryBoost[venue.category] ?? 4;
+  const website = String(venue.website || "").toLowerCase();
+  if (/events?|calendar|shows?|live-music|whats-on|entertainment/.test(website)) score += 16;
+  if (!health) return score + 8;
+
+  score += Math.min(35, (health.total_events_passed || 0) * 3);
+  score += Math.min(25, Number(health.avg_quality_score || 0) / 3);
+  score -= Math.min(40, (health.consecutive_empty || 0) * 10);
+  score -= Math.min(45, (health.consecutive_errors || 0) * 15);
+  return score;
+}
+
+function nextScanHours(outcome: VenueScanOutcome, passed: number, previous?: VenueScanHealth): number {
+  if (passed > 0) return 6;
+  if (outcome === "unchanged" && (previous?.events_passed_quality || 0) > 0) return 12;
+  if (outcome === "error") {
+    const errors = (previous?.consecutive_errors || 0) + 1;
+    return Math.min(168, 6 * Math.pow(2, errors - 1));
+  }
+  const empties = (previous?.consecutive_empty || 0) + 1;
+  return Math.min(168, 12 * Math.pow(2, Math.min(empties - 1, 4)));
+}
+
+function estimatedQualityScore(found: number, passed: number, sourceUrl: string): number {
+  if (passed <= 0) return found > 0 ? 35 : 15;
+  let score = 55 + Math.min(25, passed * 6);
+  if (/\/(events?|calendar|shows?|live-music|whats-on|entertainment)(\/|$)/i.test(sourceUrl)) score += 10;
+  if (found === passed) score += 5;
+  return Math.min(100, score);
+}
+
+async function recordVenueScanHealth(args: {
+  venueId: string;
+  sourceUrl: string | null;
+  pageHash: string | null;
+  found: number;
+  passed: number;
+  outcome: VenueScanOutcome;
+  previous?: VenueScanHealth;
+}) {
+  const prev = args.previous;
+  const totalScans = (prev?.total_scans || 0) + 1;
+  const totalPassed = (prev?.total_events_passed || 0) + args.passed;
+  const batchQuality = estimatedQualityScore(args.found, args.passed, args.sourceUrl || "");
+  const prevQuality = Number(prev?.avg_quality_score || 0);
+  const avgQuality = prevQuality > 0
+    ? ((prevQuality * (totalScans - 1)) + batchQuality) / totalScans
+    : batchQuality;
+
+  const row = {
+    venue_id: args.venueId,
+    source_url: args.sourceUrl,
+    last_scanned_at: new Date().toISOString(),
+    next_scan_at: hoursFromNow(nextScanHours(args.outcome, args.passed, prev)),
+    last_page_hash: args.pageHash || prev?.last_page_hash || null,
+    events_found_last_scan: args.found,
+    events_passed_quality: args.passed,
+    consecutive_empty: args.passed > 0
+      ? 0
+      : args.outcome === "error"
+        ? (prev?.consecutive_empty || 0)
+        : (prev?.consecutive_empty || 0) + 1,
+    consecutive_errors: args.outcome === "error" ? (prev?.consecutive_errors || 0) + 1 : 0,
+    avg_quality_score: Number(avgQuality.toFixed(2)),
+    total_scans: totalScans,
+    total_events_passed: totalPassed,
+    updated_at: new Date().toISOString(),
+  };
+
+  const { error } = await supabase
+    .from("venue_scan_health")
+    .upsert(row, { onConflict: "venue_id" });
+  if (error) console.log(`[scanner] health write skipped: ${error.message}`);
+}
+
 const VENUE_TYPES = [
   "bar", "restaurant", "night_club", "movie_theater", "stadium",
   "park", "gym", "bowling_alley", "amusement_park",
@@ -675,7 +898,7 @@ Return ONLY valid JSON array. If nothing found, return [].`,
   }
 }
 
-function getNextOccurrence(dayName?: string, time?: string): string | null {
+function getNextOccurrence(dayName?: string | null, time?: string): string | null {
   if (!dayName) return null;
   const dayMap: Record<string, number> = {
     sunday: 0, monday: 1, tuesday: 2, wednesday: 3,
@@ -710,11 +933,15 @@ async function scanVenues(
   lat: number,
   lng: number,
   radiusMeters: number,
-  opts?: { categoryHint?: { wellCovered: string[]; underRepresented: string[] } },
+  opts?: {
+    categoryHint?: { wellCovered: string[]; underRepresented: string[] };
+    fastEventCount?: number;
+    thinPriorSync?: boolean;
+  },
 ) {
   const { data: venues } = await supabase
     .from("venues")
-    .select("id, name, website, lat, lng, address, category")
+    .select("id, name, website, lat, lng, address, category, rating")
     .not("website", "is", null);
 
   if (!venues?.length) return [];
@@ -730,36 +957,113 @@ async function scanVenues(
     Math.abs(v.lng - lng) < degPerMile * radiusMiles
   );
 
-  const priority = ["bar", "venue", "restaurant", "cinema", "other"];
-  nearby.sort((a: any, b: any) => {
-    const ai = priority.indexOf(a.category);
-    const bi = priority.indexOf(b.category);
-    return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
-  });
+  const healthByVenue = await loadVenueScanHealth(nearby.map((v: any) => v.id));
+  const nowMs = Date.now();
+  const due = nearby.filter((v: any) => isVenueDueForScan(healthByVenue.get(v.id), nowMs));
+  due.sort((a: any, b: any) =>
+    venueScanPriority(b, healthByVenue.get(b.id)) - venueScanPriority(a, healthByVenue.get(a.id))
+  );
 
-  // 75-venue budget per location, batched 5 concurrent. Priority order above
-  // pushes bars/venues/restaurants to the top so the budget hits the highest-yield
-  // sites first; lower-priority venues fill the remainder.
-  const toScan = nearby.slice(0, 75);
-  console.log(`[scanner] ${toScan.length}/${nearby.length} venues`);
+  // Dynamic budget: if structured sources already packed the cell, stop paying
+  // Claude to inspect dozens of venue homepages. Thin cells still get a wider
+  // crawl, but the scan-health table keeps known-dead pages backed off.
+  const fastEventCount = opts?.fastEventCount || 0;
+  const scanBudget = opts?.thinPriorSync
+    ? 45
+    : fastEventCount >= 40
+      ? 18
+      : fastEventCount >= 20
+        ? 28
+        : 40;
+  const toScan = due.slice(0, scanBudget);
+  console.log(`[scanner] ${toScan.length}/${nearby.length} venues (${due.length} due, budget=${scanBudget}, fast=${fastEventCount})`);
   const all: any[] = [];
+  let claudeCalls = 0;
+  let skippedUnchanged = 0;
+  let skippedNoSignal = 0;
+  let dedicatedPages = 0;
 
   for (let i = 0; i < toScan.length; i += 5) {
     const batch = toScan.slice(i, i + 5);
     const results = await Promise.allSettled(
       batch.map(async (venue: any) => {
+        const previousHealth = healthByVenue.get(venue.id);
+        let sourceUrl = venue.website;
+        let pageHash: string | null = null;
         try {
           const controller = new AbortController();
           const timer = setTimeout(() => controller.abort(), 8000);
-          const r = await fetch(venue.website, {
-            headers: { "User-Agent": "NearMe-Bot/1.0" },
-            signal: controller.signal,
-          });
-          clearTimeout(timer);
-          if (!r.ok) return [];
-          const html = await r.text();
+          let r: Response;
+          try {
+            r = await fetch(venue.website, {
+              headers: { "User-Agent": "NearMe-Bot/1.0" },
+              signal: controller.signal,
+            });
+          } finally {
+            clearTimeout(timer);
+          }
+          if (!r.ok) {
+            await recordVenueScanHealth({
+              venueId: venue.id,
+              sourceUrl,
+              pageHash,
+              found: 0,
+              passed: 0,
+              outcome: "error",
+              previous: previousHealth,
+            });
+            return [];
+          }
+          let html = await r.text();
+
+          const eventPage = findDedicatedEventPage(venue.website, html);
+          if (eventPage && eventPage !== venue.website) {
+            const eventPageRes = await timeoutFetch(eventPage, {
+              headers: { "User-Agent": "NearMe-Bot/1.0" },
+              timeoutMs: 8000,
+            }).catch(() => null);
+            if (eventPageRes?.ok) {
+              const eventHtml = await eventPageRes.text();
+              if (eventHtml.length > 500) {
+                html = eventHtml;
+                sourceUrl = eventPage;
+                dedicatedPages++;
+              }
+            }
+          }
+
+          const pageText = stripPageText(html);
+          pageHash = await sha1Text(pageText);
+          if (previousHealth?.last_page_hash && previousHealth.last_page_hash === pageHash) {
+            skippedUnchanged++;
+            await recordVenueScanHealth({
+              venueId: venue.id,
+              sourceUrl,
+              pageHash,
+              found: 0,
+              passed: 0,
+              outcome: "unchanged",
+              previous: previousHealth,
+            });
+            return [];
+          }
+
           let events = extractSchemaOrgEvents(html);
           if (events.length === 0) {
+            if (!hasLocalEventSignal(pageText)) {
+              skippedNoSignal++;
+              await recordVenueScanHealth({
+                venueId: venue.id,
+                sourceUrl,
+                pageHash,
+                found: 0,
+                passed: 0,
+                outcome: "no_signal",
+                previous: previousHealth,
+              });
+              return [];
+            }
+            claudeCalls++;
             events = await extractWithClaude(html, venue.name, venue.category, {
               categoryHint: opts?.categoryHint,
             });
@@ -800,12 +1104,30 @@ async function scanVenues(
               image_url: null, start_time: e.start_time, end_time: e.end_time,
               is_recurring: e.is_recurring, recurrence_rule: e.recurrence_rule,
               is_free: e.is_free, price_min: e.price_min, price_max: e.price_max,
-              ticket_url: null, source_url: venue.website,
+              ticket_url: null, source_url: sourceUrl,
               tags,
             });
           }
+          await recordVenueScanHealth({
+            venueId: venue.id,
+            sourceUrl,
+            pageHash,
+            found: events.length,
+            passed: passing.length,
+            outcome: passing.length > 0 ? "passed" : "empty",
+            previous: previousHealth,
+          });
           return passing;
         } catch {
+          await recordVenueScanHealth({
+            venueId: venue.id,
+            sourceUrl,
+            pageHash,
+            found: 0,
+            passed: 0,
+            outcome: "error",
+            previous: previousHealth,
+          });
           return [];
         }
       })
@@ -814,7 +1136,7 @@ async function scanVenues(
       if (r.status === "fulfilled" && r.value.length > 0) all.push(...r.value);
     }
   }
-  console.log(`[scanner] ${all.length}`);
+  console.log(`[scanner] ${all.length} events, claude_calls=${claudeCalls}, dedicated_pages=${dedicatedPages}, unchanged=${skippedUnchanged}, no_signal=${skippedNoSignal}`);
   return all;
 }
 
@@ -1022,7 +1344,11 @@ serve(async (req: Request) => {
       hsRaw,
     ] = await Promise.all([
       fetchRedditEvents(lat, lng, { categoryHint }),
-      scanVenues(lat, lng, radiusMeters, { categoryHint }),
+      scanVenues(lat, lng, radiusMeters, {
+        categoryHint,
+        fastEventCount: tm.length + eb.length,
+        thinPriorSync,
+      }),
       fetchNeighborhood(lat, lng),
       ANTHROPIC_API_KEY
         ? fetchMeetupEvents({
