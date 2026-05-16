@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import {
   View, Text, StyleSheet, TouchableOpacity, FlatList, RefreshControl,
-  Animated, Easing, AccessibilityInfo,
+  Animated, Easing, AccessibilityInfo, ScrollView,
 } from "react-native";
 import { useRouter, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -16,7 +16,7 @@ import SearchOverlay from "../../src/components/SearchOverlay";
 import EmptyState from "../../src/components/EmptyState";
 import { SyncStatusBanner } from "../../src/components/SyncStatusBanner";
 import { BouncingDots } from "../../src/components/BouncingDots";
-import { fetchNearbyEvents, applyHiddenFilter, filterPastEvents, filterHappyHour, sortByStartTime, dedupeSameDayDuplicates, balanceSources, balanceCategories, getLastFetchError, clearLastFetchError } from "../../src/services/events";
+import { fetchNearbyEvents, applyHiddenFilter, filterPastEvents, filterHappyHour, sortByStartTime, dedupeSameDayDuplicates, balanceSources, balanceCategories, getLastFetchError, clearLastFetchError, formatDistance } from "../../src/services/events";
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from "../../src/services/supabase";
 import { getFeedHandoff, clearFeedHandoff } from "../../src/services/eventCache";
 import { useLocation } from "../../src/hooks/useLocation";
@@ -25,7 +25,7 @@ import { useWhenFilter, WhenFilter } from "../../src/hooks/useWhenFilter";
 import { COLORS, RADIUS, DEFAULT_RADIUS_MILES } from "../../src/constants/theme";
 import { Event } from "../../src/types";
 import { buildDiscoveryRows } from "../../src/lib/rows";
-import { isTonight, isTomorrow, isThisWeekend, effectiveStart } from "../../src/lib/time-windows";
+import { isTonight, isTomorrow, isThisWeekend, effectiveStart, isHappeningNow, isHappeningNowOrSoon } from "../../src/lib/time-windows";
 import { useClaudeRefresh, applyRanking } from "../../src/hooks/useClaudeRefresh";
 import { ClaudeRefreshOverlay } from "../../src/components/ClaudeRefreshOverlay";
 import { getOrCreateUserId } from "../../src/hooks/usePreferences";
@@ -37,6 +37,96 @@ import {
 } from "../../src/services/reminders";
 
 const FIRST_REFRESH_KEY = "@nearme_first_claude_refresh_done";
+
+type MoodKey = "any" | "play" | "drinks" | "party" | "meet" | "cheap" | "hidden";
+
+interface MoodOption {
+  key: MoodKey;
+  label: string;
+  icon: React.ComponentProps<typeof Ionicons>["name"];
+  categories: string[];
+  tags: string[];
+  accent: string;
+}
+
+const MOODS: MoodOption[] = [
+  { key: "any", label: "Anything", icon: "sparkles", categories: [], tags: [], accent: COLORS.accentLight },
+  { key: "play", label: "Play", icon: "football", categories: ["sports", "fitness", "outdoors"], tags: ["active", "outdoor"], accent: COLORS.success },
+  { key: "drinks", label: "Drinks", icon: "beer", categories: ["nightlife", "food"], tags: ["drinking", "21+"], accent: COLORS.warm },
+  { key: "party", label: "Party", icon: "flash", categories: ["nightlife", "music"], tags: ["late-night", "drinking", "live-music", "21+"], accent: COLORS.hot },
+  { key: "meet", label: "Meet", icon: "people", categories: ["community", "nightlife", "sports", "fitness"], tags: ["singles", "date-night", "active"], accent: "#3b9cff" },
+  { key: "cheap", label: "Free", icon: "gift", categories: [], tags: ["free"], accent: COLORS.success },
+  { key: "hidden", label: "Different", icon: "planet", categories: ["arts", "community", "movies", "outdoors"], tags: ["live-music", "outdoor"], accent: "#ff6b9d" },
+];
+
+const MOOD_BY_KEY = Object.fromEntries(MOODS.map((m) => [m.key, m])) as Record<MoodKey, MoodOption>;
+
+function eventText(e: Event): string {
+  return `${e.title} ${e.description || ""} ${e.subcategory || ""} ${(e.tags || []).join(" ")}`.toLowerCase();
+}
+
+function eventMatchesMood(e: Event, moodKey: MoodKey): boolean {
+  if (moodKey === "any") return true;
+  const mood = MOOD_BY_KEY[moodKey];
+  if (!mood) return true;
+  const text = eventText(e);
+  if (moodKey === "cheap") return e.is_free || e.tags?.includes("free") || text.includes("free ");
+  if (mood.categories.includes(e.category)) return true;
+  if ((e.tags || []).some((t) => mood.tags.includes(t))) return true;
+  if (moodKey === "play") return /(pickleball|basketball|soccer|volleyball|tennis|run club|running|yoga|pickup)/.test(text);
+  if (moodKey === "drinks") return /(happy hour|brewery|cocktail|wine|beer|bar|tasting)/.test(text);
+  if (moodKey === "party") return /(dj|dance|club|party|latin night|salsa|bachata|late night)/.test(text);
+  if (moodKey === "meet") return /(singles|mixer|trivia|game night|open mic|meetup|social)/.test(text);
+  if (moodKey === "hidden") return /(popup|pop-up|gallery|festival|comedy|open mic|market|workshop|oddities)/.test(text);
+  return false;
+}
+
+function moodMatchScore(e: Event, moodKey: MoodKey): number {
+  if (moodKey === "any") return 0;
+  const mood = MOOD_BY_KEY[moodKey];
+  if (!mood) return 0;
+  let score = 0;
+  if (mood.categories.includes(e.category)) score += 12;
+  for (const tag of e.tags || []) if (mood.tags.includes(tag)) score += 8;
+  if (eventMatchesMood(e, moodKey)) score += 5;
+  return score;
+}
+
+function eventUrgencyScore(e: Event, now: Date, moodKey: MoodKey): number {
+  const start = effectiveStart(e).getTime();
+  const minutes = Math.round((start - now.getTime()) / 60000);
+  let score = moodMatchScore(e, moodKey);
+  if (isHappeningNow(e, now)) score += 120;
+  else if (minutes >= 0 && minutes <= 60) score += 95;
+  else if (minutes <= 180) score += 72;
+  else if (minutes <= 360) score += 48;
+  else if (isTonight(e, now)) score += 28;
+  if (e.distance != null) score += Math.max(0, 24 - e.distance * 2);
+  if (e.source === "ticketmaster" || e.source === "meetup" || e.source === "university") score += 8;
+  if (e.source === "scraped" || e.source === "claude") score += 4;
+  if (e.is_free) score += 5;
+  if (e.image_url) score += 3;
+  return score;
+}
+
+function buildNowQueue(events: Event[], now: Date, moodKey: MoodKey): Event[] {
+  const pool = events.filter((e) =>
+    isHappeningNowOrSoon(e, 6, now) || isTonight(e, now)
+  );
+  return [...pool]
+    .sort((a, b) => eventUrgencyScore(b, now, moodKey) - eventUrgencyScore(a, now, moodKey))
+    .slice(0, 5);
+}
+
+function urgentLabel(e: Event, now: Date): string {
+  if (isHappeningNow(e, now)) return "Happening now";
+  const start = effectiveStart(e).getTime();
+  const mins = Math.max(0, Math.round((start - now.getTime()) / 60000));
+  if (mins < 60) return `Starts in ${mins} min`;
+  const hours = Math.round(mins / 60);
+  if (hours <= 6) return `Starts in ${hours}h`;
+  return isTonight(e, now) ? "Tonight" : "Next up";
+}
 
 function matchesWhen(ev: Event, w: WhenFilter, now: Date): boolean {
   if (w === "all") return true;
@@ -133,6 +223,163 @@ function diversifyByVenue(list: Event[], targetCount = 20): Event[] {
   return applyVenueCap(list, 8);
 }
 
+function MoodRail({
+  active,
+  onChange,
+}: {
+  active: MoodKey;
+  onChange: (mood: MoodKey) => void;
+}) {
+  return (
+    <View style={styles.moodWrap}>
+      <Text style={styles.moodEyebrow}>What are you trying to do?</Text>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.moodScroll}
+      >
+        {MOODS.map((mood) => {
+          const selected = mood.key === active;
+          return (
+            <TouchableOpacity
+              key={mood.key}
+              style={[
+                styles.moodChip,
+                selected && {
+                  backgroundColor: mood.accent + "22",
+                  borderColor: mood.accent + "AA",
+                },
+              ]}
+              onPress={() => onChange(mood.key)}
+              activeOpacity={0.78}
+              accessibilityRole="button"
+              accessibilityState={{ selected }}
+              accessibilityLabel={`Show ${mood.label.toLowerCase()} events`}
+            >
+              <Ionicons
+                name={mood.icon}
+                size={15}
+                color={selected ? mood.accent : COLORS.muted}
+              />
+              <Text style={[styles.moodText, selected && { color: COLORS.text }]}>
+                {mood.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
+    </View>
+  );
+}
+
+function NowActionPanel({
+  events,
+  activeMood,
+  cityName,
+  onPressEvent,
+  onScout,
+  scouting,
+}: {
+  events: Event[];
+  activeMood: MoodKey;
+  cityName?: string | null;
+  onPressEvent: (e: Event) => void;
+  onScout: () => void;
+  scouting: boolean;
+}) {
+  const primary = events[0];
+  const secondary = events.slice(1, 3);
+  const mood = MOOD_BY_KEY[activeMood];
+  const locationLabel = cityName ? `near ${cityName}` : "near you";
+  const title = activeMood === "any" ? "Best move right now" : `${mood.label} right now`;
+
+  return (
+    <View style={styles.nowPanel}>
+      <View style={styles.nowHeader}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.nowKicker}>OPEN APP. FIND A PLAN.</Text>
+          <Text style={styles.nowTitle}>{title}</Text>
+          <Text style={styles.nowSub}>
+            {primary
+              ? `${events.length} live or soon ${locationLabel}`
+              : `No live picks yet, but the scout can look deeper ${locationLabel}`}
+          </Text>
+        </View>
+        <TouchableOpacity
+          style={[styles.scoutButton, scouting && styles.scoutButtonActive]}
+          onPress={onScout}
+          activeOpacity={0.75}
+          disabled={scouting}
+          accessibilityLabel="Scout for more events right now"
+        >
+          <Ionicons
+            name={scouting ? "radio" : "sparkles"}
+            size={16}
+            color={scouting ? COLORS.success : COLORS.accentLight}
+          />
+          <Text style={styles.scoutText}>{scouting ? "Scouting" : "Scout"}</Text>
+        </TouchableOpacity>
+      </View>
+
+      {primary ? (
+        <TouchableOpacity
+          style={styles.nowPrimary}
+          onPress={() => onPressEvent(primary)}
+          activeOpacity={0.9}
+          accessibilityLabel={`Open ${primary.title}`}
+        >
+          <View style={styles.nowLivePill}>
+            <View style={styles.nowLiveDot} />
+            <Text style={styles.nowLiveText}>{urgentLabel(primary, new Date())}</Text>
+          </View>
+          <Text style={styles.nowEventTitle} numberOfLines={2}>
+            {primary.title}
+          </Text>
+          <View style={styles.nowMetaRow}>
+            <Ionicons name="location" size={13} color={COLORS.accentLight} />
+            <Text style={styles.nowMeta} numberOfLines={1}>
+              {(primary.venue?.name || primary.address?.split(",")[0] || "Nearby")}
+              {primary.distance != null ? ` · ${formatDistance(primary.distance)}` : ""}
+            </Text>
+          </View>
+          <View style={styles.nowActionRow}>
+            <Text style={styles.nowReason} numberOfLines={1}>
+              {(primary.tags || []).slice(0, 2).join(" · ") || primary.category}
+            </Text>
+            <Ionicons name="chevron-forward" size={18} color={COLORS.text} />
+          </View>
+        </TouchableOpacity>
+      ) : (
+        <View style={styles.nowEmpty}>
+          <Ionicons name="radio-outline" size={18} color={COLORS.muted} />
+          <Text style={styles.nowEmptyText}>
+            Pull to refresh or tap Scout to check for fresh things happening tonight.
+          </Text>
+        </View>
+      )}
+
+      {secondary.length > 0 && (
+        <View style={styles.nowSecondaryList}>
+          {secondary.map((event) => (
+            <TouchableOpacity
+              key={event.id}
+              style={styles.nowSecondary}
+              onPress={() => onPressEvent(event)}
+              activeOpacity={0.82}
+              accessibilityLabel={`Open ${event.title}`}
+            >
+              <Text style={styles.nowSecondaryTime}>{urgentLabel(event, new Date())}</Text>
+              <Text style={styles.nowSecondaryTitle} numberOfLines={1}>
+                {event.title}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+    </View>
+  );
+}
+
 interface PipelinePrefs {
   hiddenCategories?: string[];
   hiddenTags?: string[];
@@ -186,6 +433,7 @@ export default function DiscoverScreen() {
   const [filter, setFilter] = useState<FilterValue>({ categories: [], tags: [], radiusMiles: DEFAULT_RADIUS_MILES });
   const [showFilters, setShowFilters] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
+  const [activeMood, setActiveMood] = useState<MoodKey>("any");
   const [goals, setGoals] = useState<string[]>([]);
   const [hiddenRowIds, setHiddenRowIds] = useState<string[]>([]);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -371,13 +619,23 @@ export default function DiscoverScreen() {
   };
 
   const now = new Date();
+  const moodFilteredEvents = useMemo(() => {
+    if (activeMood === "any") return events;
+    return events.filter((e) => eventMatchesMood(e, activeMood));
+  }, [events, activeMood]);
   const whenFiltered = useMemo(
-    () => events.filter((e) => matchesWhen(e, whenFilter, now)),
-    [events, whenFilter]
+    () => moodFilteredEvents.filter((e) => matchesWhen(e, whenFilter, now)),
+    [moodFilteredEvents, whenFilter]
   );
   const whenPicks = useMemo(
-    () => picks.filter((e) => matchesWhen(e, whenFilter, now)),
-    [picks, whenFilter]
+    () => picks
+      .filter((e) => eventMatchesMood(e, activeMood))
+      .filter((e) => matchesWhen(e, whenFilter, now)),
+    [picks, activeMood, whenFilter]
+  );
+  const nowQueue = useMemo(
+    () => buildNowQueue(whenFiltered, now, activeMood),
+    [whenFiltered, activeMood]
   );
   const rows = useMemo(
     () => buildDiscoveryRows(whenFiltered, now, whenPicks, goals, hiddenRowIds),
@@ -514,6 +772,14 @@ export default function DiscoverScreen() {
             loadEvents().finally(() => setLoading(false));
           }}
         />
+      ) : activeMood !== "any" && rows.length === 0 && flatFeed.length === 0 ? (
+        <EmptyState
+          icon={MOOD_BY_KEY[activeMood].icon}
+          title={`No ${MOOD_BY_KEY[activeMood].label.toLowerCase()} picks right now`}
+          body="Try another mood, show everything nearby, or Scout for fresh events happening tonight."
+          ctaLabel="Show anything"
+          onCtaPress={() => setActiveMood("any")}
+        />
       ) : rows.length === 0 && flatFeed.length === 0 ? (
         <EmptyState
           icon="radio"
@@ -541,8 +807,17 @@ export default function DiscoverScreen() {
           contentContainerStyle={styles.feed}
           showsVerticalScrollIndicator={false}
           ListHeaderComponent={
-            rows.length > 0 ? (
+            flatFeed.length > 0 || rows.length > 0 ? (
               <View style={{ paddingTop: 4 }}>
+                <NowActionPanel
+                  events={nowQueue}
+                  activeMood={activeMood}
+                  cityName={location.cityName}
+                  onPressEvent={(e) => router.push(`/event/${e.id}`)}
+                  onScout={onRefresh}
+                  scouting={claude.state.state === "phase1" || claude.state.state === "phase2"}
+                />
+                <MoodRail active={activeMood} onChange={setActiveMood} />
                 {rows.map((r) => (
                   <DiscoveryRow
                     key={r.id}
@@ -663,6 +938,204 @@ const styles = StyleSheet.create({
     borderColor: COLORS.accent + "55",
   },
   feed: { paddingHorizontal: 16, paddingBottom: 24, gap: 16 },
+  nowPanel: {
+    backgroundColor: COLORS.card,
+    borderRadius: RADIUS.lg,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 16,
+    marginBottom: 16,
+    overflow: "hidden",
+  },
+  nowHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 12,
+    marginBottom: 14,
+  },
+  nowKicker: {
+    color: COLORS.accentLight,
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 1.1,
+    marginBottom: 4,
+  },
+  nowTitle: {
+    color: COLORS.text,
+    fontSize: 24,
+    lineHeight: 29,
+    fontWeight: "900",
+    letterSpacing: 0,
+  },
+  nowSub: {
+    color: COLORS.muted,
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: 4,
+    fontWeight: "600",
+  },
+  scoutButton: {
+    minHeight: 44,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLORS.cardAlt,
+    borderWidth: 1,
+    borderColor: COLORS.accent + "55",
+  },
+  scoutButtonActive: {
+    borderColor: COLORS.success + "88",
+    backgroundColor: COLORS.success + "18",
+  },
+  scoutText: {
+    color: COLORS.text,
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  nowPrimary: {
+    backgroundColor: COLORS.cardAlt,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.accent + "44",
+    padding: 14,
+    gap: 8,
+  },
+  nowLivePill: {
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLORS.hot + "20",
+    borderWidth: 1,
+    borderColor: COLORS.hot + "55",
+  },
+  nowLiveDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: COLORS.hot,
+  },
+  nowLiveText: {
+    color: COLORS.text,
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+  },
+  nowEventTitle: {
+    color: COLORS.text,
+    fontSize: 19,
+    lineHeight: 24,
+    fontWeight: "900",
+    letterSpacing: 0,
+  },
+  nowMetaRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+  },
+  nowMeta: {
+    flex: 1,
+    color: COLORS.muted,
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  nowActionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    paddingTop: 2,
+  },
+  nowReason: {
+    flex: 1,
+    color: COLORS.accentLight,
+    fontSize: 12,
+    fontWeight: "800",
+    textTransform: "capitalize",
+  },
+  nowEmpty: {
+    minHeight: 74,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.cardAlt,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 14,
+  },
+  nowEmptyText: {
+    flex: 1,
+    color: COLORS.muted,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "600",
+  },
+  nowSecondaryList: {
+    gap: 8,
+    marginTop: 10,
+  },
+  nowSecondary: {
+    minHeight: 48,
+    borderRadius: RADIUS.sm,
+    backgroundColor: "rgba(255,255,255,0.035)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.06)",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    justifyContent: "center",
+  },
+  nowSecondaryTime: {
+    color: COLORS.warm,
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 0.7,
+    textTransform: "uppercase",
+    marginBottom: 2,
+  },
+  nowSecondaryTitle: {
+    color: COLORS.text,
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  moodWrap: {
+    marginBottom: 18,
+  },
+  moodEyebrow: {
+    paddingHorizontal: 2,
+    color: COLORS.muted,
+    fontSize: 12,
+    fontWeight: "800",
+    marginBottom: 9,
+  },
+  moodScroll: {
+    gap: 8,
+    paddingRight: 4,
+  },
+  moodChip: {
+    minHeight: 44,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    paddingHorizontal: 13,
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  moodText: {
+    color: COLORS.muted,
+    fontSize: 13,
+    fontWeight: "800",
+  },
   divider: { flexDirection: "row", alignItems: "center", gap: 10, marginVertical: 12 },
   dividerLine: { flex: 1, height: 1, backgroundColor: COLORS.border },
   dividerText: { fontSize: 11, fontWeight: "700", color: COLORS.muted, letterSpacing: 1 },
