@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.103.0";
 import { generateTags } from "../_shared/tag-generator.ts";
 import { mapTMCategory, mapSGCategory } from "../_shared/category-mapper.ts";
 import { callClaudeList, FAST_MODEL } from "../_shared/anthropic.ts";
+import { hasServiceRole } from "../_shared/service-auth.ts";
 
 const SCANNER_SYSTEM = [
   "You extract recurring events, weekly specials, and activities from a venue's website text.",
@@ -460,6 +461,11 @@ function getNextOccurrence(rule: string, time?: string): string | null {
 // ─── Main Handler ────────────────────────────────────────────
 
 serve(async (req: Request) => {
+  if (!hasServiceRole(req)) {
+    return new Response(JSON.stringify({ error: "curator_auth_required" }), {
+      status: 403, headers: { "Content-Type": "application/json" },
+    });
+  }
   try {
     // Accept location from request body
     let lat = 26.3587;
@@ -502,9 +508,15 @@ serve(async (req: Request) => {
       });
 
       if (unique.length > 0) {
+        const verifiedAt = new Date().toISOString();
+        const verified = unique.map((event) => ({
+          ...event,
+          last_verified_at: verifiedAt,
+          verification_status: event.source_url || event.ticket_url ? "verified" : "unverified",
+        }));
         const { error } = await supabase
           .from("events")
-          .upsert(unique, { onConflict: "source,source_id" });
+          .upsert(verified, { onConflict: "source,source_id" });
 
         if (error) {
           console.error("[sync-events] Upsert error:", error);

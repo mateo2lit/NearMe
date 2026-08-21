@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.103.0";
 import { runDiscovery, type RunMetrics } from "./runDiscovery.ts";
 import { makeAnthropicClient } from "../_shared/anthropic.ts";
 import * as V from "../_shared/validation.ts";
+import { hasServiceRole } from "../_shared/service-auth.ts";
 
 export type DiscoverEvent =
   | { type: "status"; text: string }
@@ -23,6 +24,7 @@ interface DiscoverRequest {
     supabase: any;
     runEvents: (body: DiscoverRequest["body"]) => AsyncGenerator<DiscoverEvent>;
     runWriter: (row: Record<string, unknown>) => Promise<void>;
+    allowExpensive?: boolean;
   };
 }
 
@@ -117,6 +119,15 @@ export async function handleDiscoverRequest(req: DiscoverRequest): Promise<Respo
     ]);
   }
 
+  // Public clients may reuse a healthy cached catalog, but only a trusted
+  // curator job can spend on web search when a location is thin.
+  if (deps.allowExpensive === false) {
+    return sseResponse([
+      { type: "status", text: "Local coverage is still growing here." },
+      { type: "done" },
+    ]);
+  }
+
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const enc = new TextEncoder();
@@ -189,6 +200,7 @@ if (import.meta.main) serve(async (req) => {
         supabase,
         runEvents: (b) => runDiscovery({ body: b as any, deps: { supabase, anthropic, validation: V }, metrics }),
         runWriter: async (row) => { await supabase.from("claude_runs").insert(row); },
+        allowExpensive: hasServiceRole(req),
       },
     });
   } catch (err) {

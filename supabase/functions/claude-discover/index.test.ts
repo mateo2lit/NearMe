@@ -64,3 +64,23 @@ Deno.test("discover — writes a claude_runs row on done", async () => {
   assertEquals(writes[writes.length - 1].status, "ok");
   assertEquals(writes[writes.length - 1].phase, "discover");
 });
+
+Deno.test("discover — public thin-market request cannot start paid discovery", async () => {
+  let ran = false;
+  const res = await handleDiscoverRequest({
+    body: { user_id: "u1", lat: 26.36, lng: -80.13, radius_miles: 15, geohash: "dhwn1" },
+    deps: {
+      supabase: makeFakeSupabase({
+        singles: { claude_circuit: { enabled: true } },
+        rpcs: { discover_events: [] },
+      }),
+      runEvents: async function* () { ran = true; yield { type: "done" } as DiscoverEvent; },
+      runWriter: async () => {},
+      allowExpensive: false,
+    },
+  });
+  const frames = await readSSE(res);
+  assertEquals(ran, false);
+  assertStringIncludes(frames[0], "coverage is still growing");
+  assertStringIncludes(frames[1], "event: done");
+});

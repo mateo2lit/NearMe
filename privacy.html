@@ -1,79 +1,71 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>NearMe — Privacy Policy</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NearMe Privacy Policy</title>
   <style>
-    body {
-      max-width: 720px;
-      margin: 0 auto;
-      padding: 32px 20px 64px;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      line-height: 1.55;
-      color: #111;
-      background: #fff;
-    }
-    h1 { font-size: 28px; margin-bottom: 4px; }
-    h2 { font-size: 20px; margin-top: 32px; }
-    .meta { color: #666; font-size: 14px; margin-bottom: 24px; }
-    a { color: #5b3df5; }
-    ul { padding-left: 22px; }
-    li { margin-bottom: 6px; }
+    :root { color-scheme: light dark; --bg:#F7F6F2; --card:#fff; --text:#17191C; --muted:#5F646D; --accent:#5146E5; --border:#DEDDD7; }
+    @media (prefers-color-scheme:dark) { :root { --bg:#101114; --card:#191B20; --text:#F4F2ED; --muted:#A9ADB5; --accent:#948BFF; --border:#343841; } }
+    * { box-sizing:border-box; } body { margin:0; background:var(--bg); color:var(--text); font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    main { max-width:760px; margin:0 auto; padding:48px 20px 80px; } h1 { font-size:38px; line-height:1.15; letter-spacing:-1px; margin-bottom:8px; }
+    h2 { font-size:22px; margin-top:34px; } .meta { color:var(--muted); } a { color:var(--accent); } li { margin:8px 0; }
+    .summary { margin-top:28px; padding:18px; border:1px solid var(--border); border-radius:16px; background:var(--card); }
   </style>
 </head>
-<body>
+<body><main>
   <h1>NearMe Privacy Policy</h1>
-  <p class="meta">Effective: May 1, 2026</p>
+  <p class="meta">Effective August 21, 2026</p>
+  <div class="summary">NearMe uses location, preferences, and activity inside the app to recommend nearby events. We do not sell personal information, serve targeted ads, or track you across other companies’ apps or websites.</div>
 
-  <p>NearMe ("we", "us", "the app") is an event-discovery app that helps you find things to do near you. This policy describes what we collect, how we use it, and the choices you have. We try to keep it short and plain.</p>
+  <h2>Who can use NearMe</h2>
+  <p>NearMe is intended for adults age 18 and older. It is not directed to children.</p>
 
-  <h2>What we collect</h2>
+  <h2>Information we collect</h2>
   <ul>
-    <li><strong>Location</strong> — your approximate or precise location, used only to find events and venues near you. You can deny location access; the app will fall back to a default region.</li>
-    <li><strong>Onboarding preferences</strong> — the goals, vibe, schedule, social style, blocker, and budget you select during setup, plus any categories or tags you toggle later. We use these to rank and filter events for you.</li>
-    <li><strong>Activity inside the app</strong> — events you save, hide, or open. We use this to improve your feed and prevent duplicates.</li>
-    <li><strong>Anonymous user ID</strong> — a random UUID stored on your device. We do not collect your name, email, phone number, contacts, or social accounts.</li>
-    <li><strong>Subscription status</strong> — whether you have an active NearMe Pro subscription. Apple processes the payment; we receive only the entitlement status, not your payment details.</li>
+    <li><strong>Location:</strong> precise device location when you grant permission, or a city/address you enter. If you decline location access, you can choose a location manually.</li>
+    <li><strong>Preferences:</strong> interests, purposes, availability, travel radius, budget, social energy, accessibility preferences, and filters you choose.</li>
+    <li><strong>Activity inside NearMe:</strong> event impressions, opens, saves, hides and hide reasons, ticket/source clicks, directions, shares, and post-event feedback. We also record app version, session identifier, and timestamps needed to measure whether recommendations are useful.</li>
+    <li><strong>Anonymous account identifier:</strong> Supabase creates a random authenticated identifier so your profile and activity are protected by per-user access rules. We do not require your name, email address, phone number, contacts, or social accounts.</li>
+    <li><strong>Subscription status:</strong> RevenueCat tells us whether NearMe Plus is active. Apple processes payment; NearMe does not receive card details.</li>
   </ul>
 
-  <h2>How we use it</h2>
+  <h2>How we use information</h2>
   <ul>
-    <li>To find and rank events that match your preferences and location.</li>
-    <li>To remember what you've saved or hidden across sessions.</li>
-    <li>To keep your subscription unlocked across devices that share your Apple ID.</li>
-    <li>To diagnose crashes and improve the app.</li>
+    <li>To retrieve events inside the radius you selected and rank them for your constraints.</li>
+    <li>To learn from saves, dismissals, source clicks, directions, and outcome feedback.</li>
+    <li>To remember preferences and locally saved event snapshots.</li>
+    <li>To measure feed quality, retention, errors, and subscription performance.</li>
+    <li>To prevent abuse, diagnose failures, and improve event accuracy.</li>
   </ul>
 
-  <p>We do <strong>not</strong> sell your data, share it with advertisers, or use it for targeted ads. NearMe does not track you across other apps or websites.</p>
-
-  <h2>Service providers we use</h2>
+  <h2>Service providers</h2>
   <ul>
-    <li><strong>Supabase</strong> — stores your preferences, anonymous user ID, and saved/hidden events on our backend.</li>
-    <li><strong>RevenueCat</strong> — manages your subscription state and tells the app whether your trial or subscription is active.</li>
-    <li><strong>Apple App Store</strong> — processes all payments and trial signups. We never see your card details.</li>
-    <li><strong>Anthropic (Claude)</strong> — receives a small, anonymized payload (your preferences and a list of nearby events) on our server to help rank what to show you. No personally identifying information is sent.</li>
+    <li><strong>Supabase:</strong> authentication, event data, preferences, interactions, and product-quality analytics.</li>
+    <li><strong>RevenueCat and Apple App Store:</strong> optional subscription status and payment processing.</li>
+    <li><strong>Expo and native map services:</strong> app infrastructure, notifications, geocoding, and map display.</li>
+    <li><strong>Anthropic:</strong> server-side extraction and discovery may receive a coarse search location, selected preferences, and public event or venue content. We do not send names, contact details, or Apple payment data.</li>
+    <li><strong>Event sources:</strong> opening a ticket or official source link takes you to that third party, whose privacy policy then applies.</li>
   </ul>
 
-  <p>These providers are bound by their own privacy policies and only receive what they need to run their part of the service.</p>
+  <h2>Sharing and advertising</h2>
+  <p>We do not sell personal information or share it with data brokers or advertising networks. Sponsored event placement, if introduced, will be labeled and will not involve cross-app tracking.</p>
 
-  <h2>Data retention</h2>
-  <p>We keep your preferences and activity for as long as you use NearMe. If you delete the app, your local data is removed from your device. To delete the data we store on our backend, email us and we'll remove your record within 30 days.</p>
+  <h2>Retention and deletion</h2>
+  <p>Local preferences and saved snapshots remain on your device until you clear them or delete the app. Server-side profile, interaction, and product-event records remain while you use NearMe or until deletion is requested. Operational logs and aggregated, de-identified statistics may be retained for security and product analysis.</p>
 
-  <h2>Your rights</h2>
+  <h2>Your choices</h2>
   <ul>
-    <li><strong>Access or delete your data</strong> — email us at <a href="mailto:dbhershman@gmail.com">dbhershman@gmail.com</a> with the subject "NearMe data request".</li>
-    <li><strong>Manage your subscription</strong> — at any time in <em>Settings → Apple ID → Subscriptions</em> on your device.</li>
-    <li><strong>Revoke location access</strong> — at any time in <em>Settings → Privacy → Location Services</em>.</li>
+    <li>Change or revoke location and notification permissions in device Settings.</li>
+    <li>Change personalization constraints or clear local data from the You tab.</li>
+    <li>Manage NearMe Plus through Apple ID → Subscriptions.</li>
+    <li>Request access to or deletion of server-side data by emailing <a href="mailto:dbh28tekkit@gmail.com?subject=NearMe%20data%20request">dbh28tekkit@gmail.com</a> with the subject “NearMe data request.”</li>
   </ul>
 
-  <h2>Children</h2>
-  <p>NearMe is not directed at children under 13 and we do not knowingly collect data from anyone under 13.</p>
+  <h2>Security</h2>
+  <p>NearMe uses encrypted network connections and Supabase row-level security. No online service can guarantee absolute security, so we limit collection to what is needed to run and improve the product.</p>
 
-  <h2>Changes</h2>
-  <p>If we change this policy, we'll update the date at the top of this page. Material changes will also be announced inside the app.</p>
-
-  <h2>Contact</h2>
-  <p>Questions? <a href="mailto:dbhershman@gmail.com">dbhershman@gmail.com</a>.</p>
-</body>
+  <h2>Changes and contact</h2>
+  <p>We may update this policy as NearMe changes. The effective date above identifies the current version. Questions can be sent to <a href="mailto:dbh28tekkit@gmail.com">dbh28tekkit@gmail.com</a>.</p>
+</main></body>
 </html>

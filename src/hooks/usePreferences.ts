@@ -82,6 +82,17 @@ export function usePreferences() {
         hidden_tags: prefs.hiddenTags ?? [],
         default_lat: prefs.lat,
         default_lng: prefs.lng,
+        radius_miles: prefs.radius,
+        intents: prefs.intents ?? [],
+        time_preferences: prefs.timePreferences ?? [],
+        social_energy: prefs.socialEnergy ?? null,
+        company: prefs.company ?? null,
+        budget_max: prefs.budgetMax ?? null,
+        accessibility_needs: prefs.accessibilityNeeds ?? [],
+        alcohol_preference: prefs.alcoholPreference ?? null,
+        age_band: prefs.ageBand ?? null,
+        max_travel_minutes: prefs.maxTravelMinutes ?? null,
+        travel_mode: prefs.travelMode ?? null,
         updated_at: new Date().toISOString(),
       });
       // This upsert used to be fire-and-forget. When it failed — which it did

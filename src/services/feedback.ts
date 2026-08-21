@@ -73,9 +73,8 @@ export async function clearFeedback(eventId: string) {
 }
 
 /**
- * Score boost (positive) or penalty (negative) based on accumulated feedback,
- * computed from category + tag overlap with thumbs-up'd vs thumbs-down'd
- * past events. Used to nudge ranking — caller decides weight.
+ * Score boost based on attended-event outcomes. "Missed it" is deliberately
+ * neutral because non-attendance does not mean the user disliked that topic.
  */
 export function feedbackBias(
   candidate: { category?: string | null; tags?: string[] | null },
@@ -88,7 +87,8 @@ export function feedbackBias(
     const sim = (catMatch ? 1 : 0) + Math.min(2, tagOverlap);
     if (sim === 0) continue;
     if (r.status === "loved") bias += sim;
-    else if (r.status === "missed") bias -= sim;
+    else if (r.status === "ok") bias += sim * 0.25;
+    // "Missed it" means the user did not attend; it is not a taste negative.
   }
   return bias;
 }

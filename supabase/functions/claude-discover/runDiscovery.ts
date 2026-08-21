@@ -283,6 +283,8 @@ async function persistEvent(supabase: any, v: V.EmitEventInput): Promise<Record<
     attendance: null,
     source_url: v.source_url,
     tags: v.tags,
+    last_verified_at: new Date().toISOString(),
+    verification_status: "verified",
   };
   const { data: upserted } = await supabase
     .from("events")

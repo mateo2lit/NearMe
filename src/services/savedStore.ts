@@ -93,7 +93,7 @@ export async function toggleSave(event: Event): Promise<boolean> {
   notify();
 
   await persist();
-  recordInteraction(event.id, nowSaved ? "save" : "dismiss");
+  recordInteraction(event.id, nowSaved ? "save" : "remove");
   return nowSaved;
 }
 
@@ -106,7 +106,7 @@ export async function removeSaved(id: string): Promise<void> {
   state = { ids, events: state.events.filter((e) => e.id !== id), loaded: true };
   notify();
   await persist();
-  recordInteraction(id, "dismiss");
+  recordInteraction(id, "remove");
 }
 
 /**
@@ -115,17 +115,18 @@ export async function removeSaved(id: string): Promise<void> {
  * heart from filling in. Only runs with a real auth session — with a local-only
  * identity the row would be rejected by RLS anyway.
  */
-async function recordInteraction(eventId: string, action: "save" | "dismiss") {
+async function recordInteraction(eventId: string, action: "save" | "dismiss" | "remove") {
   try {
     if (!supabase) return;
     const userId = await getUserId();
     if (getIdentityMode() !== "supabase") return;
-    const { error } = await supabase
-      .from("user_interactions")
-      .upsert(
-        { user_id: userId, event_id: eventId, action },
-        { onConflict: "user_id,event_id" },
-      );
+    const request = action === "remove"
+      ? supabase.from("user_interactions").delete().eq("user_id", userId).eq("event_id", eventId)
+      : supabase.from("user_interactions").upsert(
+          { user_id: userId, event_id: eventId, action },
+          { onConflict: "user_id,event_id" },
+        );
+    const { error } = await request;
     if (error) console.warn("[saved] interaction sync failed:", error.message);
   } catch {
     /* offline — the local save already succeeded */

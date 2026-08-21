@@ -1,186 +1,72 @@
 # NearMe — App Store Listing
 
-## App Name (30 chars max) — 29 chars
-**NearMe: Local Events & Fun**
+## App name
 
-Notes: "Local Events" is one of the top searched terms. Having it in the name gives huge ranking boost. "Fun" is casual/broad.
+NearMe: Local Events & Plans
 
-Backup options if taken:
-- `NearMe — Things To Do` (23 chars)
-- `NearMe: What's Happening` (24 chars)
-- `NearMe: Nightlife & Events` (26 chars)
+## Subtitle
 
----
+Three nearby plans worth your time
 
-## Subtitle (30 chars max) — 29 chars
-**Discover nightlife & hangouts**
+## Promotional text
 
-Notes: Don't duplicate words from the name. "Nightlife" and "hangouts" are high-intent search terms not in the name.
+Choose your time, distance, budget and vibe. NearMe turns verified local listings into a short, useful plan—not an endless event directory.
 
-Backup:
-- `Find things to do tonight` (25)
-- `Tonight's plans, curated` (24)
+## Description
 
----
+**Find a plan worth leaving home for.**
 
-## Keywords Field (100 chars max, comma-separated, NO spaces after commas)
+NearMe ranks nearby events for your interests, available time, travel radius and budget. Open the app for three strong recommendations, explore the wider map, and keep promising events together in Plans.
 
-```
-tonight,nightlife,trivia,karaoke,pickleball,bars,hangout,happening,nearby,date,social,explore
-```
+**Built around real life**
 
-98 chars. Notes:
-- **No duplicates** with name/subtitle words (Apple combines all for search)
-- **Singular** forms only — Apple auto-pluralizes
-- No spaces after commas = more chars for keywords
-- Covers: time ("tonight"), categories ("nightlife", "trivia", "karaoke"), sport ("pickleball"), location intent ("nearby"), social ("date", "hangout")
+• Pick exact weekday, evening and weekend availability
+• Set a maximum radius that NearMe will not silently expand
+• Choose a budget and useful accessibility preferences
+• Adjust the energy from quiet and easygoing to lively
+• Use NearMe solo, with a partner, with friends or with family
 
----
+**A feed you can trust**
 
-## Promotional Text (170 chars max, can be updated anytime without review)
+• Three primary recommendations instead of an endless wall of listings
+• Clear time, venue, distance and price status
+• Source transparency on every event detail page
+• Recurring venue specials kept from dominating the feed
+• Duplicate and expired listings filtered before display
+• Direct links to confirm final details with the organizer or ticket source
 
-**Find what's happening around you right now — from pickleball games to trivia nights to concerts. Your perfect weekend starts here.**
+**Plan together**
 
-Use this for launches, announcements, sales.
+Save an event, share it, get directions and receive optional reminders before it starts. Afterward, tell NearMe whether it was worth it so future recommendations improve.
 
----
+Core event discovery, search, map and saves are free. New NearMe Plus purchases are paused while the next member features are completed. Existing subscribers can still restore and manage their Apple entitlement.
 
-## Description (4000 chars max)
-
-**Your city. Your vibe. Your night.**
-
-Stop scrolling through event sites and Facebook groups trying to find plans. NearMe shows you exactly what's happening within a few miles of you — tonight, tomorrow, this weekend.
-
-**What you'll find:**
-• Live music, concerts & DJ sets
-• Pickup sports — pickleball, basketball, volleyball, soccer
-• Bar nights — karaoke, trivia, happy hours
-• Comedy shows, game nights, open mics
-• Food festivals, farmers markets
-• Yoga, running clubs, fitness classes
-• Family-friendly events
-• Date night ideas
-
-**Built for locals who actually go out.**
-
-Tell NearMe what you're into and when you're free. Get a feed of real events matching your vibe — not random ticket listings and spam. Tap any event to see details, save it for later, or get directions.
-
-**Designed around you:**
-- **Personalized feed** — 7-step onboarding learns your vibe
-- **Real-time** — knows what's "happening now" vs "later tonight"
-- **Smart filters** — 21+, free, outdoor, active, date night, family, and more
-- **Interactive map** — see every event around you at a glance
-- **Save for later** — heart events and revisit them anytime
-- **Any city** — works wherever you go, not just your hometown
-
-**Event sources:**
-NearMe aggregates from Ticketmaster, SeatGeek, local venue websites, city calendars, and more. Fresh data, updated continuously.
-
-**Premium features:**
-• Unlimited events & saves
-• Real-time notifications when something great pops up nearby
-• Advanced filters & tags
-• AI-powered recommendations based on your taste
-
-Try it free for 7 days. Less than $7/month with the yearly plan. Cancel anytime.
-
-**Why NearMe?**
-Because "I don't know, what do you want to do?" is a garbage plan. Open the app. Pick something. Go.
-
-—
-
-**Subscription Information**
-NearMe Premium is an auto-renewable subscription with a 7-day free trial.
-• Yearly: $79.99/year (less than $7/month)
-• Weekly: $4.99/week
-Payment is charged to your Apple ID account at confirmation of purchase. The subscription automatically renews unless it is canceled at least 24 hours before the end of the current period. Manage or cancel anytime in your Apple ID Account Settings.
+Coverage and inventory vary by location. NearMe shows an honest empty state when verified local supply is limited and never sends you to another city without your choice.
 
 Privacy Policy: https://mateo2lit.github.io/NearMe/privacy.html
-Terms of Use (EULA): https://www.apple.com/legal/internet-services/itunes/dev/stdeula/
 
----
+Terms of Use: https://www.apple.com/legal/internet-services/itunes/dev/stdeula/
 
-## What's New (release notes for first version)
-Welcome to NearMe! Your personal guide to everything happening around you. Discover local events, hidden hangouts, pickup games, and more — all curated for your vibe.
+## Keywords
 
----
+events,nearby,weekend,music,food,community,activities,plans,local,map,social,tonight
 
-## Category
-- **Primary:** Lifestyle
-- **Secondary:** Social Networking
+## What's New
 
----
+NearMe has a completely new experience: a best-three personalized feed, exact travel and budget constraints, list/map exploration, a dedicated Plans area, source transparency, accessible light and dark themes, and free access to core discovery.
 
-## Age Rating
-**17+** (due to alcohol-related events — bars, nightlife, happy hours)
+## App Review notes
 
-Questionnaire answers:
-- Alcohol: Infrequent/Mild
-- Gambling: None
-- Mature themes: None
-- Sexual content: None
-- Violence: None
+NearMe is a location-based event discovery app for adults 18+. No email, password or paid subscription is required to enter the app.
 
----
+Testing flow:
 
-## Screenshots (need 6.5" and 6.9")
+1. Tap “Find my plans.”
+2. Choose current location, search for a city, or use a quick location.
+3. Select at least three interests and continue.
+4. Choose time, energy, budget and radius constraints.
+5. Tap “Show my best three” to enter the free main app.
+6. Test For You, Explore list/map, event details, saves and Plans.
+7. Existing subscriptions can be restored under You → NearMe Plus. New purchases are intentionally paused in this build.
 
-**Required sizes:**
-- 6.9" iPhone 17 Pro Max: **1320 × 2868** px (can also use older sizes)
-- 6.5" iPhone 11 Pro Max: **1284 × 2778** or **1242 × 2688** px
-- 5.5" iPhone 8 Plus (optional): 1242 × 2208 px
-
-**Screenshot plan (3-5 total):**
-1. **Hero** — Discover feed with tag filters, "Find what's happening around you" caption
-2. **Map view** — Events plotted, "See every event at a glance"
-3. **Event detail** — Full event card with RSVP button, "Book & go in seconds"
-4. **Tag filters** — The personalization feel, "Filtered to your vibe"
-5. **Saved tab** — "Your plans, in one place"
-
-Pro tip: add a text overlay/caption on each screenshot. Conversion goes up ~20% vs raw screenshots.
-
----
-
-## Support URL
-https://davidhershman.github.io/nearme-support/
-
-(Instructions below for free GitHub Pages hosting)
-
-## Privacy Policy URL
-https://mateo2lit.github.io/NearMe/privacy.html
-
-## Marketing URL (optional)
-Same as support for now.
-
----
-
-## App Review Information
-- **Contact First/Last Name:** YOUR_NAME
-- **Contact Email:** YOUR_EMAIL@example.com
-- **Contact Phone:** (your number)
-- **Demo Account:** (not needed — NearMe doesn't require login)
-- **Notes for reviewer:**
-  > NearMe is a location-based event discovery app. No account/login required. All events come from public APIs (Ticketmaster, Reddit) and public venue websites.
-  >
-  > **How to test the app:**
-  >
-  > 1. Open the app and tap "Get started."
-  > 2. Answer the onboarding questions (goals, vibe, etc).
-  > 3. On the **"Where are you?" step**, you have three options. Any of them will produce a populated event feed:
-  >    - Tap **"Use my location"** to allow GPS, OR
-  >    - Tap any **city chip** (New York, Los Angeles, Miami, Boca Raton, Chicago, Austin, San Francisco, Seattle), OR
-  >    - Type a city/address in the address field and tap "Set."
-  >
-  >    For the fastest path to a populated feed, **tap the "Boca Raton, FL" chip** — that region's database is most densely populated.
-  >
-  > 4. Continue through the building/teaser screens to the paywall.
-  > 5. Tap **"Subscribe"** and complete the **Sandbox IAP purchase** (subscription unlocks the full feed). Sandbox completes without real charges via RevenueCat — no demo account or extra setup needed.
-  > 6. The Discover feed will load with 20+ events for the selected city.
-  >
-  > Subscription products in App Store Connect:
-  > - `com.davidhershman.nearme.pro.annual`
-  > - `com.davidhershman.nearme.pro.weekly`
-  >
-  > If a problem arises:
-  > - The **city chips guarantee a populated feed** even if GPS is unavailable on your test device.
-  > - You can change location anytime via the **Settings tab** (gear icon, bottom right) → Your Location.
+Event coverage varies by geography. Boca Raton, Florida is the strongest quick-choice test market in the current catalog.

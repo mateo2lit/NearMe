@@ -2,126 +2,70 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>NearMe — Privacy Policy</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NearMe Privacy Policy</title>
   <style>
-    :root {
-      --bg: #0f0f1a;
-      --card: #1a1a2e;
-      --border: #2e2e4a;
-      --text: #eeeef6;
-      --muted: #9090b0;
-      --accent: #7c6cf0;
-    }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      background: var(--bg);
-      color: var(--text);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      line-height: 1.7;
-    }
-    .container {
-      max-width: 720px;
-      margin: 0 auto;
-      padding: 60px 24px;
-    }
-    h1 {
-      font-size: 36px;
-      letter-spacing: -0.5px;
-      margin-bottom: 8px;
-    }
-    .updated {
-      color: var(--muted);
-      font-size: 14px;
-      margin-bottom: 32px;
-    }
-    h2 {
-      font-size: 22px;
-      margin: 32px 0 12px;
-    }
-    p, ul {
-      color: var(--muted);
-      margin-bottom: 14px;
-    }
-    ul { padding-left: 20px; }
-    li { margin-bottom: 6px; }
-    a { color: var(--accent); text-decoration: none; }
-    a:hover { text-decoration: underline; }
-    .back {
-      display: inline-block;
-      margin-bottom: 20px;
-      color: var(--muted);
-      font-size: 14px;
-    }
-    strong { color: var(--text); }
+    :root { color-scheme: light dark; --bg:#F7F6F2; --card:#fff; --text:#17191C; --muted:#5F646D; --accent:#5146E5; --border:#DEDDD7; }
+    @media (prefers-color-scheme:dark) { :root { --bg:#101114; --card:#191B20; --text:#F4F2ED; --muted:#A9ADB5; --accent:#948BFF; --border:#343841; } }
+    * { box-sizing:border-box; } body { margin:0; background:var(--bg); color:var(--text); font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    main { max-width:760px; margin:0 auto; padding:48px 20px 80px; } h1 { font-size:38px; line-height:1.15; letter-spacing:-1px; margin-bottom:8px; }
+    h2 { font-size:22px; margin-top:34px; } .meta { color:var(--muted); } a { color:var(--accent); } li { margin:8px 0; }
+    .summary { margin-top:28px; padding:18px; border:1px solid var(--border); border-radius:16px; background:var(--card); }
   </style>
 </head>
-<body>
-  <div class="container">
-    <a href="index.html" class="back">← Back</a>
+<body><main>
+  <h1>NearMe Privacy Policy</h1>
+  <p class="meta">Effective August 21, 2026</p>
+  <div class="summary">NearMe uses location, preferences, and activity inside the app to recommend nearby events. We do not sell personal information, serve targeted ads, or track you across other companies’ apps or websites.</div>
 
-    <h1>Privacy Policy</h1>
-    <div class="updated">Last updated: April 14, 2026</div>
+  <h2>Who can use NearMe</h2>
+  <p>NearMe is intended for adults age 18 and older. It is not directed to children.</p>
 
-    <p>NearMe ("we", "us", or "the app") respects your privacy. This Privacy Policy explains what information we collect, how we use it, and your rights.</p>
+  <h2>Information we collect</h2>
+  <ul>
+    <li><strong>Location:</strong> precise device location when you grant permission, or a city/address you enter. If you decline location access, you can choose a location manually.</li>
+    <li><strong>Preferences:</strong> interests, purposes, availability, travel radius, budget, social energy, accessibility preferences, and filters you choose.</li>
+    <li><strong>Activity inside NearMe:</strong> event impressions, opens, saves, hides and hide reasons, ticket/source clicks, directions, shares, and post-event feedback. We also record app version, session identifier, and timestamps needed to measure whether recommendations are useful.</li>
+    <li><strong>Anonymous account identifier:</strong> Supabase creates a random authenticated identifier so your profile and activity are protected by per-user access rules. We do not require your name, email address, phone number, contacts, or social accounts.</li>
+    <li><strong>Subscription status:</strong> RevenueCat tells us whether NearMe Plus is active. Apple processes payment; NearMe does not receive card details.</li>
+  </ul>
 
-    <h2>Information We Collect</h2>
+  <h2>How we use information</h2>
+  <ul>
+    <li>To retrieve events inside the radius you selected and rank them for your constraints.</li>
+    <li>To learn from saves, dismissals, source clicks, directions, and outcome feedback.</li>
+    <li>To remember preferences and locally saved event snapshots.</li>
+    <li>To measure feed quality, retention, errors, and subscription performance.</li>
+    <li>To prevent abuse, diagnose failures, and improve event accuracy.</li>
+  </ul>
 
-    <p><strong>Location data.</strong> With your permission, NearMe accesses your device's location to show events happening near you. Your precise location is used only on-device to query nearby events from our servers. We do not store your location history.</p>
+  <h2>Service providers</h2>
+  <ul>
+    <li><strong>Supabase:</strong> authentication, event data, preferences, interactions, and product-quality analytics.</li>
+    <li><strong>RevenueCat and Apple App Store:</strong> optional subscription status and payment processing.</li>
+    <li><strong>Expo and native map services:</strong> app infrastructure, notifications, geocoding, and map display.</li>
+    <li><strong>Anthropic:</strong> server-side extraction and discovery may receive a coarse search location, selected preferences, and public event or venue content. We do not send names, contact details, or Apple payment data.</li>
+    <li><strong>Event sources:</strong> opening a ticket or official source link takes you to that third party, whose privacy policy then applies.</li>
+  </ul>
 
-    <p><strong>Preferences.</strong> Your selected interests, tags, search radius, saved events, and custom locations are stored locally on your device. This data is not synced to our servers unless you sign in to a future account feature.</p>
+  <h2>Sharing and advertising</h2>
+  <p>We do not sell personal information or share it with data brokers or advertising networks. Sponsored event placement, if introduced, will be labeled and will not involve cross-app tracking.</p>
 
-    <p><strong>Analytics.</strong> We may collect anonymous usage data (app opens, feature usage, crashes) through standard mobile analytics. This data is aggregated and cannot identify you individually.</p>
+  <h2>Retention and deletion</h2>
+  <p>Local preferences and saved snapshots remain on your device until you clear them or delete the app. Server-side profile, interaction, and product-event records remain while you use NearMe or until deletion is requested. Operational logs and aggregated, de-identified statistics may be retained for security and product analysis.</p>
 
-    <p><strong>Payment data.</strong> If you subscribe to NearMe Premium, payment is processed by Apple via the App Store. We never see or store your payment information.</p>
+  <h2>Your choices</h2>
+  <ul>
+    <li>Change or revoke location and notification permissions in device Settings.</li>
+    <li>Change personalization constraints or clear local data from the You tab.</li>
+    <li>Manage NearMe Plus through Apple ID → Subscriptions.</li>
+    <li>Request access to or deletion of server-side data by emailing <a href="mailto:dbh28tekkit@gmail.com?subject=NearMe%20data%20request">dbh28tekkit@gmail.com</a> with the subject “NearMe data request.”</li>
+  </ul>
 
-    <h2>How We Use Your Information</h2>
+  <h2>Security</h2>
+  <p>NearMe uses encrypted network connections and Supabase row-level security. No online service can guarantee absolute security, so we limit collection to what is needed to run and improve the product.</p>
 
-    <ul>
-      <li>To show you relevant events near your location</li>
-      <li>To personalize your feed based on your selected interests</li>
-      <li>To improve app performance and fix bugs</li>
-      <li>To process your subscription (via Apple)</li>
-    </ul>
-
-    <h2>Third-Party Services</h2>
-
-    <p>NearMe uses the following third-party services. Each has their own privacy policy:</p>
-
-    <ul>
-      <li><strong>Supabase</strong> — backend infrastructure for event data</li>
-      <li><strong>Apple StoreKit</strong> — subscription processing</li>
-      <li><strong>Google Maps</strong> — map display</li>
-      <li><strong>Expo</strong> — app infrastructure</li>
-    </ul>
-
-    <p>Events displayed in the app are sourced from public APIs including Ticketmaster, SeatGeek, Google Places, and public venue websites.</p>
-
-    <h2>Data Sharing</h2>
-
-    <p>We do not sell your personal information. We do not share your data with advertisers or marketing companies. We may share anonymized, aggregated statistics publicly (e.g., "NearMe users saved 10,000 events this month").</p>
-
-    <h2>Your Rights</h2>
-
-    <p>You can:</p>
-    <ul>
-      <li>Turn off location permission at any time in iPhone Settings</li>
-      <li>Reset your preferences via the "Reset App" button in Settings</li>
-      <li>Request deletion of any server-side data by emailing us</li>
-      <li>Cancel your subscription via iPhone Settings → Subscriptions</li>
-    </ul>
-
-    <h2>Children's Privacy</h2>
-
-    <p>NearMe is not intended for users under 17 due to event content that may include bars, nightlife, and alcohol-related activities. We do not knowingly collect information from children under 13.</p>
-
-    <h2>Changes to This Policy</h2>
-
-    <p>We may update this policy occasionally. Significant changes will be communicated in-app. The "Last updated" date at the top reflects the most recent revision.</p>
-
-    <h2>Contact</h2>
-
-    <p>Questions? Email <a href="mailto:dbh28tekkit@gmail.com">dbh28tekkit@gmail.com</a>.</p>
-  </div>
-</body>
+  <h2>Changes and contact</h2>
+  <p>We may update this policy as NearMe changes. The effective date above identifies the current version. Questions can be sent to <a href="mailto:dbh28tekkit@gmail.com">dbh28tekkit@gmail.com</a>.</p>
+</main></body>
 </html>

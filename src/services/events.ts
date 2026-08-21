@@ -20,7 +20,9 @@ export async function triggerLocationSync(
       Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ lat, lng, radius_miles: radiusMiles }),
+    // Client refreshes may update inexpensive catalog sources, but expensive
+    // AI/venue crawling is reserved for explicit shared curator jobs.
+    body: JSON.stringify({ lat, lng, radius_miles: radiusMiles, allow_ai: false, trigger: "client" }),
   });
 
   const captureContext = (data: any) => {
@@ -92,44 +94,8 @@ async function rpcDiscover(
   return (data || []).map((e: any) => ({ ...e, tags: e.tags || [] }));
 }
 
-const MIN_FEED_EVENTS = 20;
-
-function mergeUnique(base: Event[], extra: Event[]): Event[] {
-  const seen = new Set(base.map((e) => e.id));
-  const merged = [...base];
-  for (const e of extra) {
-    if (!seen.has(e.id)) {
-      seen.add(e.id);
-      merged.push(e);
-    }
-  }
-  return merged;
-}
-
-import { DEFAULT_RADIUS_MILES } from "../constants/theme";
-
-/**
- * Pack-the-feed widening only kicks in for the default radius — once the user
- * sets an explicit value (smaller radius, specific tags or categories), we
- * respect their choice and never silently broaden the search.
- */
-
-/**
- * Fetch events. Two regimes:
- *
- * 1. **Default search** (no explicit user filters): pack-the-feed. If the first
- *    query returns <20 events, progressively widen radius and drop filters
- *    until we hit the floor. Memory: "always fill to ~20 events; loosen filters
- *    before showing empty."
- *
- * 2. **Explicit search** (user picked a radius < default OR added tags or
- *    categories): respect their choice as a hard constraint. No widening, no
- *    filter dropping. If they ask for 1mi singles events and there are 3,
- *    they see those 3 — not 30 events from 50mi away with the singles tag
- *    silently dropped.
- *
- * Use cachedOnly=true to return only cached data (no network).
- */
+/** Fetch inside the exact radius and filters requested. Sparse results remain
+ * honest; source refresh runs in the background and affects a later refresh. */
 export async function fetchNearbyEvents(
   lat: number,
   lng: number,
@@ -144,54 +110,15 @@ export async function fetchNearbyEvents(
     return filterPastEvents((await getCachedEvents(lat, lng)) || []);
   }
 
-  const discover = async (...args: Parameters<typeof rpcDiscover>) =>
-    filterPastEvents(await rpcDiscover(...args));
-
-  // User has explicit filter intent if any of these are set. Any radius that
-  // isn't exactly the default counts — including a wider 25mi pick, since the
-  // user picked it deliberately and shouldn't get silently widened past it.
-  const hasExplicitFilter =
-    (categories?.length ?? 0) > 0 ||
-    (tags?.length ?? 0) > 0 ||
-    radiusMiles !== DEFAULT_RADIUS_MILES;
-
-  let events = await discover(lat, lng, radiusMiles, categories, tags);
-
-  // If sparse, trigger a sync + re-fetch before trying wider/looser queries
-  if (events.length < MIN_FEED_EVENTS) {
-    const syncRadius = Math.max(radiusMiles, 25);
-    await triggerLocationSync(lat, lng, syncRadius, true);
-    const refetched = await discover(lat, lng, radiusMiles, categories, tags);
-    events = mergeUnique(events, refetched);
-  } else {
-    triggerLocationSync(lat, lng, Math.max(radiusMiles, 15), false);
-  }
-
-  // RESPECT USER FILTERS: if user picked explicit categories/tags or a tight
-  // radius, don't silently widen or drop their filters. Show what's actually
-  // there at their radius+filters, even if that's <20 events.
-  if (hasExplicitFilter) {
-    if (events.length > 0) setCachedEvents(lat, lng, events);
-    return events;
-  }
-
-  // Default search: tiered widening to pack the feed. Only kicks in when the
-  // user has NOT applied any filters (default radius, no categories, no tags).
-  const widerRadii = [Math.max(radiusMiles, 15), 30, 50, 100].filter(
-    (r) => r > radiusMiles
+  // Radius is a promise to the user, not a feed-density hint. Fetch exactly
+  // what they asked for and improve that same area in the background.
+  const exactEvents = filterPastEvents(
+    await rpcDiscover(lat, lng, radiusMiles, categories, tags),
   );
+  if (exactEvents.length > 0) setCachedEvents(lat, lng, exactEvents);
+  triggerLocationSync(lat, lng, radiusMiles, false).catch(() => {});
+  return exactEvents;
 
-  for (const r of widerRadii) {
-    if (events.length >= MIN_FEED_EVENTS) break;
-    const more = await discover(lat, lng, r, categories, tags);
-    events = mergeUnique(events, more);
-  }
-
-  if (events.length > 0) {
-    setCachedEvents(lat, lng, events);
-  }
-
-  return events;
 }
 
 export async function fetchEventById(id: string): Promise<Event | null> {

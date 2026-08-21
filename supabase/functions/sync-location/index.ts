@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.103.0";
 import { generateTags } from "../_shared/tag-generator.ts";
+import { hasServiceRole } from "../_shared/service-auth.ts";
 import {
   mapTMCategory,
   mapVenueCategory,
@@ -1377,6 +1378,9 @@ serve(async (req: Request) => {
     const lat = body.lat;
     const lng = body.lng;
     const radiusMiles = body.radius_miles || 15;
+    // Cost guard: public/client requests are catalog-only. AI extraction,
+    // Places expansion and venue crawling require an explicit curator job.
+    const allowAi = body.allow_ai === true && hasServiceRole(req);
 
     if (lat == null || lng == null) {
       return new Response(JSON.stringify({ error: "lat and lng required" }), {
@@ -1433,7 +1437,7 @@ serve(async (req: Request) => {
     const inFullCooldown = wasHealthy && hoursSince < SYNC_COOLDOWN_HOURS;
     const inThinCooldown = !wasHealthy && lastCount > 0 && minutesSince < 15;
 
-    if (inFullCooldown || inThinCooldown) {
+    if ((inFullCooldown || inThinCooldown) && !allowAi) {
       return new Response(
         JSON.stringify({
           synced: false,
@@ -1451,7 +1455,9 @@ serve(async (req: Request) => {
     console.log(`[sync] ${gridKey} geohash=${geohash} (${hoursSince.toFixed(1)}h since)`);
 
     // 1. Venues
-    const venueCount = await syncVenues(lat, lng, radiusMiles * 1609.34);
+    const venueCount = allowAi
+      ? await syncVenues(lat, lng, radiusMiles * 1609.34)
+      : 0;
 
     // 2. Fast API sources in parallel. SeatGeek/Bandsintown/Yelp removed —
     // their APIs are silently dead in our coverage. When the prior sync was
@@ -1485,14 +1491,14 @@ serve(async (req: Request) => {
       uniRaw,
       hsRaw,
     ] = await Promise.all([
-      fetchRedditEvents(lat, lng, { categoryHint }),
-      scanVenues(lat, lng, radiusMeters, {
+      allowAi ? fetchRedditEvents(lat, lng, { categoryHint }) : Promise.resolve([]),
+      allowAi ? scanVenues(lat, lng, radiusMeters, {
         categoryHint,
         fastEventCount: tm.length + eb.length,
         thinPriorSync,
-      }),
-      fetchNeighborhood(lat, lng),
-      ANTHROPIC_API_KEY
+      }) : Promise.resolve([]),
+      allowAi ? fetchNeighborhood(lat, lng) : Promise.resolve(null),
+      allowAi && ANTHROPIC_API_KEY
         ? fetchMeetupEvents({
             lat, lng,
             anthropicKey: ANTHROPIC_API_KEY,
@@ -1504,21 +1510,21 @@ serve(async (req: Request) => {
         googleApiKey: GOOGLE_API_KEY || undefined,
         daysForward: 14,
       }),
-      GOOGLE_API_KEY && ANTHROPIC_API_KEY
+      allowAi && GOOGLE_API_KEY && ANTHROPIC_API_KEY
         ? fetchPickleheadsEvents({
             lat, lng,
             googleApiKey: GOOGLE_API_KEY,
             anthropicKey: ANTHROPIC_API_KEY,
           })
         : Promise.resolve([]),
-      GOOGLE_API_KEY
+      allowAi && GOOGLE_API_KEY
         ? fetchUniversityEvents({
             lat, lng,
             radiusMeters,
             googleApiKey: GOOGLE_API_KEY,
           })
         : Promise.resolve([]),
-      GOOGLE_API_KEY && ANTHROPIC_API_KEY
+      allowAi && GOOGLE_API_KEY && ANTHROPIC_API_KEY
         ? fetchHighSchoolSports({
             lat, lng,
             radiusMeters,
@@ -1794,7 +1800,13 @@ serve(async (req: Request) => {
     }
 
     if (unique.length > 0) {
-      await supabase.from("events").upsert(unique, { onConflict: "source,source_id" });
+      const verifiedAt = new Date().toISOString();
+      const verified = unique.map((event) => ({
+        ...event,
+        last_verified_at: verifiedAt,
+        verification_status: event.source_url || event.ticket_url ? "verified" : "unverified",
+      }));
+      await supabase.from("events").upsert(verified, { onConflict: "source,source_id" });
     }
 
     // Log sync with both geohash and grid_key for backwards compat
