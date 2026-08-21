@@ -28,8 +28,20 @@ async function load(): Promise<FeedbackMap> {
   return memo!;
 }
 
+const listeners = new Set<(map: FeedbackMap) => void>();
+
+/**
+ * Subscribe to feedback changes. Returns an unsubscribe function. Screens use
+ * this instead of polling so a DidYouGo tap re-groups the list immediately.
+ */
+export function subscribeFeedback(fn: (map: FeedbackMap) => void): () => void {
+  listeners.add(fn);
+  return () => { listeners.delete(fn); };
+}
+
 async function persist(map: FeedbackMap) {
   memo = map;
+  for (const l of listeners) l({ ...map });
   try {
     await AsyncStorage.setItem(KEY, JSON.stringify(map));
   } catch { /* best-effort */ }

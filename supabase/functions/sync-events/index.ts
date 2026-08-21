@@ -2,6 +2,37 @@ import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.103.0";
 import { generateTags } from "../_shared/tag-generator.ts";
 import { mapTMCategory, mapSGCategory } from "../_shared/category-mapper.ts";
+import { callClaudeList, FAST_MODEL } from "../_shared/anthropic.ts";
+
+const SCANNER_SYSTEM = [
+  "You extract recurring events, weekly specials, and activities from a venue's website text.",
+  "Titles are specific — 'Tuesday Trivia Night', never just 'Trivia'.",
+  "Descriptions are 1-2 sentences.",
+  "Set day_of_week for recurring nights; leave it null for one-time events.",
+  "If no events are found, return an empty list.",
+].join("\n");
+
+const SCANNER_EVENT_SCHEMA = {
+  type: "object",
+  properties: {
+    title: { type: "string" },
+    description: { type: "string" },
+    category: {
+      type: "string",
+      enum: ["nightlife", "music", "sports", "food", "arts", "community", "fitness", "outdoors", "movies"],
+    },
+    subcategory: { type: "string" },
+    day_of_week: {
+      type: ["string", "null"],
+      enum: ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", null],
+    },
+    time: { type: ["string", "null"], description: 'e.g. "7:30 PM"' },
+    is_free: { type: "boolean" },
+    price: { type: ["number", "null"] },
+  },
+  required: ["title", "description", "category", "subcategory", "day_of_week", "time", "is_free"],
+  additionalProperties: false,
+} as const;
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -260,60 +291,37 @@ async function extractEventsWithLLM(html: string, venueName: string, venueCatego
 
   if (textContent.length < 100) return [];
 
-  try {
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 1024,
-        messages: [{
-          role: "user",
-          content: `Extract recurring events, weekly specials, and activities from this ${venueCategory} venue's website. Venue: "${venueName}"
+  const { data: parsed, error } = await callClaudeList<any>({
+    label: "scanner-extract",
+    model: FAST_MODEL,
+    maxTokens: 1024,
+    effort: "low",
+    key: "events",
+    cacheSystem: true,
+    system: SCANNER_SYSTEM,
+    itemSchema: SCANNER_EVENT_SCHEMA,
+    prompt: [
+      `Venue: "${venueName}" (${venueCategory}).`,
+      "",
+      "Text:",
+      textContent,
+    ].join("\n"),
+  });
 
-Text:
-${textContent}
-
-Return a JSON array. Each event needs:
-- title (string, specific like "Tuesday Trivia Night" not just "Trivia")
-- description (1-2 sentences)
-- category (nightlife|music|sports|food|arts|community|fitness|outdoors|movies)
-- subcategory (trivia|karaoke|happy_hour|live_music|dj_set|open_mic|game_night|dancing|comedy|yoga|pickleball|etc)
-- day_of_week (monday|tuesday|etc, if recurring)
-- time (e.g. "7:30 PM")
-- is_free (boolean)
-- price (number or null)
-
-Return ONLY valid JSON array. If no events found, return [].`,
-        }],
-      }),
-    });
-
-    const data = await response.json();
-    const text = data.content?.[0]?.text || "[]";
-    // Extract JSON from response (handle markdown code blocks)
-    const jsonMatch = text.match(/\[[\s\S]*\]/);
-    if (!jsonMatch) return [];
-    const parsed = JSON.parse(jsonMatch[0]);
-    if (!Array.isArray(parsed)) return [];
-
-    return parsed.map((item: any) => ({
-      title: item.title || "", description: item.description || "",
-      category: item.category || "community", subcategory: item.subcategory || "event",
-      start_time: null, end_time: null,
-      is_recurring: !!item.day_of_week,
-      recurrence_rule: item.day_of_week ? `every ${item.day_of_week}` : null,
-      is_free: item.is_free || false,
-      price_min: item.price || null, price_max: null,
-    }));
-  } catch (err) {
-    console.error("[scanner] LLM error:", err);
+  if (error) {
+    console.warn("[scanner]", error);
     return [];
   }
+
+  return (parsed ?? []).map((item: any) => ({
+    title: item.title || "", description: item.description || "",
+    category: item.category || "community", subcategory: item.subcategory || "event",
+    start_time: null, end_time: null,
+    is_recurring: !!item.day_of_week,
+    recurrence_rule: item.day_of_week ? `every ${item.day_of_week}` : null,
+    is_free: item.is_free || false,
+    price_min: item.price || null, price_max: null,
+  }));
 }
 
 async function scanVenueWebsites(lat: number, lng: number, radiusMeters: number) {

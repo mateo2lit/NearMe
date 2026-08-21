@@ -12,6 +12,34 @@
  * signal pickleball-specific source we have.
  */
 
+import { callClaudeList, FAST_MODEL } from "./anthropic.ts";
+
+const PICKLE_SYSTEM = [
+  "You extract pickleball events from Pickleheads city page text.",
+  "Look for: open-play sessions (recurring — emit the next occurrence), leagues,",
+  "tournaments, clinics, and drop-in sessions, each with a court name and day/time.",
+  "Titles must be specific — 'Tuesday 6 PM Open Play at Patch Reef', never 'Pickleball'.",
+  "Descriptions are 1-2 sentences: skill level, court, format.",
+  "is_free is true when no fee is mentioned.",
+  "Drop generic listings with no specific time or court, and skip past events.",
+  "If nothing real is present, return an empty list.",
+].join("\n");
+
+const PICKLE_EVENT_SCHEMA = {
+  type: "object",
+  properties: {
+    title: { type: "string" },
+    description: { type: "string" },
+    venue_name: { type: ["string", "null"] },
+    address_hint: { type: ["string", "null"] },
+    start_time: { type: ["string", "null"], description: "ISO 8601 next occurrence, else null" },
+    is_free: { type: "boolean" },
+    source_url: { type: ["string", "null"] },
+  },
+  required: ["title", "description", "start_time", "is_free"],
+  additionalProperties: false,
+} as const;
+
 interface PickleExtract {
   source: "pickleheads";
   source_id: string;
@@ -87,7 +115,6 @@ function slugify(s: string): string {
 async function extractWithClaude(
   html: string,
   cityLabel: string,
-  anthropicKey: string,
   sourceUrl: string,
 ): Promise<PickleExtract[]> {
   const text = html
@@ -101,66 +128,44 @@ async function extractWithClaude(
 
   if (text.length < 200) return [];
 
-  try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": anthropicKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 2000,
-        messages: [{
-          role: "user",
-          content: `Extract upcoming pickleball events from this Pickleheads ${cityLabel} city page text. Look for:
-- Open-play sessions (recurring) — extract the next occurrence
-- League events, tournaments, clinics, drop-in sessions
-- Court name + day/time
+  const { data, error } = await callClaudeList<any>({
+    label: "pickleheads-extract",
+    model: FAST_MODEL,
+    maxTokens: 2000,
+    effort: "low",
+    key: "events",
+    cacheSystem: true,
+    system: PICKLE_SYSTEM,
+    itemSchema: PICKLE_EVENT_SCHEMA,
+    prompt: [
+      `Extract upcoming pickleball events from this Pickleheads ${cityLabel} city page text.`,
+      `When no court detail URL is shown, use "${sourceUrl}" as source_url.`,
+      "",
+      "Page text:",
+      text,
+    ].join("\n"),
+  });
 
-Page text:
-${text}
-
-Return a JSON array. Each event must have:
-- title (specific — e.g., "Tuesday 6 PM Open Play at Patch Reef" NOT "Pickleball")
-- description (1-2 sentences: skill level + court + format)
-- venue_name (the court/facility name)
-- address_hint (any address/area info)
-- start_time (ISO 8601 if the next occurrence is clear; otherwise null)
-- is_free (boolean — true if no fee mentioned)
-- source_url (court detail page URL if shown, else "${sourceUrl}")
-
-Drop generic listings ("Pickleball", "Open Play") with no specific time or court. Skip past events.
-
-Return ONLY a JSON array. If nothing real, return [].`,
-        }],
-      }),
-    });
-    const data = await res.json();
-    const content = data?.content?.[0]?.text || "[]";
-    const m = content.match(/\[[\s\S]*\]/);
-    if (!m) return [];
-    const parsed = JSON.parse(m[0]);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter((p: any) => p && p.title && p.start_time)
-      .map((p: any) => ({
-        source: "pickleheads" as const,
-        source_id: `pickleheads-${slugify(p.title || "")}-${(p.start_time || "").slice(0, 10)}`,
-        title: p.title,
-        description: p.description || `Pickleball at ${p.venue_name || "local court"}.`,
-        category: "sports" as const,
-        subcategory: "pickleball" as const,
-        venue_name: p.venue_name || "",
-        address_hint: p.address_hint || "",
-        start_time: p.start_time,
-        is_free: p.is_free !== false,
-        source_url: p.source_url || sourceUrl,
-      }));
-  } catch {
+  if (error) {
+    console.warn("[pickleheads]", error);
     return [];
   }
+
+  return (data ?? [])
+    .filter((p: any) => p && p.title && p.start_time)
+    .map((p: any) => ({
+      source: "pickleheads" as const,
+      source_id: `pickleheads-${slugify(p.title || "")}-${(p.start_time || "").slice(0, 10)}`,
+      title: p.title,
+      description: p.description || `Pickleball at ${p.venue_name || "local court"}.`,
+      category: "sports" as const,
+      subcategory: "pickleball" as const,
+      venue_name: p.venue_name || "",
+      address_hint: p.address_hint || "",
+      start_time: p.start_time,
+      is_free: p.is_free !== false,
+      source_url: p.source_url || sourceUrl,
+    }));
 }
 
 export interface PickleheadsOpts {
@@ -197,7 +202,6 @@ export async function fetchPickleheadsEvents(opts: PickleheadsOpts): Promise<Pic
     const events = await extractWithClaude(
       html,
       `${geo.city}, ${geo.state}`,
-      opts.anthropicKey,
       url,
     );
     console.log(`[pickleheads] ${events.length} from ${url}`);

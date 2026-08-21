@@ -1,5 +1,6 @@
 import { assertEquals } from "https://deno.land/std@0.177.0/testing/asserts.ts";
 import { handleRankRequest } from "./index.ts";
+import { makeFakeSupabase } from "../_shared/test-fakes.ts";
 
 const fakeProfile = {
   goals: ["live-music","drinks-nightlife"],
@@ -14,33 +15,23 @@ const fakeEvents = [
   { id: "e2", title: "Crossfit class",   category: "fitness", tags: ["active"],    is_free: false, price_min: 25 },
 ];
 
-const fakeSupabase = {
-  from(table: string) {
-    return {
-      select() { return this; },
-      eq() { return this; },
-      in() { return this; },
-      single: async () => ({ data: fakeProfile, error: null }),
-      then(cb: any) {
-        if (table === "events") return cb({ data: fakeEvents, error: null });
-        return cb({ data: fakeProfile, error: null });
-      },
-    } as any;
-  },
-};
+const fakeSupabase = makeFakeSupabase({
+  tables: { events: fakeEvents },
+  singles: { user_profiles: fakeProfile, claude_circuit: { enabled: true } },
+});
 
 const fakeAnthropic = {
   messages: {
     create: async (_opts: any) => ({
       content: [{
         type: "text",
-        text: JSON.stringify([
+        text: JSON.stringify({ rankings: [
           { event_id: "e1", rank_score: 95, blurb: "Live music + free — matches your goals" },
           { event_id: "e2", rank_score: 5,  blurb: "Active scene if you want a workout" },
-        ]),
+        ] }),
       }],
       usage: { input_tokens: 1000, output_tokens: 80, cache_read_input_tokens: 0 },
-      model: "claude-haiku-4-5-20251001",
+      model: "claude-haiku-4-5",
     }),
   },
 };

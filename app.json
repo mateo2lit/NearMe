@@ -47,6 +47,13 @@
         {
           "locationWhenInUsePermission": "NearMe uses your location to show events and activities happening near you."
         }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#7c6cf0",
+          "defaultChannel": "default"
+        }
       ]
     ],
     "extra": {

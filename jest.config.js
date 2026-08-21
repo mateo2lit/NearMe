@@ -7,5 +7,9 @@ module.exports = {
     "^expo-router$": "<rootDir>/__mocks__/expo-router.js",
   },
   testMatch: ["**/?(*.)+(spec|test).[jt]s?(x)"],
+  // Edge-function tests import Deno URLs that Jest cannot resolve. They run
+  // under `npm run test:edge` instead. Without this they reported as six
+  // "failed to run" suites on every run, which trained us to ignore them.
+  testPathIgnorePatterns: ["/node_modules/", "<rootDir>/supabase/"],
   moduleFileExtensions: ["ts", "tsx", "js", "jsx"],
 };

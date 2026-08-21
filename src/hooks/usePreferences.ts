@@ -1,22 +1,36 @@
 import { useState, useEffect, useCallback } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import * as Crypto from "expo-crypto";
 import { EventCategory, UserPreferences } from "../types";
 import { BOCA_RATON, DEFAULT_RADIUS_MILES } from "../constants/theme";
 import { supabase } from "../services/supabase";
-
-const USER_ID_KEY = "@nearme_user_id";
+import { getUserId } from "../services/identity";
 
 const PREFS_KEY = "@nearme_preferences";
 const ONBOARDED_KEY = "@nearme_onboarded";
 
-export async function getOrCreateUserId(): Promise<string> {
-  let id = await AsyncStorage.getItem(USER_ID_KEY);
-  if (!id) {
-    id = Crypto.randomUUID();
-    await AsyncStorage.setItem(USER_ID_KEY, id);
-  }
-  return id;
+/**
+ * Kept as a named export because half the app imports it from here. The real
+ * implementation now lives in services/identity.ts, which signs the device in
+ * anonymously so the id is a genuine auth.users row — a local UUID could never
+ * satisfy the RLS policy or the FK on user_profiles.
+ */
+export const getOrCreateUserId = getUserId;
+
+export interface ProfileSyncState {
+  ok: boolean;
+  message?: string;
+  at: number;
+}
+
+let profileSync: ProfileSyncState | null = null;
+
+export function setProfileSyncState(state: ProfileSyncState) {
+  profileSync = state;
+}
+
+/** Last known result of pushing the profile to Supabase — surfaced in Settings. */
+export function getProfileSyncState(): ProfileSyncState | null {
+  return profileSync;
 }
 
 const DEFAULT_PREFS: UserPreferences = {
@@ -53,7 +67,7 @@ export function usePreferences() {
 
     const userId = await getOrCreateUserId();
     if (supabase) {
-      await supabase.from("user_profiles").upsert({
+      const { error } = await supabase.from("user_profiles").upsert({
         id: userId,
         goals: prefs.onboarding?.goals ?? [],
         vibe: prefs.onboarding?.vibe ?? null,
@@ -70,6 +84,15 @@ export function usePreferences() {
         default_lng: prefs.lng,
         updated_at: new Date().toISOString(),
       });
+      // This upsert used to be fire-and-forget. When it failed — which it did
+      // for every user, because the row id wasn't an auth.users id — Claude
+      // ranking and discovery both got profile_not_found and the app quietly
+      // stopped personalizing. Never swallow it again.
+      setProfileSyncState(
+        error ? { ok: false, message: error.message, at: Date.now() }
+              : { ok: true, at: Date.now() },
+      );
+      if (error) console.warn("[prefs] profile sync failed:", error.message);
     }
   }, []);
 

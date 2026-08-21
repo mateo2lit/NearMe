@@ -171,7 +171,8 @@ export async function handleDiscoverRequest(req: DiscoverRequest): Promise<Respo
   });
 }
 
-serve(async (req) => {
+// Live entry point. Guarded so importing this module in a test doesn't bind a port.
+if (import.meta.main) serve(async (req) => {
   if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
   try {
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);

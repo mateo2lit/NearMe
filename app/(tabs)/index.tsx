@@ -29,6 +29,7 @@ import { isTonight, isTomorrow, isThisWeekend, effectiveStart, isHappeningNow, i
 import { useClaudeRefresh, applyRanking } from "../../src/hooks/useClaudeRefresh";
 import { ClaudeRefreshOverlay } from "../../src/components/ClaudeRefreshOverlay";
 import { getOrCreateUserId } from "../../src/hooks/usePreferences";
+import { useSaved } from "../../src/services/savedStore";
 import { useRatingTriggers } from "../../src/hooks/useRatingTriggers";
 import { RatingPrompt } from "../../src/components/RatingPrompt";
 import { geohashEncode } from "../../src/lib/geohash";
@@ -413,7 +414,7 @@ export default function DiscoverScreen() {
   const [picks, setPicks] = useState<Event[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
+  const { savedIds, toggleSave: toggleSavedEvent } = useSaved();
   const [filter, setFilter] = useState<FilterValue>({ categories: [], tags: [], radiusMiles: DEFAULT_RADIUS_MILES });
   const [showFilters, setShowFilters] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
@@ -512,13 +513,6 @@ export default function DiscoverScreen() {
     }, [loadEvents, location.loading])
   );
 
-  useEffect(() => {
-    (async () => {
-      const saved = await AsyncStorage.getItem("@nearme_saved");
-      if (saved) setSavedIds(new Set(JSON.parse(saved)));
-    })();
-  }, []);
-
   const onRefresh = useCallback(async () => {
     if (!location.lat || !location.lng) return;
     // Guard against concurrent starts: if a prior refresh is still streaming
@@ -558,28 +552,10 @@ export default function DiscoverScreen() {
   );
 
   const toggleSave = async (event: Event) => {
-    // Read-once: the previous version read @nearme_saved_events twice when
-    // unsaving, and conditionally wrote when saving. Now we read once, mutate
-    // a local array, and write the final state back.
-    const newSaved = new Set(savedIds);
-    const savedEventsStr = await AsyncStorage.getItem("@nearme_saved_events");
-    const savedEvents: Event[] = savedEventsStr ? JSON.parse(savedEventsStr) : [];
-    let nextSavedEvents = savedEvents;
-    const isUnsave = newSaved.has(event.id);
-    if (isUnsave) {
-      newSaved.delete(event.id);
-      nextSavedEvents = savedEvents.filter((e) => e.id !== event.id);
-    } else {
-      newSaved.add(event.id);
-      if (!savedEvents.find((e) => e.id === event.id)) {
-        nextSavedEvents = [...savedEvents, event];
-      }
-    }
-    setSavedIds(newSaved);
-    await AsyncStorage.multiSet([
-      ["@nearme_saved_events", JSON.stringify(nextSavedEvents)],
-      ["@nearme_saved", JSON.stringify([...newSaved])],
-    ]);
+    // The store owns persistence, cross-screen propagation, and the
+    // user_interactions mirror. This screen only handles the side effects.
+    const nowSaved = await toggleSavedEvent(event);
+    const isUnsave = !nowSaved;
 
     // Reminder side-effect — fire-and-forget so the heart toggles instantly.
     // Reads remindersEnabled + quietHours each time so a Settings change

@@ -14,6 +14,89 @@ import { fetchCollegeSports } from "../_shared/espn-sports.ts";
 import { fetchPickleheadsEvents } from "../_shared/pickleheads.ts";
 import { fetchUniversityEvents } from "../_shared/university-events.ts";
 import { fetchHighSchoolSports } from "../_shared/highschool-sports.ts";
+import { callClaudeJson, callClaudeList, FAST_MODEL } from "../_shared/anthropic.ts";
+
+// ─── Extraction prompts ──────────────────────────────────────
+// These are deliberately free of per-request values so they sit above the
+// cache breakpoint. Anything that varies (venue name, page text, subreddit)
+// goes in the user prompt instead — otherwise the cache never hits.
+
+const VENUE_EXTRACT_SYSTEM = [
+  "You extract local events from a venue's website text for an events app.",
+  "",
+  "PRIORITIZE finding:",
+  "1. Singles/dating: speed dating, singles mixers, matchmaker events, solo-friendly nights",
+  "2. Recurring nights: trivia, karaoke, open mic, happy hour, DJ sets, live music, game night",
+  "3. Active/social: pickup sports, run clubs, yoga, fitness classes with a social element",
+  "4. Special events: tastings, comedy, paint & sip, dinner shows, date nights",
+  "",
+  "Titles are specific — 'Tuesday Speed Dating', never 'Dating Event'.",
+  "Descriptions are 1-2 sentences describing what attendees actually do.",
+  "BE AGGRESSIVE: extract any recurring activity or special event, including happy",
+  "hours and drink specials that come with entertainment.",
+  "Set day_of_week for recurring nights and leave it null for one-time events.",
+  "If nothing is found, return an empty list.",
+].join("\n");
+
+const VENUE_EVENT_SCHEMA = {
+  type: "object",
+  properties: {
+    title: { type: "string" },
+    description: { type: "string" },
+    category: {
+      type: "string",
+      enum: ["nightlife", "music", "sports", "food", "arts", "community", "fitness", "outdoors", "movies"],
+    },
+    subcategory: { type: "string" },
+    day_of_week: {
+      type: ["string", "null"],
+      enum: ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", null],
+    },
+    time: { type: ["string", "null"], description: 'e.g. "7:30 PM", or null' },
+    is_free: { type: "boolean" },
+    price: { type: ["number", "null"], description: "USD" },
+  },
+  required: ["title", "description", "category", "subcategory", "day_of_week", "time", "is_free"],
+  additionalProperties: false,
+} as const;
+
+const REDDIT_SYSTEM = [
+  "You extract specific local events from Reddit posts. Only real, upcoming events",
+  "with clear dates and venues — skip general discussion.",
+  "",
+  "PRIORITIZE these high-value local-flavor event types:",
+  "- College sports games (football, basketball, baseball, hockey, soccer, lacrosse) — opponent + date + campus venue",
+  "- Tailgates, watch parties, alumni gatherings",
+  "- Local club / intramural sports meetups",
+  "- Campus events (move-in, homecoming, lectures, concerts)",
+  "- Singles / dating events, mixers, speed dating",
+  "- Bar trivia, karaoke, open mic, themed nights with specific times",
+  "",
+  "Titles are specific — 'FAU vs UAB Football', never 'Football Game'.",
+  "Drop anything with a generic title ('Event', 'Game Night', 'Weekly Special') or",
+  "an empty description — those aren't actionable. source_url is the reddit permalink.",
+  "If no real events are present, return an empty list.",
+].join("\n");
+
+const REDDIT_EVENT_SCHEMA = {
+  type: "object",
+  properties: {
+    title: { type: "string" },
+    description: { type: "string" },
+    category: {
+      type: "string",
+      enum: ["music", "sports", "food", "nightlife", "arts", "community", "fitness", "outdoors", "movies"],
+    },
+    subcategory: { type: "string" },
+    venue_name: { type: ["string", "null"] },
+    address_hint: { type: ["string", "null"] },
+    start_time: { type: ["string", "null"], description: "ISO 8601 when clear, else null" },
+    is_free: { type: "boolean" },
+    source_url: { type: "string" },
+  },
+  required: ["title", "description", "category", "subcategory", "start_time", "is_free", "source_url"],
+  additionalProperties: false,
+} as const;
 
 /**
  * Strip HTML/markup from a description and cap its length. Schema.org JSON-LD
@@ -777,56 +860,29 @@ async function fetchRedditEvents(
 
       if (postTexts.length < 100) continue;
 
-      const claudeRes = await timeoutFetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
+      const { data: extractedList, error: redditErr } = await callClaudeList<any>({
+        label: `reddit:${sub}`,
+        model: FAST_MODEL,
+        maxTokens: 1500,
+        effort: "low",
+        key: "events",
+        cacheSystem: true,
+        system: REDDIT_SYSTEM,
+        itemSchema: REDDIT_EVENT_SCHEMA,
         timeoutMs: 30_000,
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": ANTHROPIC_API_KEY!,
-          "anthropic-version": "2023-06-01",
-        },
-        body: JSON.stringify({
-          model: "claude-haiku-4-5-20251001",
-          max_tokens: 1500,
-          messages: [{
-            role: "user",
-            content: `Extract specific local events from these Reddit posts about r/${sub}. Only include real, upcoming events with clear dates/venues. Skip general discussion posts.
-
-PRIORITIZE these high-value local-flavor event types:
-- College sports games (football, basketball, baseball, hockey, soccer, lacrosse) — extract opponent + date + venue (campus stadium)
-- Tailgates, watch parties, alumni gatherings
-- Local club / intramural sports meetups
-- College events (move-in, homecoming, lectures, concerts on campus)
-- Singles / dating events, mixers, speed dating
-- Bar trivia, karaoke, open mic, themed nights with specific times
-${varietyHintBlock(opts?.categoryHint)}
-
-Posts:
-${postTexts}
-
-Return a JSON array. Each event:
-- title (specific — e.g., "FAU vs UAB Football" NOT "Football Game")
-- description (1-2 sentences describing what attendees do)
-- category (music|sports|food|nightlife|arts|community|fitness|outdoors|movies)
-- subcategory
-- venue_name (if mentioned)
-- address_hint (any address/neighborhood info)
-- start_time (ISO 8601 if date/time clear, null if vague)
-- is_free (boolean)
-- source_url (the reddit permalink)
-
-Drop anything where title is generic ("Event", "Game Night", "Weekly Special") or description is empty — those aren't actionable.
-
-Return ONLY the JSON array. If no real events, return [].`,
-          }],
-        }),
+        prompt: [
+          `Extract specific local events from these r/${sub} posts.`,
+          varietyHintBlock(opts?.categoryHint),
+          "",
+          "Posts:",
+          postTexts,
+        ].join("\n"),
       });
-      const cd = await claudeRes.json();
-      const content = cd.content?.[0]?.text || "[]";
-      const match = content.match(/\[[\s\S]*\]/);
-      if (!match) continue;
-      const extracted = JSON.parse(match[0]);
-      if (!Array.isArray(extracted)) continue;
+      if (redditErr) {
+        console.log(`[reddit:${sub}] ${redditErr}`);
+        continue;
+      }
+      const extracted = extractedList ?? [];
 
       for (const ev of extracted) {
         if (!ev.title || !ev.start_time) continue;
@@ -932,56 +988,34 @@ async function extractWithClaude(
 
   if (text.length < 100) return [];
 
-  try {
-    const res = await timeoutFetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
+  {
+    const { data: parsed, error } = await callClaudeList<any>({
+      label: "venue-extract",
+      model: FAST_MODEL,
+      maxTokens: 1500,
+      effort: "low",
+      key: "events",
+      // The rules are identical for every venue in every city, so this block
+      // caches across the whole scan fan-out — which is where the token spend
+      // actually lives. Venue name, category and page text stay in the prompt.
+      cacheSystem: true,
+      system: VENUE_EXTRACT_SYSTEM,
+      itemSchema: VENUE_EVENT_SCHEMA,
       timeoutMs: 30_000,
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 1500,
-        messages: [{
-          role: "user",
-          content: `Extract local events from this ${venueCategory} venue's website for an events app. Venue: "${venueName}"
-
-PRIORITIZE finding:
-1. Singles/dating: speed dating, singles mixers, matchmaker events, solo-friendly nights
-2. Recurring nights: trivia, karaoke, open mic, happy hour, DJ sets, live music, game night
-3. Active/social: pickup sports, run clubs, yoga, fitness classes with social element
-4. Special events: tastings, comedy, paint & sip, dinner shows, date nights
-${varietyHintBlock(opts?.categoryHint)}
-
-Website text:
-${text}
-
-Return a JSON array. Each event must have:
-- title (specific like "Tuesday Speed Dating" NOT just "Dating Event")
-- description (1-2 sentences describing what attendees do)
-- category (nightlife|music|sports|food|arts|community|fitness|outdoors|movies)
-- subcategory (trivia|karaoke|happy_hour|live_music|dj_set|open_mic|game_night|dancing|comedy|yoga|pickleball|speed_dating|singles_mixer|tasting|paint_sip|etc)
-- day_of_week (monday|tuesday|wednesday|thursday|friday|saturday|sunday, or null for one-time)
-- time (e.g. "7:30 PM" or null)
-- is_free (boolean)
-- price (number in USD, or null)
-
-BE AGGRESSIVE - extract any mentioned recurring activity or special event. Include happy hours, drink specials with entertainment, etc.
-
-Return ONLY valid JSON array. If nothing found, return [].`,
-        }],
-      }),
+      prompt: [
+        `Venue: "${venueName}" (${venueCategory}).`,
+        varietyHintBlock(opts?.categoryHint),
+        "",
+        "Website text:",
+        text,
+      ].join("\n"),
     });
-    const data = await res.json();
-    const content = data.content?.[0]?.text || "[]";
-    const m = content.match(/\[[\s\S]*\]/);
-    if (!m) return [];
-    const parsed = JSON.parse(m[0]);
-    if (!Array.isArray(parsed)) return [];
+    if (error) {
+      console.warn("[claude]", error);
+      return [];
+    }
 
-    return parsed.map((item: any) => {
+    return (parsed ?? []).map((item: any) => {
       // Normalize day-of-week to canonical full name (sunday..saturday) so
       // effectiveStart() on the client always parses the rule. "weds",
       // "WEDNESDAY", "wednesdays" all collapse to "wednesday".
@@ -1000,9 +1034,6 @@ Return ONLY valid JSON array. If nothing found, return [].`,
         price_max: null,
       };
     });
-  } catch (err) {
-    console.error("[claude] error:", err);
-    return [];
   }
 }
 
@@ -1261,43 +1292,43 @@ async function fetchNeighborhood(
   lng: number,
 ): Promise<{ neighborhood: string | null; nearby: string[] } | null> {
   if (!ANTHROPIC_API_KEY) return null;
-  try {
-    const res = await timeoutFetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      timeoutMs: 15_000,
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
+
+  const { data: parsed, error } = await callClaudeJson<{
+    neighborhood: string | null;
+    city: string | null;
+    nearby: string[];
+  }>({
+    label: "neighborhood",
+    model: FAST_MODEL,
+    maxTokens: 400,
+    effort: "low",
+    timeoutMs: 15_000,
+    cacheSystem: true,
+    system:
+      "You name the neighborhood for a coordinate pair. If you don't know the " +
+      "specific neighborhood, use the most specific area name you do know; if " +
+      "only the city is known, use the city name as the neighborhood.",
+    schema: {
+      type: "object",
+      properties: {
+        neighborhood: { type: ["string", "null"] },
+        city: { type: ["string", "null"] },
+        nearby: { type: "array", items: { type: "string" } },
       },
-      body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 400,
-        messages: [{
-          role: "user",
-          content: `Coordinates: ${lat}, ${lng}
+      required: ["neighborhood", "city", "nearby"],
+      additionalProperties: false,
+    },
+    prompt: `Coordinates: ${lat}, ${lng}`,
+  });
 
-What neighborhood is this in? Reply with strict JSON only:
-{"neighborhood": "<primary neighborhood name>", "city": "<city>", "nearby": ["<adjacent 1>", "<adjacent 2>", "<adjacent 3>"]}
-
-If you don't know the specific neighborhood, use the most specific area name you do know. If only the city is known, set neighborhood to the city name. No prose, JSON only.`,
-        }],
-      }),
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    const content = data.content?.[0]?.text || "{}";
-    const match = content.match(/\{[\s\S]*\}/);
-    if (!match) return null;
-    const parsed = JSON.parse(match[0]);
-    return {
-      neighborhood: parsed.neighborhood || parsed.city || null,
-      nearby: Array.isArray(parsed.nearby) ? parsed.nearby.slice(0, 3) : [],
-    };
-  } catch (err) {
-    console.error("[neighborhood] error:", err);
+  if (error || !parsed) {
+    if (error) console.warn("[neighborhood]", error);
     return null;
   }
+  return {
+    neighborhood: parsed.neighborhood || parsed.city || null,
+    nearby: Array.isArray(parsed.nearby) ? parsed.nearby.slice(0, 3) : [],
+  };
 }
 
 // ─── Rate Limiting ───────────────────────────────────────────

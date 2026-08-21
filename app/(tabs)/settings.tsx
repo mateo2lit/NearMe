@@ -20,12 +20,22 @@ import TagBadge from "../../src/components/TagBadge";
 import { useLocation, geocodeAddress, refreshLocation } from "../../src/hooks/useLocation";
 import { COLORS, RADIUS, SPACING, DEFAULT_RADIUS_MILES } from "../../src/constants/theme";
 import { EventCategory } from "../../src/types";
+import Constants from "expo-constants";
+import { getUserId, getIdentityMode } from "../../src/services/identity";
+import { getProfileSyncState } from "../../src/hooks/usePreferences";
+import { notificationsAvailable } from "../../src/services/reminders";
 
 const RADIUS_OPTIONS = [5, 10, 25, 50, 100];
+
+// Single source of truth for the version string — this used to be a hardcoded
+// "v1.0.0" that drifted eleven releases behind app.json.
+const APP_VERSION = Constants.expoConfig?.version ?? "—";
 
 export default function SettingsScreen() {
   const router = useRouter();
   const location = useLocation();
+  const [personalizationOk, setPersonalizationOk] = useState(true);
+  const [remindersSupported, setRemindersSupported] = useState(true);
   const [selectedCategories, setSelectedCategories] = useState<EventCategory[]>([]);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [radius, setRadius] = useState(DEFAULT_RADIUS_MILES);
@@ -57,6 +67,12 @@ export default function SettingsScreen() {
           setCustomLocation(prefs.customLocation);
         }
       }
+      // Surface the two things that used to fail silently: a profile that
+      // never reaches Supabase, and reminders with no native module behind them.
+      await getUserId();
+      const sync = getProfileSyncState();
+      setPersonalizationOk(getIdentityMode() === "supabase" && sync?.ok !== false);
+      setRemindersSupported(notificationsAvailable());
     })();
   }, []);
 
@@ -361,11 +377,14 @@ export default function SettingsScreen() {
         <View style={{ flex: 1 }}>
           <Text style={styles.toggleTitle}>Remind me about saved events</Text>
           <Text style={styles.toggleSubtitle}>
-            One ping the day before and a morning-of nudge. Quiet 10 PM – 8 AM.
+            {remindersSupported
+              ? "One ping the day before and a morning-of nudge. Quiet 10 PM – 8 AM."
+              : "Needs the latest build of NearMe — update from TestFlight to turn reminders on."}
           </Text>
         </View>
         <Switch
-          value={remindersEnabled}
+          disabled={!remindersSupported}
+          value={remindersSupported && remindersEnabled}
           onValueChange={toggleReminders}
           trackColor={{ false: COLORS.border, true: COLORS.accent }}
           thumbColor="#fff"
@@ -443,7 +462,19 @@ export default function SettingsScreen() {
       <View style={styles.aboutCard}>
         <View style={styles.aboutRow}>
           <Ionicons name="information-circle" size={20} color={COLORS.muted} />
-          <Text style={styles.aboutText}>NearMe v1.0.0</Text>
+          <Text style={styles.aboutText}>NearMe v{APP_VERSION}</Text>
+        </View>
+        <View style={styles.aboutRow}>
+          <Ionicons
+            name={personalizationOk ? "sparkles" : "cloud-offline-outline"}
+            size={20}
+            color={personalizationOk ? COLORS.success : COLORS.warm}
+          />
+          <Text style={styles.aboutText}>
+            {personalizationOk
+              ? "Personalization synced"
+              : "Personalization is local only — your picks aren't syncing"}
+          </Text>
         </View>
       </View>
 

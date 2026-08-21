@@ -8,6 +8,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { fetchNearbyEvents, applyHiddenFilter, filterHappyHour, sortByStartTime } from "../../src/services/events";
 import { useLocation } from "../../src/hooks/useLocation";
 import { useWhenFilter, WhenFilter } from "../../src/hooks/useWhenFilter";
+import { useSaved } from "../../src/services/savedStore";
 import MapPin from "../../src/components/MapPin";
 import HeroCard from "../../src/components/HeroCard";
 import WhenSegmented from "../../src/components/WhenSegmented";
@@ -66,7 +67,9 @@ export default function MapScreen() {
   const [events, setEvents] = useState<Event[]>([]);
   const [region, setRegion] = useState<Region | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
+  // Saved state comes from the shared store — it pushes updates the moment
+  // another screen saves, replacing the old 4-second AsyncStorage poll.
+  const { savedIds } = useSaved();
   const [savedOnly, setSavedOnly] = useState(false);
   const [clusterIds, setClusterIds] = useState<string[] | null>(null); // peek: just this cluster's events
   const mapRef = useRef<any>(null);
@@ -96,18 +99,6 @@ export default function MapScreen() {
     }
   }, [location.loading, location.lat, location.lng]);
 
-  // Sync saved IDs from storage so the "saved only" toggle stays current.
-  useEffect(() => {
-    let alive = true;
-    const load = async () => {
-      const raw = await AsyncStorage.getItem("@nearme_saved");
-      if (!alive) return;
-      setSavedIds(new Set(raw ? JSON.parse(raw) : []));
-    };
-    load();
-    const t = setInterval(load, 4000);
-    return () => { alive = false; clearInterval(t); };
-  }, []);
 
   // Memoize the now-anchor for filter math so it doesn't shift on every
   // render (and so dependent useMemos can cache against it). Refresh every

@@ -9,6 +9,9 @@ import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { fetchEventById, formatDistance, effectiveStart } from "../../src/services/events";
 import {
+  loadSaved, getSavedEvents, isSaved as isEventSaved, toggleSave as toggleSavedEvent,
+} from "../../src/services/savedStore";
+import {
   cancelReminderForEvent, ensurePermissions, scheduleReminderForEvent,
 } from "../../src/services/reminders";
 import { CATEGORY_MAP } from "../../src/constants/categories";
@@ -33,16 +36,14 @@ export default function EventDetail() {
 
   useEffect(() => {
     (async () => {
-      const savedStr = await AsyncStorage.getItem("@nearme_saved_events");
-      const savedArr: Event[] = savedStr ? JSON.parse(savedStr) : [];
-      const local = savedArr.find((e) => e.id === id);
+      await loadSaved();
+      const local = getSavedEvents().find((e) => e.id === id);
       if (local) setEvent(local);
       else {
         const fetched = await fetchEventById(id!);
         if (fetched) setEvent(fetched);
       }
-      const saved = await AsyncStorage.getItem("@nearme_saved");
-      if (saved) setIsSaved(JSON.parse(saved).includes(id));
+      setIsSaved(isEventSaved(id!));
       setLoading(false);
     })();
   }, [id]);
@@ -71,26 +72,9 @@ export default function EventDetail() {
 
   const toggleSave = async () => {
     if (!event) return;
-    const savedIds = await AsyncStorage.getItem("@nearme_saved");
-    const ids: string[] = savedIds ? JSON.parse(savedIds) : [];
-    const savedEvents = await AsyncStorage.getItem("@nearme_saved_events");
-    const eventsArr: Event[] = savedEvents ? JSON.parse(savedEvents) : [];
-    const wasSaved = isSaved;
-    if (wasSaved) {
-      await AsyncStorage.multiSet([
-        ["@nearme_saved", JSON.stringify(ids.filter((i) => i !== event.id))],
-        ["@nearme_saved_events", JSON.stringify(eventsArr.filter((e) => e.id !== event.id))],
-      ]);
-      setIsSaved(false);
-    } else {
-      ids.push(event.id);
-      eventsArr.push(event);
-      await AsyncStorage.multiSet([
-        ["@nearme_saved", JSON.stringify(ids)],
-        ["@nearme_saved_events", JSON.stringify(eventsArr)],
-      ]);
-      setIsSaved(true);
-    }
+    const nowSaved = await toggleSavedEvent(event);
+    const wasSaved = !nowSaved;
+    setIsSaved(nowSaved);
     // Reminder side-effect, fire-and-forget so the heart toggles instantly.
     (async () => {
       try {

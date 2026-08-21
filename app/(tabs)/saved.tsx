@@ -9,7 +9,8 @@ import { Event } from "../../src/types";
 import { CATEGORY_MAP } from "../../src/constants/categories";
 import { getEventImage } from "../../src/constants/images";
 import { effectiveStart } from "../../src/services/events";
-import { getAllFeedback, FeedbackRecord } from "../../src/services/feedback";
+import { getAllFeedback, subscribeFeedback, FeedbackRecord } from "../../src/services/feedback";
+import { useSaved } from "../../src/services/savedStore";
 import { DidYouGo } from "../../src/components/DidYouGo";
 import EmptyState from "../../src/components/EmptyState";
 import { COLORS, RADIUS, SPACING } from "../../src/constants/theme";
@@ -95,33 +96,20 @@ function groupEvents(
 
 export default function SavedScreen() {
   const router = useRouter();
-  const [savedEvents, setSavedEvents] = useState<Event[]>([]);
+  const { savedEvents, removeSaved } = useSaved();
   const [mode, setMode] = useState<SavedMode>("upcoming");
   const [pastExpanded, setPastExpanded] = useState(false);
   const [wentExpanded, setWentExpanded] = useState(false);
   const [feedback, setFeedback] = useState<Record<string, FeedbackRecord>>({});
 
-  const loadSaved = useCallback(async () => {
-    const data = await AsyncStorage.getItem("@nearme_saved_events");
-    setSavedEvents(data ? JSON.parse(data) : []);
-    setFeedback(await getAllFeedback());
-  }, []);
+  // Feedback pushes an update the moment a DidYouGo tap lands, so a thumbs-up
+  // on a "MISSED" card re-groups immediately — no 4-second poll required.
+  useEffect(() => subscribeFeedback(setFeedback), []);
 
-  useFocusEffect(useCallback(() => { loadSaved(); }, [loadSaved]));
-
-  // Refresh feedback periodically so DidYouGo taps inside section list reflect
-  // in section grouping (otherwise a thumbs-up on a "MISSED" card stays in the
-  // missed group until the screen refocuses).
-  useEffect(() => {
-    const t = setInterval(() => { getAllFeedback().then(setFeedback); }, 4000);
-    return () => clearInterval(t);
-  }, []);
+  useFocusEffect(useCallback(() => { getAllFeedback().then(setFeedback); }, []));
 
   const remove = async (id: string) => {
-    const next = savedEvents.filter((e) => e.id !== id);
-    setSavedEvents(next);
-    await AsyncStorage.setItem("@nearme_saved_events", JSON.stringify(next));
-    await AsyncStorage.setItem("@nearme_saved", JSON.stringify(next.map((e) => e.id)));
+    await removeSaved(id);
   };
 
   const confirmRemove = (e: Event) => {

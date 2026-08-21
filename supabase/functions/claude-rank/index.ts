@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.103.0";
-import { calcCostUsd, HAIKU_MODEL, makeAnthropicClient } from "../_shared/anthropic.ts";
+import { calcCostUsd, FAST_MODEL, makeAnthropicClient } from "../_shared/anthropic.ts";
 
 interface RankRequest {
   body: { user_id?: string; event_ids?: string[] };
@@ -23,20 +23,52 @@ interface EventLite {
   tags: string[]; is_free: boolean; price_min: number | null;
 }
 
+/**
+ * Stable across every request, so it carries the cache breakpoint. The profile
+ * and the candidate events go in the user message below it.
+ */
+const RANK_SYSTEM = [
+  "You are a personalization engine for a local-events app.",
+  "Rank the given events for this specific user and write one blurb per event.",
+  "Higher rank_score (0-100) means a better fit.",
+  "Every blurb is at most 80 characters and must reference a concrete signal from",
+  "the user's profile — a goal, a category, a tag, their budget — never generic praise.",
+  "Score every event you are given; do not drop any.",
+].join("\n");
+
+/**
+ * Schema for the ranking response. Replaces `JSON.parse(text)` inside a
+ * try/catch that turned any malformed response into an empty array — which is
+ * exactly what an unpersonalized feed looks like, with no way to tell them apart.
+ */
+const RANK_SCHEMA = {
+  type: "object",
+  properties: {
+    rankings: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          event_id: { type: "string" },
+          rank_score: { type: "number", minimum: 0, maximum: 100 },
+          blurb: { type: "string", maxLength: 80 },
+        },
+        required: ["event_id", "rank_score", "blurb"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["rankings"],
+  additionalProperties: false,
+} as const;
+
 function buildRankPrompt(profile: ProfileRow, events: EventLite[]): string {
   return [
-    "You are a personalization engine for a local-events app.",
-    "Rank the events below for THIS user and write an ≤80-char blurb per event.",
-    "",
     "USER PROFILE:",
     JSON.stringify(profile),
     "",
     "EVENTS (id, title, category, tags, is_free, price_min):",
     events.map((e) => JSON.stringify(e)).join("\n"),
-    "",
-    "Return ONLY a JSON array (no prose, no markdown fences):",
-    `[{"event_id":"<id>","rank_score":<0-100>,"blurb":"<≤80 chars>"}, ...]`,
-    "Higher rank_score = better fit. Blurb must reference a concrete profile signal.",
   ].join("\n");
 }
 
@@ -87,13 +119,23 @@ export async function handleRankRequest(req: RankRequest): Promise<Response> {
 
   try {
     const resp = await deps.anthropic.messages.create({
-      model: HAIKU_MODEL,
-      max_tokens: 600,
-      system: "You output strict JSON only. No prose, no markdown fences.",
+      model: FAST_MODEL,
+      max_tokens: 2000,
+      system: [
+        { type: "text", text: RANK_SYSTEM, cache_control: { type: "ephemeral" } },
+      ],
+      // Ranking is a fast, high-volume path — low effort keeps it cheap, and
+      // the schema guarantees the shape regardless.
+      output_config: {
+        effort: "low",
+        format: { type: "json_schema", schema: RANK_SCHEMA },
+      },
       messages: [{ role: "user", content: prompt }],
     });
-    const txt = resp.content.find((c: any) => c.type === "text")?.text ?? "[]";
-    parsed = JSON.parse(txt);
+    const txt = resp.content.find((c: any) => c.type === "text")?.text ?? "";
+    if (!txt) throw new Error("empty response");
+    const payload = JSON.parse(txt);
+    parsed = payload?.rankings;
     if (!Array.isArray(parsed)) throw new Error("not an array");
     parsed = parsed
       .filter((p) => typeof p?.event_id === "string" && typeof p?.rank_score === "number")
@@ -135,8 +177,8 @@ export async function handleRankRequest(req: RankRequest): Promise<Response> {
   });
 }
 
-// Live entry point.
-serve(async (req) => {
+// Live entry point. Guarded so importing this module in a test doesn't bind a port.
+if (import.meta.main) serve(async (req) => {
   if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
 
   try {

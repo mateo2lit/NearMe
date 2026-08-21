@@ -1,4 +1,4 @@
-import { calcCostUsd, SONNET_MODEL } from "../_shared/anthropic.ts";
+import { calcCostUsd, DISCOVERY_MODEL } from "../_shared/anthropic.ts";
 import * as V from "../_shared/validation.ts";
 import type { DiscoverEvent } from "./index.ts";
 
@@ -18,10 +18,19 @@ interface RunDeps {
   validation: typeof V;
 }
 
-const SYSTEM_PROMPT = (now: string, neighborhood: string) => [
-  `You are a local-events concierge for ${neighborhood}.`,
-  `Right now it is ${now}.`,
-  `Your job: find 8–15 upcoming events in the next 7 days that fit this user's profile.`,
+/**
+ * Stable system prompt — no timestamp, no neighborhood, nothing per-request.
+ *
+ * This block carries the cache breakpoint. It used to interpolate
+ * `new Date().toISOString()` and the neighborhood name, which changed the
+ * cached prefix on literally every call: we paid the cache-write premium on
+ * every discovery run and never once read from it. Anything that varies now
+ * lives in the user message, below the breakpoint.
+ */
+const SYSTEM_PROMPT = [
+  "You are a local-events concierge.",
+  "Your job: find 8–15 upcoming events in the next 7 days that fit this user's profile,",
+  "in the neighborhood and at the time given in the user message.",
   "",
   "GROUND RULES (non-negotiable):",
   "- Only emit events found in your web_search results. Do not recall events from memory.",
@@ -31,7 +40,8 @@ const SYSTEM_PROMPT = (now: string, neighborhood: string) => [
   "- Use the emit_event tool for each event. Keep descriptions concrete — no fluff.",
   "",
   "SEARCH GUIDANCE:",
-  `- Search for things like "things to do in ${neighborhood} this week", "events tonight ${neighborhood}", and venue-specific lookups.`,
+  '- Search for things like "things to do in <neighborhood> this week", "events tonight',
+  '  <neighborhood>", and venue-specific lookups.',
   "- After your first 1–2 searches, look at gaps and search for under-represented categories (e.g. 'live music', 'comedy', 'fitness classes', 'food festivals').",
   "- Hidden gems beat obvious mainstream concerts. Trivia nights, open mics, gallery openings, run clubs, paint-and-sips, food tours all count.",
 ].join("\n");
@@ -65,11 +75,27 @@ const EMIT_EVENT_TOOL = {
   },
 };
 
-const WEB_SEARCH_TOOL = {
-  type: "web_search_20250305",
+// Current web search tool: adds dynamic filtering plus domain and location
+// controls. `user_location` is filled in per run from the resolved neighborhood
+// so results are geographically grounded before the model even reads them.
+const WEB_SEARCH_TOOL = (loc?: { city?: string; region?: string }) => ({
+  type: "web_search_20260209",
   name: "web_search",
   max_uses: 5,
-};
+  ...(loc?.city
+    ? {
+        user_location: {
+          type: "approximate" as const,
+          city: loc.city,
+          ...(loc.region ? { region: loc.region } : {}),
+          country: "US",
+        },
+      }
+    : {}),
+  // Content farms that rank well for "things to do in X" and never carry a
+  // real, verifiable event page. Blocking them up front saves search budget.
+  blocked_domains: ["tripadvisor.com", "yelp.com", "pinterest.com", "groupon.com"],
+});
 
 export interface RunMetrics {
   events_emitted: number;
@@ -116,6 +142,9 @@ export async function* runDiscovery(args: { body: RunBody; deps: RunDeps; metric
   const underRepresented = body.under_represented_categories?.filter(Boolean) ?? [];
 
   const userPromptLines = [
+    // Everything time- or place-varying belongs here, below the cache
+    // breakpoint — never in the system block.
+    `Right now it is ${new Date().toISOString()}.`,
     `Location: lat=${body.lat}, lng=${body.lng}, radius=${body.radius_miles} miles.`,
     `Neighborhood: ${neighborhood}.`,
     `User profile: ${JSON.stringify(profile)}`,
@@ -133,13 +162,26 @@ export async function* runDiscovery(args: { body: RunBody; deps: RunDeps; metric
   }
   const userPrompt = userPromptLines.join("\n");
 
+  // "Wynwood, Miami" → city "Wynwood", region "Miami" for the search tool.
+  const [locCity, locRegion] = neighborhood.split(",").map((s) => s.trim());
+
   const stream = await deps.anthropic.messages.stream({
-    model: SONNET_MODEL,
-    max_tokens: 2000,
+    model: DISCOVERY_MODEL,
+    max_tokens: 4000,
     system: [
-      { type: "text", text: SYSTEM_PROMPT(new Date().toISOString(), neighborhood), cache_control: { type: "ephemeral" } },
+      { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
     ],
-    tools: [EMIT_EVENT_TOOL, WEB_SEARCH_TOOL],
+    // Discovery is the one place where quality beats latency — this is the
+    // "hand-picked by your AI" moment the subscription is sold on.
+    output_config: { effort: "high" },
+    tools: [
+      EMIT_EVENT_TOOL,
+      WEB_SEARCH_TOOL(
+        neighborhood !== "the user's area"
+          ? { city: locCity, region: locRegion }
+          : undefined,
+      ),
+    ],
     messages: [{ role: "user", content: userPrompt }],
   });
 

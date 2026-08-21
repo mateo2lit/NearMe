@@ -18,6 +18,8 @@
  *   - singles / social mixers
  */
 
+import { callClaudeList, FAST_MODEL } from "./anthropic.ts";
+
 interface MeetupExtract {
   title: string;
   description: string;
@@ -99,10 +101,37 @@ async function fetchMeetupHtml(keywords: string, lat: number, lng: number, timeo
   }
 }
 
+const MEETUP_SYSTEM = [
+  "You extract pickup/recreational sports and social meetups from Meetup search page text.",
+  "PRIORITIZE: pickup pickleball games, recurring open-play sessions, pickup basketball/soccer/volleyball/tennis,",
+  "running clubs with specific meeting times, hiking groups with scheduled hikes.",
+  "Titles must be specific — 'Tuesday 6 PM Pickleball at Patch Reef Park', never 'Pickleball Meetup'.",
+  "Descriptions are 1-2 sentences covering the sport, skill level, and location vibe.",
+  "Most Meetup pickups are free — is_free is true unless a cost is mentioned.",
+  "Drop anything with a generic title ('Event', 'Meetup', 'Game Night' alone) or an empty description.",
+  "Skip events that already happened. If nothing real is present, return an empty list.",
+].join("\n");
+
+const MEETUP_EVENT_SCHEMA = {
+  type: "object",
+  properties: {
+    title: { type: "string" },
+    description: { type: "string" },
+    category: { type: "string", enum: ["sports", "fitness", "community", "outdoors"] },
+    subcategory: { type: "string" },
+    venue_name: { type: ["string", "null"] },
+    address_hint: { type: ["string", "null"] },
+    start_time: { type: ["string", "null"], description: "ISO 8601 if date+time are clear, else null" },
+    is_free: { type: "boolean" },
+    source_url: { type: "string" },
+  },
+  required: ["title", "description", "category", "subcategory", "start_time", "is_free", "source_url"],
+  additionalProperties: false,
+} as const;
+
 async function extractWithClaude(
   html: string,
   keywords: string,
-  anthropicKey: string,
   cityName: string | undefined,
 ): Promise<MeetupExtract[]> {
   // Strip scripts/styles then trim. Meetup's event list HTML is usually
@@ -119,65 +148,44 @@ async function extractWithClaude(
   if (text.length < 200) return [];
 
   const cityHint = cityName ? ` in ${cityName}` : "";
-  try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": anthropicKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 1800,
-        messages: [{
-          role: "user",
-          content: `Extract upcoming "${keywords}" events${cityHint} from this Meetup search page text. These are pickup/recreational sports + social meetups posted by local groups.
 
-PRIORITIZE: pickup pickleball games, recurring open-play sessions, pickup basketball/soccer/volleyball/tennis, running clubs with specific meeting times, hiking groups with scheduled hikes.
+  const { data, error } = await callClaudeList<any>({
+    label: "meetup-extract",
+    model: FAST_MODEL,
+    maxTokens: 1800,
+    effort: "low",
+    key: "events",
+    // System text is byte-stable across every bucket and city, so it caches.
+    // Everything variable (keywords, city, page text) sits in the prompt below.
+    cacheSystem: true,
+    system: MEETUP_SYSTEM,
+    itemSchema: MEETUP_EVENT_SCHEMA,
+    prompt: [
+      `Extract upcoming "${keywords}" events${cityHint} from this Meetup search page text.`,
+      "",
+      "Page text:",
+      text,
+    ].join("\n"),
+  });
 
-Page text:
-${text}
-
-Return a JSON array. Each event must have:
-- title (specific — e.g., "Tuesday 6 PM Pickleball at Patch Reef Park" NOT "Pickleball Meetup")
-- description (1-2 sentences describing what attendees do — at minimum, the sport + skill level + location vibe)
-- category (sports|fitness|community|outdoors)
-- subcategory (pickleball|basketball|volleyball|soccer|tennis|running|hiking|yoga|singles_mixer|game_night|etc)
-- venue_name (the park/court/gym if specified)
-- address_hint (any neighborhood/address info)
-- start_time (ISO 8601 if date+time clear; null if vague)
-- is_free (boolean — most Meetup pickups are free; true unless cost mentioned)
-- source_url (the meetup.com event URL if visible, else "https://www.meetup.com")
-
-Drop anything where title is generic ("Event", "Meetup", "Game Night" alone) or description is empty. Skip events that already happened.
-
-Return ONLY a JSON array. If nothing real, return [].`,
-        }],
-      }),
-    });
-    const data = await res.json();
-    const content = data?.content?.[0]?.text || "[]";
-    const m = content.match(/\[[\s\S]*\]/);
-    if (!m) return [];
-    const parsed = JSON.parse(m[0]);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter((p: any) => p && p.title && p.description)
-      .map((p: any) => ({
-        title: p.title,
-        description: p.description,
-        category: p.category || "sports",
-        subcategory: p.subcategory || "event",
-        venue_name: p.venue_name,
-        address_hint: p.address_hint,
-        start_time: p.start_time || null,
-        is_free: p.is_free !== false,
-        source_url: p.source_url || "https://www.meetup.com",
-      }));
-  } catch {
+  if (error) {
+    console.warn("[meetup]", error);
     return [];
   }
+
+  return (data ?? [])
+    .filter((p: any) => p && p.title && p.description)
+    .map((p: any) => ({
+      title: p.title,
+      description: p.description,
+      category: p.category || "sports",
+      subcategory: p.subcategory || "event",
+      venue_name: p.venue_name ?? undefined,
+      address_hint: p.address_hint ?? undefined,
+      start_time: p.start_time || null,
+      is_free: p.is_free !== false,
+      source_url: p.source_url || "https://www.meetup.com",
+    }));
 }
 
 /**
@@ -282,7 +290,7 @@ export async function fetchMeetupEvents(opts: MeetupOpts): Promise<MeetupExtract
       console.log(`[meetup:${bucket.label}] no html (blocked or empty)`);
       continue;
     }
-    const events = await extractWithClaude(html, bucket.q, opts.anthropicKey, opts.cityName);
+    const events = await extractWithClaude(html, bucket.q, opts.cityName);
     console.log(`[meetup:${bucket.label}] ${events.length} events`);
     all.push(...events);
   }

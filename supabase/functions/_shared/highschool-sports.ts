@@ -16,6 +16,41 @@
  *     (e.g. district hub) — single-hop fetch won't follow far.
  */
 
+import { callClaudeList, FAST_MODEL } from "./anthropic.ts";
+
+const HS_SYSTEM = [
+  "You extract upcoming high-school games and meets from an athletics website's text.",
+  "PRIORITIZE specific scheduled games with a date and opponent: football, basketball,",
+  "baseball, softball, soccer, volleyball, wrestling, lacrosse, cross country, track, tennis, swim.",
+  "Titles name the school, sport, and opponent — never a bare 'Football Game'.",
+  "Descriptions are 1-2 sentences: sport, opponent, home or away.",
+  "start_time is ISO 8601. When only a date is given, default to 7:00 PM for football and",
+  "basketball and 4:00 PM for every other sport.",
+  "is_free is true unless an entry fee is mentioned.",
+  "Drop generic listings ('Sports Schedule'), past games, and anything without a real date.",
+  "If nothing real is present, return an empty list.",
+].join("\n");
+
+const HS_EVENT_SCHEMA = {
+  type: "object",
+  properties: {
+    title: { type: "string" },
+    description: { type: "string" },
+    subcategory: {
+      type: "string",
+      enum: [
+        "football", "basketball", "baseball", "softball", "soccer", "volleyball",
+        "tennis", "track", "cross_country", "wrestling", "lacrosse", "swim",
+      ],
+    },
+    start_time: { type: "string", description: "ISO 8601" },
+    is_free: { type: "boolean" },
+    source_url: { type: ["string", "null"] },
+  },
+  required: ["title", "description", "subcategory", "start_time", "is_free"],
+  additionalProperties: false,
+} as const;
+
 interface HSExtract {
   source: "highschool";
   source_id: string;
@@ -159,7 +194,6 @@ async function extractWithClaude(
   html: string,
   schoolName: string,
   schoolAddress: string,
-  anthropicKey: string,
   sourceUrl: string,
 ): Promise<HSExtract[]> {
   const text = html
@@ -173,48 +207,33 @@ async function extractWithClaude(
 
   if (text.length < 300) return [];
 
-  try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": anthropicKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 2000,
-        messages: [{
-          role: "user",
-          content: `Extract upcoming high school sports games + meets from "${schoolName}" athletics website text. The school is located at: ${schoolAddress}.
+  const { data, error } = await callClaudeList<any>({
+    label: "highschool-extract",
+    model: FAST_MODEL,
+    maxTokens: 2000,
+    effort: "low",
+    key: "events",
+    cacheSystem: true,
+    system: HS_SYSTEM,
+    itemSchema: HS_EVENT_SCHEMA,
+    prompt: [
+      `Extract upcoming games and meets from the "${schoolName}" athletics website text.`,
+      `The school is located at: ${schoolAddress}.`,
+      `Title each event like "${schoolName} Football vs Lincoln HS". Use "${sourceUrl}" as source_url.`,
+      "",
+      "Page text:",
+      text,
+    ].join("\n"),
+  });
 
-PRIORITIZE specific scheduled games with date + opponent: football, basketball, baseball, softball, soccer, volleyball, wrestling, lacrosse, cross country, track meets, tennis matches.
+  if (error) {
+    console.warn("[highschool]", error);
+    return [];
+  }
 
-Page text:
-${text}
-
-Return a JSON array. Each event must have:
-- title (specific: "${schoolName} Football vs Lincoln HS" NOT "Football Game")
-- description (1-2 sentences: sport + opponent + home/away)
-- subcategory (football|basketball|baseball|softball|soccer|volleyball|tennis|track|cross_country|wrestling|lacrosse|swim)
-- start_time (ISO 8601 — combine the date with a default time if only date given: 7:00 PM for football/basketball, 4:00 PM for other sports)
-- is_free (boolean — true unless an entry fee is mentioned)
-- source_url ("${sourceUrl}")
-
-Drop generic listings ("Sports Schedule"), past games, or anything without a real date.
-
-Return ONLY a JSON array. If nothing real, return [].`,
-        }],
-      }),
-    });
-    const data = await res.json();
-    const content = data?.content?.[0]?.text || "[]";
-    const m = content.match(/\[[\s\S]*\]/);
-    if (!m) return [];
-    const parsed = JSON.parse(m[0]);
-    if (!Array.isArray(parsed)) return [];
+  {
     const now = Date.now();
-    return parsed
+    return (data ?? [])
       .filter((p: any) => p && p.title && p.start_time && Date.parse(p.start_time) > now - 3600_000)
       .map((p: any) => ({
         source: "highschool" as const,
@@ -232,8 +251,6 @@ Return ONLY a JSON array. If nothing real, return [].`,
         source_url: p.source_url || sourceUrl,
         school_name: schoolName,
       }));
-  } catch {
-    return [];
   }
 }
 
@@ -301,7 +318,6 @@ export async function fetchHighSchoolSports(opts: HSOpts): Promise<HSExtract[]> 
       athleticsHtml,
       school.name,
       school.address,
-      opts.anthropicKey,
       athleticsUrl || school.website,
     );
     if (events.length > 0) {
