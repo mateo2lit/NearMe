@@ -521,9 +521,27 @@ const VENUE_TYPES = [
 
 // ─── Venue Sync ──────────────────────────────────────────────
 
-async function syncVenues(lat: number, lng: number, radiusMeters: number) {
-  if (!GOOGLE_API_KEY) return 0;
+/**
+ * Discover venues near a point via Google Places.
+ *
+ * Returns the count plus the first upstream error, if any. The error matters:
+ * `fetch` does not throw on a 4xx, and the old code only checked for a
+ * `data.places` array, so a denied key, a disabled API or an exhausted quota
+ * produced exactly the same "0 venues" as a genuinely empty area — with no log
+ * line. That is how venue discovery stayed dead from roughly May to September
+ * 2026 while every sync reported success.
+ */
+async function syncVenues(
+  lat: number,
+  lng: number,
+  radiusMeters: number,
+): Promise<{ count: number; error: string | null }> {
+  if (!GOOGLE_API_KEY) {
+    console.error("[venues] GOOGLE_PLACES_API_KEY is not set");
+    return { count: 0, error: "GOOGLE_PLACES_API_KEY not set" };
+  }
   const allVenues: any[] = [];
+  let firstError: string | null = null;
 
   for (const type of VENUE_TYPES) {
     try {
@@ -544,6 +562,14 @@ async function syncVenues(lat: number, lng: number, radiusMeters: number) {
         }),
       });
       const data = await response.json();
+      // Google reports failures in the body with a 200-adjacent status that
+      // fetch does not throw on. Surface it instead of counting it as zero.
+      if (!response.ok || data?.error) {
+        const detail = data?.error?.message ?? data?.error?.status ?? `HTTP ${response.status}`;
+        if (!firstError) firstError = String(detail).slice(0, 300);
+        console.error(`[venues] ${type} rejected: ${response.status} ${JSON.stringify(data?.error ?? data).slice(0, 300)}`);
+        continue;
+      }
       if (data.places) {
         for (const place of data.places) {
           const name = place.displayName?.text;
@@ -566,6 +592,7 @@ async function syncVenues(lat: number, lng: number, radiusMeters: number) {
         }
       }
     } catch (err) {
+      if (!firstError) firstError = (err as Error).message;
       console.error(`[venues] ${type} error:`, err);
     }
   }
@@ -580,8 +607,12 @@ async function syncVenues(lat: number, lng: number, radiusMeters: number) {
   if (unique.length > 0) {
     await supabase.from("venues").upsert(unique, { onConflict: "google_place_id" });
   }
-  console.log(`[venues] ${unique.length} unique`);
-  return unique.length;
+  if (unique.length === 0) {
+    console.error(`[venues] 0 venues discovered. first upstream error: ${firstError ?? "none reported — area may genuinely have no matching venues"}`);
+  } else {
+    console.log(`[venues] ${unique.length} unique`);
+  }
+  return { count: unique.length, error: firstError };
 }
 
 // ─── Ticketmaster ────────────────────────────────────────────
@@ -1493,13 +1524,14 @@ serve(async (req: Request) => {
       venuesSyncedAt: priorVenuesSyncedAt,
       allowAi,
     });
-    const venueCount = discoverVenues
+    const venueResult = discoverVenues
       ? await syncVenues(lat, lng, radiusMiles * 1609.34)
-      : 0;
+      : { count: 0, error: null as string | null };
+    const venueCount = venueResult.count;
     if (!discoverVenues) {
       console.log(`[venues] skip discovery (last ${priorVenuesSyncedAt ?? "never"}, allowAi=${allowAi})`);
     } else if (venueCount === 0) {
-      console.warn("[venues] discovery ran but found 0 venues — not starting the TTL; check GOOGLE_PLACES_API_KEY quota/restrictions");
+      console.warn(`[venues] discovery ran but found 0 venues — not starting the TTL. upstream: ${venueResult.error ?? "no error reported"}`);
     }
 
     // 3. Compute variety hint from fast-source results so Claude-driven sources
@@ -1860,6 +1892,7 @@ serve(async (req: Request) => {
       JSON.stringify({
         synced: true,
         lat, lng, geohash,
+        venues_error: venueResult.error,
         venues: venueCount,
         ticketmaster: tm.length,
         eventbrite: eb.length,

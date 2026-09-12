@@ -54,7 +54,8 @@
           "color": "#5146E5",
           "defaultChannel": "default"
         }
-      ]
+      ],
+      "@sentry/react-native"
     ],
     "extra": {
       "eas": {
