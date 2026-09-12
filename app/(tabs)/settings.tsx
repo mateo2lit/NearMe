@@ -11,9 +11,13 @@ import {
   Keyboard,
   Switch,
 } from "react-native";
+import { Linking } from "react-native";
+import Constants from "expo-constants";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { hasActiveEntitlement, restorePurchases } from "../../src/services/iap";
+import { markSubscribed } from "../../src/services/subscription";
 import { CATEGORIES } from "../../src/constants/categories";
 import { TAGS } from "../../src/constants/tags";
 import TagBadge from "../../src/components/TagBadge";
@@ -168,6 +172,30 @@ export default function SettingsScreen() {
     Alert.alert("Using GPS", "Events will now show near your current location.");
   };
 
+  const [restoring, setRestoring] = useState(false);
+
+  // Guideline 3.1.1 expects a restore path. The paywall has one, but a
+  // subscriber who is already inside the app has no other way to re-sync an
+  // entitlement after switching devices.
+  const restore = async () => {
+    if (restoring) return;
+    setRestoring(true);
+    try {
+      const { active } = await restorePurchases();
+      if (active) await markSubscribed();
+      Alert.alert(
+        active ? "Purchases restored" : "No active plan found",
+        active
+          ? "Your NearMe Pro subscription is active on this device."
+          : "Use the Apple ID that originally purchased the subscription.",
+      );
+    } catch (e: any) {
+      Alert.alert("Restore failed", e?.message ?? "Please try again.");
+    } finally {
+      setRestoring(false);
+    }
+  };
+
   const resetOnboarding = async () => {
     Alert.alert(
       "Reset App",
@@ -179,6 +207,10 @@ export default function SettingsScreen() {
           style: "destructive",
           onPress: async () => {
             await AsyncStorage.clear();
+            // AsyncStorage.clear() also wipes the cached entitlement. Without
+            // this a paying subscriber lands back on the paywall and is asked
+            // to buy the app a second time.
+            try { if (await hasActiveEntitlement()) await markSubscribed(); } catch { /* re-verified on next launch */ }
             router.replace("/onboarding");
           },
         },
@@ -443,8 +475,17 @@ export default function SettingsScreen() {
       <View style={styles.aboutCard}>
         <View style={styles.aboutRow}>
           <Ionicons name="information-circle" size={20} color={COLORS.muted} />
-          <Text style={styles.aboutText}>NearMe v1.0.0</Text>
+          <Text style={styles.aboutText}>
+            NearMe v{Constants.expoConfig?.version ?? "—"}
+            {Constants.expoConfig?.ios?.buildNumber ? ` (${Constants.expoConfig.ios.buildNumber})` : ""}
+          </Text>
         </View>
+        <AboutLink icon="card-outline" label="Manage subscription" onPress={() => Linking.openURL("https://apps.apple.com/account/subscriptions").catch(() => {})} />
+        <AboutLink icon="refresh-outline" label={restoring ? "Restoring…" : "Restore purchases"} onPress={restore} />
+        <AboutLink icon="shield-checkmark-outline" label="Privacy policy" onPress={() => Linking.openURL("https://mateo2lit.github.io/NearMe/privacy.html").catch(() => {})} />
+        <AboutLink icon="document-text-outline" label="Terms of use" onPress={() => Linking.openURL("https://mateo2lit.github.io/NearMe/terms.html").catch(() => {})} />
+        {/* The privacy policy promises this path, so the app has to offer it. */}
+        <AboutLink icon="mail-outline" label="Request your data or deletion" onPress={() => Linking.openURL("mailto:dbh28tekkit@gmail.com?subject=NearMe%20data%20request").catch(() => {})} />
       </View>
 
       {/* Reset */}
@@ -457,6 +498,16 @@ export default function SettingsScreen() {
         <Text style={styles.resetText}>Reset App</Text>
       </TouchableOpacity>
     </ScrollView>
+  );
+}
+
+function AboutLink({ icon, label, onPress }: { icon: any; label: string; onPress: () => void }) {
+  return (
+    <TouchableOpacity style={styles.aboutRow} onPress={onPress} activeOpacity={0.7} accessibilityRole="button">
+      <Ionicons name={icon} size={20} color={COLORS.muted} />
+      <Text style={styles.aboutText}>{label}</Text>
+      <Ionicons name="chevron-forward" size={16} color={COLORS.muted} style={{ marginLeft: "auto" }} />
+    </TouchableOpacity>
   );
 }
 
