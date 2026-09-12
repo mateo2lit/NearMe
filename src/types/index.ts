@@ -46,12 +46,6 @@ export interface Event {
   // Alternate showtimes from same-day duplicate events merged into this one.
   // ISO strings, sorted ascending. Excludes the primary start_time.
   additionalStartTimes?: string[];
-  last_verified_at?: string | null;
-  // Set only when pack-the-feed widening reached past the user's chosen
-  // radius. Holds the radius the user actually asked for, so the card can say
-  // "18 mi — outside your 10 mi radius" instead of silently pretending the
-  // event is nearby.
-  outsideRadiusMiles?: number | null;
 }
 
 export type EventCategory =
@@ -107,14 +101,6 @@ export interface OnboardingAnswers {
   blocker: string | null;
   budget: string | null;
   happyHour: boolean;
-  intents?: string[];
-  socialEnergy?: string | null;
-  company?: string | null;
-  timePreferences?: string[];
-  budgetMax?: number | null;
-  accessibilityNeeds?: string[];
-  alcoholPreference?: string | null;
-  ageBand?: "18-20" | "21+" | null;
 }
 
 export interface UserPreferences {
@@ -127,17 +113,6 @@ export interface UserPreferences {
   onboarding?: OnboardingAnswers;
   hiddenCategories?: string[];
   hiddenTags?: string[];
-  happyHourEnabled?: boolean;
-  intents?: string[];
-  socialEnergy?: string | null;
-  company?: string | null;
-  timePreferences?: string[];
-  budgetMax?: number | null;
-  accessibilityNeeds?: string[];
-  alcoholPreference?: string | null;
-  ageBand?: "18-20" | "21+" | null;
-  maxTravelMinutes?: number;
-  travelMode?: "drive" | "walk" | "transit";
 }
 
 export interface CategoryOption {

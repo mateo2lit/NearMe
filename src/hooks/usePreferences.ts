@@ -9,29 +9,16 @@ const PREFS_KEY = "@nearme_preferences";
 const ONBOARDED_KEY = "@nearme_onboarded";
 
 /**
- * Kept as a named export because half the app imports it from here. The real
- * implementation now lives in services/identity.ts, which signs the device in
- * anonymously so the id is a genuine auth.users row — a local UUID could never
- * satisfy the RLS policy or the FK on user_profiles.
+ * Device identity, via Supabase anonymous auth.
+ *
+ * This used to mint a local `Crypto.randomUUID()`. That id can never be
+ * written from the client: `user_profiles.id` has a foreign key to
+ * `auth.users(id)` and an `auth.uid() = id` policy, so every profile upsert
+ * was silently rejected and personalization server-side never had a profile to
+ * read. It also starves the curator, which picks crawl targets from
+ * `user_profiles`. See src/services/identity.ts.
  */
 export const getOrCreateUserId = getUserId;
-
-export interface ProfileSyncState {
-  ok: boolean;
-  message?: string;
-  at: number;
-}
-
-let profileSync: ProfileSyncState | null = null;
-
-export function setProfileSyncState(state: ProfileSyncState) {
-  profileSync = state;
-}
-
-/** Last known result of pushing the profile to Supabase — surfaced in Settings. */
-export function getProfileSyncState(): ProfileSyncState | null {
-  return profileSync;
-}
 
 const DEFAULT_PREFS: UserPreferences = {
   categories: [],
@@ -67,7 +54,7 @@ export function usePreferences() {
 
     const userId = await getOrCreateUserId();
     if (supabase) {
-      const { error } = await supabase.from("user_profiles").upsert({
+      await supabase.from("user_profiles").upsert({
         id: userId,
         goals: prefs.onboarding?.goals ?? [],
         vibe: prefs.onboarding?.vibe ?? null,
@@ -82,28 +69,8 @@ export function usePreferences() {
         hidden_tags: prefs.hiddenTags ?? [],
         default_lat: prefs.lat,
         default_lng: prefs.lng,
-        radius_miles: prefs.radius,
-        intents: prefs.intents ?? [],
-        time_preferences: prefs.timePreferences ?? [],
-        social_energy: prefs.socialEnergy ?? null,
-        company: prefs.company ?? null,
-        budget_max: prefs.budgetMax ?? null,
-        accessibility_needs: prefs.accessibilityNeeds ?? [],
-        alcohol_preference: prefs.alcoholPreference ?? null,
-        age_band: prefs.ageBand ?? null,
-        max_travel_minutes: prefs.maxTravelMinutes ?? null,
-        travel_mode: prefs.travelMode ?? null,
         updated_at: new Date().toISOString(),
       });
-      // This upsert used to be fire-and-forget. When it failed — which it did
-      // for every user, because the row id wasn't an auth.users id — Claude
-      // ranking and discovery both got profile_not_found and the app quietly
-      // stopped personalizing. Never swallow it again.
-      setProfileSyncState(
-        error ? { ok: false, message: error.message, at: Date.now() }
-              : { ok: true, at: Date.now() },
-      );
-      if (error) console.warn("[prefs] profile sync failed:", error.message);
     }
   }, []);
 

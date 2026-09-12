@@ -1,49 +1,75 @@
 import { useEffect } from "react";
-import { ActivityIndicator, View } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { View, ActivityIndicator } from "react-native";
 import { useRouter } from "expo-router";
-import { useAppTheme } from "../src/constants/theme";
-import { resolveLaunchRoute, shouldRevokeAccess } from "../src/lib/accessGate";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { COLORS } from "../src/constants/theme";
 import { configureIap, entitlementState } from "../src/services/iap";
-import { SUBSCRIBED_KEY } from "../src/services/subscription";
+import { shouldRevokeAccess } from "../src/lib/accessGate";
+import { SUBSCRIBED_KEY, markSubscribed, clearSubscribed } from "../src/services/subscription";
 
 export default function Index() {
   const router = useRouter();
-  const { colors } = useAppTheme();
 
   useEffect(() => {
-    let alive = true;
+    let cancelled = false;
     (async () => {
-      // Route on the cached entitlement first so a cold launch is not blocked
-      // on a StoreKit round trip, then re-verify against RevenueCat and bounce
-      // if the subscription has lapsed.
-      const [onboarded, cached] = await Promise.all([
+      const [onboarded, subscribedCache] = await Promise.all([
         AsyncStorage.getItem("@nearme_onboarded"),
         AsyncStorage.getItem(SUBSCRIBED_KEY),
       ]);
-      if (!alive) return;
-      router.replace(resolveLaunchRoute({
-        onboarded: onboarded === "true",
-        subscribed: cached === "true",
-      }));
+      if (cancelled) return;
 
-      await configureIap();
-      const state = await entitlementState();
-      if (!alive) return;
-      if (state === "active") {
-        await AsyncStorage.setItem(SUBSCRIBED_KEY, "true");
+      if (onboarded !== "true") {
+        router.replace("/onboarding");
         return;
       }
-      // "unavailable" means we could not ask, which is not the same as unpaid.
-      // Keep the cached decision so a missing RevenueCat key or a dropped
-      // connection cannot lock out every paying subscriber at once.
-      if (!shouldRevokeAccess(state)) return;
-      await AsyncStorage.removeItem(SUBSCRIBED_KEY);
-      if (!alive) return;
-      router.replace(resolveLaunchRoute({ onboarded: onboarded === "true", subscribed: false }));
-    })();
-    return () => { alive = false; };
-  }, [router]);
 
-  return <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.bg }}><ActivityIndicator color={colors.accent} accessibilityLabel="Opening NearMe" /></View>;
+      // Fast path: trust the cached flag so first render isn't network-bound.
+      // Track the route we just sent the user to so the background reconcile
+      // only re-routes when the truth differs — eliminates a race where the
+      // initial replace and a follow-up replace fire back-to-back.
+      let currentRoute: "tabs" | "onboarding" =
+        subscribedCache === "true" ? "tabs" : "onboarding";
+      router.replace(currentRoute === "tabs" ? "/(tabs)" : "/onboarding");
+
+      // Verify with Apple via RevenueCat and reconcile the cache in the
+      // background. Only re-route if the verified state contradicts where
+      // we already sent the user.
+      await configureIap();
+      if (cancelled) return;
+      const state = await entitlementState();
+      if (cancelled) return;
+
+      if (state === "active") {
+        await markSubscribed();
+        if (!cancelled && currentRoute !== "tabs") router.replace("/(tabs)");
+        return;
+      }
+
+      // "unavailable" means we could not ask — offline, StoreKit down, or a
+      // build shipped without the RevenueCat key, which makes configureIap a
+      // silent no-op. Reading that as non-payment would lock out every paying
+      // subscriber at once, so silence keeps the cached decision.
+      if (!shouldRevokeAccess(state)) return;
+
+      if (currentRoute === "tabs") {
+        await clearSubscribed();
+        if (!cancelled) router.replace("/onboarding");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  return (
+    <View
+      style={{
+        flex: 1,
+        backgroundColor: COLORS.bg,
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      <ActivityIndicator size="large" color={COLORS.accent} />
+    </View>
+  );
 }

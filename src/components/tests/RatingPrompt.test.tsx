@@ -1,8 +1,5 @@
 import React from "react";
 import renderer, { act } from "react-test-renderer";
-
-jest.mock("@expo/vector-icons", () => ({ Ionicons: () => null }));
-
 import { RatingPrompt } from "../RatingPrompt";
 
 describe("RatingPrompt", () => {
@@ -15,7 +12,6 @@ describe("RatingPrompt", () => {
     });
     const json = JSON.stringify(instance.toJSON());
     expect(json).toContain("earning its keep");
-    act(() => instance.unmount());
   });
 
   it("returns null when visible=false", () => {
@@ -26,6 +22,5 @@ describe("RatingPrompt", () => {
       );
     });
     expect(instance.toJSON()).toBeNull();
-    act(() => instance.unmount());
   });
 });

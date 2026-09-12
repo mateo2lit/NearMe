@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Event, EventCategory } from "../types";
+import { Event } from "../types";
 
 const CACHE_KEY = "@nearme_event_cache";
 const FEED_CACHE_KEY = "@nearme_feed_cache";
@@ -9,30 +9,22 @@ const THIN_TTL_MS = 3 * 60 * 1000; // sub-floor caches expire faster so reopens 
 const MIN_HEALTHY_FEED = 20;
 
 interface CachedArea {
-  key: string;
+  key: string; // rounded "lat,lng"
   events: Event[];
   cachedAt: number;
 }
 
-export interface EventCacheQuery {
-  radiusMiles: number;
-  categories?: EventCategory[];
-  tags?: string[];
+// Round lat/lng to 0.1° for cache keying (~6 miles)
+function gridKey(lat: number, lng: number): string {
+  return `${Math.round(lat * 10) / 10},${Math.round(lng * 10) / 10}`;
 }
 
-// Distances and widening labels belong to the exact query that produced them.
-// Old, location-only entries intentionally miss this versioned key.
-function queryKey(lat: number, lng: number, query: EventCacheQuery): string {
-  return JSON.stringify([2, lat, lng, query.radiusMiles,
-    [...new Set(query.categories ?? [])].sort(), [...new Set(query.tags ?? [])].sort()]);
-}
-
-export async function getCachedEvents(lat: number, lng: number, query: EventCacheQuery): Promise<Event[] | null> {
+export async function getCachedEvents(lat: number, lng: number): Promise<Event[] | null> {
   try {
     const raw = await AsyncStorage.getItem(CACHE_KEY);
     if (!raw) return null;
     const areas: CachedArea[] = JSON.parse(raw);
-    const key = queryKey(lat, lng, query);
+    const key = gridKey(lat, lng);
     const hit = areas.find((a) => a.key === key);
     if (!hit) return null;
     const age = Date.now() - hit.cachedAt;
@@ -44,11 +36,11 @@ export async function getCachedEvents(lat: number, lng: number, query: EventCach
   }
 }
 
-export async function setCachedEvents(lat: number, lng: number, events: Event[], query: EventCacheQuery) {
+export async function setCachedEvents(lat: number, lng: number, events: Event[]) {
   try {
     const raw = await AsyncStorage.getItem(CACHE_KEY);
     const areas: CachedArea[] = raw ? JSON.parse(raw) : [];
-    const key = queryKey(lat, lng, query);
+    const key = gridKey(lat, lng);
 
     // Remove existing entry for this key and add fresh one at front
     const filtered = areas.filter((a) => a.key !== key);

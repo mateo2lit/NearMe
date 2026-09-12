@@ -1,8 +1,5 @@
 import React from "react";
 import renderer, { act } from "react-test-renderer";
-
-jest.mock("@expo/vector-icons", () => ({ Ionicons: () => null }));
-
 import { FoundForYouChip } from "../FoundForYouChip";
 
 describe("FoundForYouChip", () => {
@@ -14,6 +11,5 @@ describe("FoundForYouChip", () => {
     const tree = instance.toJSON();
     const json = JSON.stringify(tree);
     expect(json).toContain("Hand-picked");
-    act(() => instance.unmount());
   });
 });

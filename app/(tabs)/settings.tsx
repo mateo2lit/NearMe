@@ -1,199 +1,689 @@
-import { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Ionicons } from "@expo/vector-icons";
+import { useState, useEffect } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  ScrollView,
+  Alert,
+  TextInput,
+  ActivityIndicator,
+  Keyboard,
+  Switch,
+} from "react-native";
 import { useRouter } from "expo-router";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { AppColors, RADIUS, SPACING, TYPE, useAppTheme } from "../../src/constants/theme";
-import { geocodeAddress, refreshLocation, useLocation } from "../../src/hooks/useLocation";
-import { usePreferences } from "../../src/hooks/usePreferences";
-import { track } from "../../src/services/analytics";
-import { configureIap, hasActiveEntitlement, restorePurchases } from "../../src/services/iap";
-import { markSubscribed } from "../../src/services/subscription";
-import { ensurePermissions, syncReminders } from "../../src/services/reminders";
-import { getSavedEvents } from "../../src/services/savedStore";
-import { EventCategory, UserPreferences } from "../../src/types";
+import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { CATEGORIES } from "../../src/constants/categories";
+import { TAGS } from "../../src/constants/tags";
+import TagBadge from "../../src/components/TagBadge";
+import { useLocation, geocodeAddress, refreshLocation } from "../../src/hooks/useLocation";
+import { COLORS, RADIUS, SPACING, DEFAULT_RADIUS_MILES } from "../../src/constants/theme";
+import { EventCategory } from "../../src/types";
 
-const INTERESTS: Array<{ id: EventCategory; label: string; icon: React.ComponentProps<typeof Ionicons>["name"] }> = [
-  { id: "music", label: "Music", icon: "musical-notes-outline" }, { id: "food", label: "Food", icon: "restaurant-outline" },
-  { id: "arts", label: "Arts & culture", icon: "color-palette-outline" }, { id: "community", label: "Community", icon: "people-outline" },
-  { id: "fitness", label: "Fitness", icon: "barbell-outline" }, { id: "sports", label: "Sports", icon: "football-outline" },
-  { id: "outdoors", label: "Outdoors", icon: "leaf-outline" }, { id: "movies", label: "Movies", icon: "film-outline" },
-  { id: "nightlife", label: "Nightlife", icon: "moon-outline" },
-];
+const RADIUS_OPTIONS = [5, 10, 25, 50, 100];
 
-const PURPOSES = [
-  ["easy", "Easygoing"], ["social", "Meet people"], ["live", "Live entertainment"], ["learn", "Learn something"],
-  ["active", "Get active"], ["culture", "Culture"], ["food", "Food experiences"], ["free", "Free plans"],
-] as const;
-const ACCESS = [["seated", "Seating"], ["step-free", "Step-free"], ["quiet", "Lower noise"], ["outdoor", "Outdoor"]] as const;
-const RADII = [3, 5, 10, 15, 25, 50];
-
-export default function YouScreen() {
+export default function SettingsScreen() {
   const router = useRouter();
-  const insets = useSafeAreaInsets();
-  const { colors } = useAppTheme();
-  const styles = makeStyles(colors);
   const location = useLocation();
-  const { preferences, savePreferences, loading } = usePreferences();
-  const [address, setAddressInput] = useState("");
-  const [geocoding, setGeocoding] = useState(false);
-  const [premium, setPremium] = useState(false);
-  const [purchaseBusy, setPurchaseBusy] = useState<string | null>(null);
-  const [notifications, setNotifications] = useState(false);
+  const [selectedCategories, setSelectedCategories] = useState<EventCategory[]>([]);
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [radius, setRadius] = useState(DEFAULT_RADIUS_MILES);
+  const [addressInput, setAddressInput] = useState("");
+  const [isGeocoding, setIsGeocoding] = useState(false);
+  const [customLocation, setCustomLocation] = useState<{
+    label: string;
+    lat: number;
+    lng: number;
+  } | null>(null);
+  const [hiddenCategories, setHiddenCategories] = useState<EventCategory[]>([]);
+  const [hiddenTags, setHiddenTags] = useState<string[]>([]);
+  const [happyHourEnabled, setHappyHourEnabled] = useState(true);
+  const [remindersEnabled, setRemindersEnabled] = useState(true);
 
   useEffect(() => {
-    AsyncStorage.getItem("@nearme_notif_permission").then((value) => setNotifications(value === "granted"));
-    configureIap().then(async () => {
-      setPremium(await hasActiveEntitlement());
-    }).catch(() => {});
+    (async () => {
+      const prefsStr = await AsyncStorage.getItem("@nearme_preferences");
+      if (prefsStr) {
+        const prefs = JSON.parse(prefsStr);
+        setSelectedCategories(prefs.categories || []);
+        setSelectedTags(prefs.tags || []);
+        setRadius(prefs.radius || DEFAULT_RADIUS_MILES);
+        setHiddenCategories(prefs.hiddenCategories || []);
+        setHiddenTags(prefs.hiddenTags || []);
+        setHappyHourEnabled(prefs.happyHourEnabled ?? true);
+        setRemindersEnabled(prefs.remindersEnabled ?? true);
+        if (prefs.customLocation) {
+          setCustomLocation(prefs.customLocation);
+        }
+      }
+    })();
   }, []);
 
-  const patchPreferences = (patch: Partial<UserPreferences>) => savePreferences({ ...preferences, ...patch });
-  const toggleValue = (key: "intents" | "accessibilityNeeds", value: string) => {
-    const current = preferences[key] ?? [];
-    patchPreferences({ [key]: current.includes(value) ? current.filter((item) => item !== value) : [...current, value] });
-  };
-  const toggleInterest = (category: EventCategory) => patchPreferences({ categories: preferences.categories.includes(category) ? preferences.categories.filter((item) => item !== category) : [...preferences.categories, category] });
-
-  const submitAddress = async () => {
-    if (!address.trim()) return;
-    setGeocoding(true);
-    const result = await geocodeAddress(address.trim());
-    setGeocoding(false);
-    if (!result) {
-      Alert.alert("Location not found", "Try a full city and state or a street address.");
-      return;
-    }
-    await patchPreferences({ lat: result.lat, lng: result.lng, customLocation: result });
-    await refreshLocation();
-    setAddressInput("");
-    track("location_changed", { mode: "custom", label: result.label }).catch(() => {});
+  const toggleHiddenCategory = async (cat: EventCategory) => {
+    const next = hiddenCategories.includes(cat)
+      ? hiddenCategories.filter((c) => c !== cat)
+      : [...hiddenCategories, cat];
+    setHiddenCategories(next);
+    await savePrefs({ hiddenCategories: next });
   };
 
-  const useGps = async () => {
-    await patchPreferences({ customLocation: null });
-    await refreshLocation();
-    track("location_changed", { mode: "gps" }).catch(() => {});
+  const toggleHiddenTag = async (tag: string) => {
+    const next = hiddenTags.includes(tag)
+      ? hiddenTags.filter((t) => t !== tag)
+      : [...hiddenTags, tag];
+    setHiddenTags(next);
+    await savePrefs({ hiddenTags: next });
   };
 
-  const changeNotifications = async (value: boolean) => {
-    if (value) {
+  const savePrefs = async (updates: Record<string, any>) => {
+    const prefsStr = await AsyncStorage.getItem("@nearme_preferences");
+    const prefs = prefsStr ? JSON.parse(prefsStr) : {};
+    Object.assign(prefs, updates);
+    await AsyncStorage.setItem("@nearme_preferences", JSON.stringify(prefs));
+  };
+
+  const toggleCategory = async (cat: EventCategory) => {
+    const next = selectedCategories.includes(cat)
+      ? selectedCategories.filter((c) => c !== cat)
+      : [...selectedCategories, cat];
+    setSelectedCategories(next);
+    await savePrefs({ categories: next });
+  };
+
+  const toggleTag = async (tag: string) => {
+    const next = selectedTags.includes(tag)
+      ? selectedTags.filter((t) => t !== tag)
+      : [...selectedTags, tag];
+    setSelectedTags(next);
+    await savePrefs({ tags: next });
+  };
+
+  const changeRadius = async (r: number) => {
+    setRadius(r);
+    await savePrefs({ radius: r });
+  };
+
+  const toggleHappyHour = async (v: boolean) => {
+    setHappyHourEnabled(v);
+    await savePrefs({ happyHourEnabled: v });
+  };
+
+  const toggleReminders = async (v: boolean) => {
+    setRemindersEnabled(v);
+    await savePrefs({ remindersEnabled: v });
+    if (v) {
+      // Lazily request permission + reconcile existing saved events when the
+      // user opts in. Imports are inline so settings.tsx stays light.
+      const [savedRaw, { ensurePermissions, syncReminders }] = await Promise.all([
+        AsyncStorage.getItem("@nearme_saved_events"),
+        import("../../src/services/reminders"),
+      ]);
       const granted = await ensurePermissions();
-      setNotifications(granted);
-      if (granted) await syncReminders(getSavedEvents(), { quietHours: { start: 22, end: 8 } });
+      if (granted && savedRaw) {
+        try {
+          const events = JSON.parse(savedRaw);
+          await syncReminders(events, { quietHours: { start: 22, end: 8 } });
+        } catch { /* ignore */ }
+      }
     } else {
-      setNotifications(false);
-      await AsyncStorage.setItem("@nearme_notif_permission", "denied");
+      // Cancel everything that's currently scheduled.
+      const [savedRaw, { cancelReminderForEvent }] = await Promise.all([
+        AsyncStorage.getItem("@nearme_saved_events"),
+        import("../../src/services/reminders"),
+      ]);
+      if (savedRaw) {
+        try {
+          const events = JSON.parse(savedRaw);
+          for (const e of events) await cancelReminderForEvent(e.id);
+        } catch { /* ignore */ }
+      }
     }
   };
 
-  const restore = async () => {
-    setPurchaseBusy("restore");
-    try {
-      const result = await restorePurchases();
-      setPremium(result.active);
-      if (result.active) {
-        await markSubscribed();
-        track("subscription_restored").catch(() => {});
-      }
-      Alert.alert(result.active ? "Purchase restored" : "No active plan found", result.active ? "Your subscription is active on this device." : "Use the Apple ID that originally purchased the subscription.");
-    } catch {
-      Alert.alert("Restore unavailable", "Please check your connection and try again.");
-    } finally { setPurchaseBusy(null); }
+  const setCustomAddress = async () => {
+    if (!addressInput.trim()) return;
+    Keyboard.dismiss();
+    setIsGeocoding(true);
+
+    const result = await geocodeAddress(addressInput.trim());
+    setIsGeocoding(false);
+
+    if (result) {
+      setCustomLocation(result);
+      setAddressInput("");
+      await savePrefs({ customLocation: result });
+      await refreshLocation();
+      Alert.alert("Location Set", `Events will now show near:\n${result.label}`);
+    } else {
+      Alert.alert("Not Found", "Couldn't find that address. Try adding city/state.");
+    }
   };
 
-  const reset = () => Alert.alert("Start over?", "This clears preferences and locally saved plans from this device.", [
-    { text: "Cancel", style: "cancel" },
-    { text: "Clear data", style: "destructive", onPress: async () => {
-      await AsyncStorage.clear();
-      // AsyncStorage.clear() also wipes the cached entitlement. Re-establish it
-      // so a paying subscriber is not asked to buy the app a second time.
-      try { if (await hasActiveEntitlement()) await markSubscribed(); } catch { /* re-verified on next launch */ }
-      router.replace("/onboarding");
-    } },
-  ]);
+  const useCurrentLocation = async () => {
+    setCustomLocation(null);
+    setAddressInput("");
+    await savePrefs({ customLocation: null });
+    await refreshLocation();
+    Alert.alert("Using GPS", "Events will now show near your current location.");
+  };
 
-  if (loading) return <View style={styles.center}><ActivityIndicator color={colors.accent} /></View>;
+  const resetOnboarding = async () => {
+    Alert.alert(
+      "Reset App",
+      "This will clear all your preferences and saved events. Are you sure?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Reset",
+          style: "destructive",
+          onPress: async () => {
+            await AsyncStorage.clear();
+            router.replace("/onboarding");
+          },
+        },
+      ]
+    );
+  };
+
+  const displayLocation = customLocation
+    ? { name: customLocation.label, isCustom: true }
+    : location.lat != null
+      ? { name: location.cityName || "Current location", isCustom: false }
+      : { name: "Not set — enter address below", isCustom: false };
 
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={{ paddingTop: insets.top + 8, paddingBottom: 130 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-      <View style={styles.header}><Text style={styles.eyebrow}>Your NearMe</Text><Text style={styles.title}>Tune your picks</Text><Text style={styles.subtitle}>These controls are constraints, not suggestions. Distance, price and accessibility stay honest.</Text></View>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={{ paddingBottom: 120 }}
+      showsVerticalScrollIndicator={false}
+      keyboardShouldPersistTaps="handled"
+    >
+      <Text style={styles.headerTitle}>Settings</Text>
 
-      <Section title="Location & travel" icon="navigate-outline" styles={styles} colors={colors}>
-        <View style={styles.locationRow}><View style={styles.iconCircle}><Ionicons name="location" size={21} color={colors.accent} /></View><View style={{ flex: 1 }}><Text style={styles.rowTitle}>{location.cityName || preferences.customLocation?.label || "Location not set"}</Text><Text style={styles.rowBody}>{preferences.customLocation ? "Custom location" : "Current device location"}</Text></View><Pressable style={styles.smallButton} onPress={useGps}><Text style={styles.smallButtonText}>Use GPS</Text></Pressable></View>
-        <Text style={styles.fieldLabel}>Use another city or address</Text>
-        <View style={styles.inputRow}><TextInput style={styles.input} value={address} onChangeText={setAddressInput} onSubmitEditing={submitAddress} placeholder="City, state or address" placeholderTextColor={colors.muted} returnKeyType="search" accessibilityLabel="City or address" /><Pressable style={[styles.submit, (!address.trim() || geocoding) && styles.disabled]} onPress={submitAddress} disabled={!address.trim() || geocoding}>{geocoding ? <ActivityIndicator color="#FFFFFF" /> : <Ionicons name="arrow-forward" size={22} color="#FFFFFF" />}</Pressable></View>
-        <Text style={styles.fieldLabel}>Search radius</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.choiceRow}>{RADII.map((radius) => <Choice key={radius} label={`${radius} mi`} selected={preferences.radius === radius} onPress={() => patchPreferences({ radius })} styles={styles} />)}</ScrollView>
-        <Text style={styles.helper}>The default 10-mile search may include clearly labeled suggestions up to 100 miles away when local plans are scarce. Other radii stay within your selection.</Text>
-      </Section>
+      {/* Location section */}
+      <Text style={styles.sectionTitle}>Your Location</Text>
 
-      <Section title="What you enjoy" icon="sparkles-outline" styles={styles} colors={colors}>
-        <Text style={styles.fieldLabel}>Purpose</Text>
-        <View style={styles.wrap}>{PURPOSES.map(([id, label]) => <Choice key={id} label={label} selected={(preferences.intents ?? []).includes(id)} onPress={() => toggleValue("intents", id)} styles={styles} />)}</View>
-        <Text style={styles.fieldLabel}>Interests</Text>
-        <View style={styles.interestGrid}>{INTERESTS.map((item) => { const selected = preferences.categories.includes(item.id); return <Pressable key={item.id} onPress={() => toggleInterest(item.id)} accessibilityRole="button" accessibilityState={{ selected }} style={[styles.interest, selected && styles.interestSelected]}><Ionicons name={item.icon} size={22} color={selected ? colors.accent : colors.muted} /><Text style={[styles.interestText, selected && styles.interestTextSelected]}>{item.label}</Text></Pressable>; })}</View>
-      </Section>
+      <View style={styles.locationCard}>
+        <View style={styles.locationHeader}>
+          <View style={styles.locationIcon}>
+            <Ionicons
+              name={displayLocation.isCustom ? "pin" : "navigate"}
+              size={20}
+              color={COLORS.accent}
+            />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.locationName}>{displayLocation.name}</Text>
+            <Text style={styles.locationMode}>
+              {displayLocation.isCustom ? "Custom address" : "Current location"}
+            </Text>
+          </View>
+          {displayLocation.isCustom && (
+            <TouchableOpacity
+              style={styles.gpsBtn}
+              onPress={useCurrentLocation}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="navigate" size={16} color={COLORS.accent} />
+              <Text style={styles.gpsBtnText}>Use GPS</Text>
+            </TouchableOpacity>
+          )}
+        </View>
 
-      <Section title="Comfort & budget" icon="options-outline" styles={styles} colors={colors}>
-        <Text style={styles.fieldLabel}>Social energy</Text>
-        <View style={styles.wrap}>{[["quiet", "Quiet"], ["easygoing", "Easygoing"], ["lively", "Lively"]].map(([id, label]) => <Choice key={id} label={label} selected={preferences.socialEnergy === id} onPress={() => patchPreferences({ socialEnergy: preferences.socialEnergy === id ? null : id })} styles={styles} />)}</View>
-        <Text style={styles.fieldLabel}>Age eligibility</Text>
-        <View style={styles.wrap}>{[["18-20", "18–20"], ["21+", "21+"]].map(([id, label]) => <Choice key={id} label={label} selected={preferences.ageBand === id} onPress={() => patchPreferences({ ageBand: id as "18-20" | "21+" })} styles={styles} />)}</View>
-        <Text style={styles.fieldLabel}>Maximum event price</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.choiceRow}>{[[0, "Free"], [25, "$25"], [50, "$50"], [100, "$100"], [null, "Any"]].map(([value, label]) => <Choice key={label as string} label={label as string} selected={preferences.budgetMax === value || (value === null && preferences.budgetMax == null)} onPress={() => patchPreferences({ budgetMax: value as number | null })} styles={styles} />)}</ScrollView>
-        <Text style={styles.fieldLabel}>Accessibility and setting</Text>
-        <View style={styles.wrap}>{ACCESS.map(([id, label]) => <Choice key={id} label={label} selected={(preferences.accessibilityNeeds ?? []).includes(id)} onPress={() => toggleValue("accessibilityNeeds", id)} styles={styles} />)}</View>
-        <ToggleRow icon="wine-outline" title="Happy hours & recurring specials" body="Keep venue specials in a separate, lower-priority lane." value={preferences.happyHourEnabled ?? true} onValueChange={(value: boolean) => patchPreferences({ happyHourEnabled: value })} styles={styles} colors={colors} />
-      </Section>
+        {/* Address input */}
+        <View style={styles.addressInputRow}>
+          <TextInput
+            style={styles.addressInput}
+            placeholder="Set a custom address..."
+            placeholderTextColor={COLORS.muted}
+            value={addressInput}
+            onChangeText={setAddressInput}
+            onSubmitEditing={setCustomAddress}
+            returnKeyType="search"
+          />
+          <TouchableOpacity
+            style={[
+              styles.addressBtn,
+              (!addressInput.trim() || isGeocoding) && { opacity: 0.4 },
+            ]}
+            onPress={setCustomAddress}
+            disabled={!addressInput.trim() || isGeocoding}
+            activeOpacity={0.7}
+          >
+            {isGeocoding ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Ionicons name="search" size={18} color="#fff" />
+            )}
+          </TouchableOpacity>
+        </View>
+      </View>
 
-      <Section title="Alerts" icon="notifications-outline" styles={styles} colors={colors}>
-        <ToggleRow icon="calendar-outline" title="Saved-plan reminders" body="A day before and the morning of. Quiet hours are 10 PM–8 AM." value={notifications} onValueChange={changeNotifications} styles={styles} colors={colors} />
-      </Section>
+      {/* Radius section */}
+      <Text style={styles.sectionTitle}>Search Radius</Text>
+      <View style={styles.radiusRow}>
+        {RADIUS_OPTIONS.map((r) => (
+          <TouchableOpacity
+            key={r}
+            style={[styles.radiusBtn, radius === r && styles.radiusBtnActive]}
+            onPress={() => changeRadius(r)}
+            activeOpacity={0.7}
+          >
+            <Text
+              style={[
+                styles.radiusBtnText,
+                radius === r && styles.radiusBtnTextActive,
+              ]}
+            >
+              {r} mi
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
 
-      <Section title="Subscription" icon="diamond-outline" styles={styles} colors={colors}>
-        {premium ? <View style={styles.premiumActive}><Ionicons name="checkmark-circle" size={24} color={colors.success} /><View style={{ flex: 1 }}><Text style={styles.rowTitle}>Your subscription is active</Text><Text style={styles.rowBody}>Manage or cancel in your Apple ID settings. Changes take effect at the end of the current period.</Text></View></View> : <><Text style={styles.plusLead}>Your subscription is not active on this device.</Text><Text style={styles.helper}>If you subscribed with a different Apple ID, tap Restore purchases below.</Text></>}
-        {premium && <Pressable style={styles.linkButton} onPress={() => Linking.openURL("https://apps.apple.com/account/subscriptions").catch(() => {})} accessibilityRole="link"><Text style={styles.linkText}>Manage subscription</Text></Pressable>}
-        <Pressable style={styles.linkButton} onPress={restore}><Text style={styles.linkText}>{purchaseBusy === "restore" ? "Restoring…" : "Restore purchases"}</Text></Pressable>
-      </Section>
+      {/* Interests section */}
+      <Text style={styles.sectionTitle}>Your Interests</Text>
+      <Text style={styles.sectionSubtitle}>
+        Tap to toggle. Leave all off to see everything.
+      </Text>
+      <View style={styles.categoriesGrid}>
+        {CATEGORIES.map((cat) => {
+          const isSelected = selectedCategories.includes(cat.id);
+          return (
+            <TouchableOpacity
+              key={cat.id}
+              style={[
+                styles.categoryChip,
+                isSelected && {
+                  backgroundColor: cat.color + "20",
+                  borderColor: cat.color,
+                },
+              ]}
+              onPress={() => toggleCategory(cat.id)}
+              activeOpacity={0.7}
+            >
+              <Ionicons
+                name={cat.icon as any}
+                size={16}
+                color={isSelected ? cat.color : COLORS.muted}
+              />
+              <Text
+                style={[
+                  styles.categoryChipText,
+                  isSelected && { color: cat.color },
+                ]}
+              >
+                {cat.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
 
-      <Section title="About & privacy" icon="shield-checkmark-outline" styles={styles} colors={colors}>
-        <LinkRow label="Privacy policy" onPress={() => Linking.openURL("https://mateo2lit.github.io/NearMe/privacy.html")} styles={styles} colors={colors} />
-        <LinkRow label="Terms of use" onPress={() => Linking.openURL("https://mateo2lit.github.io/NearMe/terms.html")} styles={styles} colors={colors} />
-        {/* The privacy policy promises this path, so the app has to offer it. */}
-        <LinkRow label="Request your data or deletion" onPress={() => Linking.openURL("mailto:dbh28tekkit@gmail.com?subject=NearMe%20data%20request").catch(() => {})} styles={styles} colors={colors} />
-        <Pressable style={styles.dangerRow} onPress={reset}><Ionicons name="trash-outline" size={21} color={colors.hot} /><Text style={styles.dangerText}>Clear local data and start over</Text></Pressable>
-      </Section>
+      {/* Tags section */}
+      <Text style={styles.sectionTitle}>Filter by Tags</Text>
+      <Text style={styles.sectionSubtitle}>
+        Only show events matching these tags.
+      </Text>
+      <View style={styles.tagsGrid}>
+        {TAGS.map((tag) => (
+          <TagBadge
+            key={tag.id}
+            tag={tag.id}
+            selected={selectedTags.includes(tag.id)}
+            onPress={() => toggleTag(tag.id)}
+            size="md"
+          />
+        ))}
+      </View>
+
+      {/* Happy Hour toggle */}
+      <Text style={styles.sectionTitle}>Happy Hours</Text>
+      <View style={styles.toggleRow}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.toggleTitle}>Show happy hour events</Text>
+          <Text style={styles.toggleSubtitle}>
+            Turn off to hide happy hours from your feed and map.
+          </Text>
+        </View>
+        <Switch
+          value={happyHourEnabled}
+          onValueChange={toggleHappyHour}
+          trackColor={{ false: COLORS.border, true: COLORS.accent }}
+          thumbColor="#fff"
+        />
+      </View>
+
+      {/* Saved-event reminders */}
+      <Text style={styles.sectionTitle}>Reminders</Text>
+      <View style={styles.toggleRow}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.toggleTitle}>Remind me about saved events</Text>
+          <Text style={styles.toggleSubtitle}>
+            One ping the day before and a morning-of nudge. Quiet 10 PM – 8 AM.
+          </Text>
+        </View>
+        <Switch
+          value={remindersEnabled}
+          onValueChange={toggleReminders}
+          trackColor={{ false: COLORS.border, true: COLORS.accent }}
+          thumbColor="#fff"
+        />
+      </View>
+
+      {/* Hide Events section */}
+      <Text style={styles.sectionTitle}>Hide Events</Text>
+      <Text style={styles.sectionSubtitle}>
+        Events matching these categories or tags won't appear in your feed.
+      </Text>
+      <Text style={styles.subHeader}>Hidden categories</Text>
+      <View style={styles.categoriesGrid}>
+        {CATEGORIES.map((cat) => {
+          const isHidden = hiddenCategories.includes(cat.id);
+          return (
+            <TouchableOpacity
+              key={cat.id}
+              style={[
+                styles.categoryChip,
+                isHidden && {
+                  backgroundColor: COLORS.hot + "15",
+                  borderColor: COLORS.hot,
+                },
+              ]}
+              onPress={() => toggleHiddenCategory(cat.id)}
+              activeOpacity={0.7}
+            >
+              <Ionicons
+                name={isHidden ? "eye-off" : (cat.icon as any)}
+                size={16}
+                color={isHidden ? COLORS.hot : COLORS.muted}
+              />
+              <Text
+                style={[
+                  styles.categoryChipText,
+                  isHidden && { color: COLORS.hot },
+                ]}
+              >
+                {cat.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+      <Text style={[styles.subHeader, { marginTop: 16 }]}>Hidden tags</Text>
+      <View style={styles.tagsGrid}>
+        {TAGS.map((tag) => {
+          const isHidden = hiddenTags.includes(tag.id);
+          return (
+            <TouchableOpacity
+              key={tag.id}
+              style={[
+                styles.hideTagChip,
+                isHidden && { backgroundColor: COLORS.hot + "15", borderColor: COLORS.hot },
+              ]}
+              onPress={() => toggleHiddenTag(tag.id)}
+              activeOpacity={0.7}
+            >
+              <Ionicons
+                name={isHidden ? "eye-off" : "pricetag"}
+                size={12}
+                color={isHidden ? COLORS.hot : COLORS.muted}
+              />
+              <Text style={[styles.hideTagText, isHidden && { color: COLORS.hot }]}>
+                {tag.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      {/* About section */}
+      <Text style={styles.sectionTitle}>About</Text>
+      <View style={styles.aboutCard}>
+        <View style={styles.aboutRow}>
+          <Ionicons name="information-circle" size={20} color={COLORS.muted} />
+          <Text style={styles.aboutText}>NearMe v1.0.0</Text>
+        </View>
+      </View>
+
+      {/* Reset */}
+      <TouchableOpacity
+        style={styles.resetBtn}
+        onPress={resetOnboarding}
+        activeOpacity={0.7}
+      >
+        <Ionicons name="trash-outline" size={18} color={COLORS.hot} />
+        <Text style={styles.resetText}>Reset App</Text>
+      </TouchableOpacity>
     </ScrollView>
   );
 }
 
-function Section({ title, icon, children, styles, colors }: any) { return <View style={styles.sectionWrap}><View style={styles.sectionTitleRow}><Ionicons name={icon} size={22} color={colors.accent} /><Text style={styles.sectionTitle}>{title}</Text></View><View style={styles.card}>{children}</View></View>; }
-function Choice({ label, selected, onPress, styles }: any) { return <Pressable onPress={onPress} accessibilityRole="button" accessibilityState={{ selected }} style={[styles.choice, selected && styles.choiceSelected]}><Text style={[styles.choiceText, selected && styles.choiceTextSelected]}>{label}</Text></Pressable>; }
-function ToggleRow({ icon, title, body, value, onValueChange, styles, colors }: any) { return <View style={styles.toggleRow}><View style={styles.iconCircle}><Ionicons name={icon} size={21} color={colors.accent} /></View><View style={{ flex: 1 }}><Text style={styles.rowTitle}>{title}</Text><Text style={styles.rowBody}>{body}</Text></View><Switch value={value} onValueChange={onValueChange} trackColor={{ false: colors.border, true: colors.accent }} thumbColor="#FFFFFF" accessibilityLabel={title} /></View>; }
-function LinkRow({ label, onPress, styles, colors }: any) { return <Pressable style={styles.linkRow} onPress={onPress} accessibilityRole="link"><Text style={styles.rowTitle}>{label}</Text><Ionicons name="open-outline" size={20} color={colors.muted} /></Pressable>; }
-
-function makeStyles(c: AppColors) { return StyleSheet.create({
-  screen: { flex: 1, backgroundColor: c.bg }, center: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: c.bg },
-  header: { paddingHorizontal: SPACING.md, paddingBottom: 4 }, eyebrow: { color: c.accent, fontSize: TYPE.meta, fontWeight: "800" },
-  title: { color: c.text, fontSize: TYPE.hero, lineHeight: 39, fontWeight: "900", letterSpacing: -1 }, subtitle: { color: c.muted, fontSize: TYPE.body, lineHeight: 24, marginTop: 5 },
-  sectionWrap: { marginTop: SPACING.lg, paddingHorizontal: SPACING.md }, sectionTitleRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 10 }, sectionTitle: { color: c.text, fontSize: TYPE.title, fontWeight: "900" },
-  card: { backgroundColor: c.card, borderRadius: RADIUS.md, borderWidth: 1, borderColor: c.border, padding: SPACING.md, gap: 12 },
-  locationRow: { flexDirection: "row", alignItems: "center", gap: 10 }, iconCircle: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", backgroundColor: c.accentSoft },
-  rowTitle: { color: c.text, fontSize: TYPE.body, lineHeight: 22, fontWeight: "800" }, rowBody: { color: c.muted, fontSize: TYPE.caption, lineHeight: 19, marginTop: 2 },
-  smallButton: { minHeight: 44, justifyContent: "center", paddingHorizontal: 12 }, smallButtonText: { color: c.accent, fontSize: TYPE.meta, fontWeight: "800" },
-  fieldLabel: { color: c.text, fontSize: TYPE.meta, fontWeight: "800", marginTop: 6 }, helper: { color: c.muted, fontSize: TYPE.caption, lineHeight: 19 },
-  inputRow: { flexDirection: "row", gap: 8 }, input: { flex: 1, minHeight: 50, borderRadius: RADIUS.sm, backgroundColor: c.cardAlt, borderWidth: 1, borderColor: c.border, color: c.text, fontSize: TYPE.body, paddingHorizontal: 14 },
-  submit: { width: 50, height: 50, borderRadius: RADIUS.sm, backgroundColor: c.accent, alignItems: "center", justifyContent: "center" }, disabled: { opacity: 0.42 },
-  choiceRow: { gap: 8 }, wrap: { flexDirection: "row", flexWrap: "wrap", gap: 8 }, choice: { minHeight: 44, justifyContent: "center", paddingHorizontal: 14, borderRadius: RADIUS.pill, borderWidth: 1, borderColor: c.border, backgroundColor: c.card },
-  choiceSelected: { borderColor: c.accent, backgroundColor: c.accentSoft }, choiceText: { color: c.text, fontSize: TYPE.meta, fontWeight: "700" }, choiceTextSelected: { color: c.accent },
-  interestGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 }, interest: { width: "48%", minHeight: 54, borderRadius: RADIUS.sm, borderWidth: 1, borderColor: c.border, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12 }, interestSelected: { borderColor: c.accent, backgroundColor: c.accentSoft },
-  interestText: { flex: 1, color: c.text, fontSize: TYPE.meta, lineHeight: 20, fontWeight: "700" }, interestTextSelected: { color: c.accent },
-  toggleRow: { minHeight: 64, flexDirection: "row", alignItems: "center", gap: 10, borderTopWidth: 1, borderTopColor: c.border, paddingTop: 12 },
-  plusLead: { color: c.text, fontSize: TYPE.body, lineHeight: 24 }, premiumActive: { flexDirection: "row", gap: 10, padding: 12, borderRadius: RADIUS.sm, backgroundColor: c.successSoft },
-  planRow: { minHeight: 64, flexDirection: "row", alignItems: "center", gap: 10, borderTopWidth: 1, borderTopColor: c.border, paddingTop: 12 }, planPrice: { color: c.text, fontSize: TYPE.body, fontWeight: "900" },
-  linkButton: { minHeight: 48, alignItems: "center", justifyContent: "center" }, linkText: { color: c.accent, fontSize: TYPE.meta, fontWeight: "800" },
-  linkRow: { minHeight: 52, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderBottomWidth: 1, borderBottomColor: c.border },
-  dangerRow: { minHeight: 52, flexDirection: "row", alignItems: "center", gap: 10 }, dangerText: { color: c.hot, fontSize: TYPE.body, fontWeight: "700" },
-}); }
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: COLORS.bg,
+    paddingHorizontal: 20,
+    paddingTop: 64,
+  },
+  headerTitle: {
+    fontSize: 28,
+    fontWeight: "800",
+    color: COLORS.text,
+    marginBottom: 20,
+    letterSpacing: -0.5,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: COLORS.text,
+    marginBottom: 8,
+    marginTop: 24,
+  },
+  sectionSubtitle: {
+    fontSize: 13,
+    color: COLORS.muted,
+    marginBottom: 12,
+  },
+  locationCard: {
+    backgroundColor: COLORS.card,
+    padding: 16,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    gap: 12,
+  },
+  locationHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  locationIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: RADIUS.sm,
+    backgroundColor: COLORS.accent + "15",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  locationName: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: COLORS.text,
+  },
+  locationMode: {
+    fontSize: 12,
+    color: COLORS.muted,
+    marginTop: 1,
+  },
+  gpsBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLORS.accent + "15",
+    borderWidth: 1,
+    borderColor: COLORS.accent + "40",
+  },
+  gpsBtnText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: COLORS.accent,
+  },
+  addressInputRow: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  addressInput: {
+    flex: 1,
+    backgroundColor: COLORS.bg,
+    borderRadius: RADIUS.sm,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    color: COLORS.text,
+    fontSize: 14,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  addressBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: RADIUS.sm,
+    backgroundColor: COLORS.accent,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  radiusRow: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  radiusBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLORS.card,
+    alignItems: "center",
+    borderWidth: 2,
+    borderColor: "transparent",
+  },
+  radiusBtnActive: {
+    borderColor: COLORS.accent,
+    backgroundColor: COLORS.accent + "15",
+  },
+  radiusBtnText: {
+    color: COLORS.muted,
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  radiusBtnTextActive: {
+    color: COLORS.accent,
+  },
+  toggleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: COLORS.card,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  toggleTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: COLORS.text,
+  },
+  toggleSubtitle: {
+    fontSize: 12,
+    color: COLORS.muted,
+    marginTop: 2,
+  },
+  categoriesGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  categoryChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLORS.card,
+    borderWidth: 1.5,
+    borderColor: COLORS.border,
+  },
+  categoryChipText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: COLORS.muted,
+  },
+  tagsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  subHeader: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: COLORS.muted,
+    letterSpacing: 1,
+    marginBottom: 8,
+    marginTop: 4,
+  },
+  hideTagChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLORS.card,
+    borderWidth: 1.5,
+    borderColor: COLORS.border,
+  },
+  hideTagText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: COLORS.muted,
+  },
+  aboutCard: {
+    backgroundColor: COLORS.card,
+    borderRadius: RADIUS.md,
+    padding: 16,
+    gap: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  aboutRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  aboutText: {
+    fontSize: 14,
+    color: COLORS.muted,
+  },
+  resetBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    marginTop: 32,
+    paddingVertical: 14,
+    borderRadius: RADIUS.pill,
+    borderWidth: 1.5,
+    borderColor: COLORS.hot + "40",
+    backgroundColor: COLORS.hot + "08",
+  },
+  resetText: {
+    color: COLORS.hot,
+    fontSize: 15,
+    fontWeight: "600",
+  },
+});

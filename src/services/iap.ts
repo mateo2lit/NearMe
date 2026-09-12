@@ -59,18 +59,15 @@ export function hasEntitlement(info: CustomerInfo | null | undefined): boolean {
   return Boolean(info.entitlements?.active?.[ENTITLEMENT_ID]);
 }
 
-export async function hasActiveEntitlement(): Promise<boolean> {
-  const info = await refreshCustomerInfo();
-  return hasEntitlement(info);
-}
-
 /**
  * Three-state entitlement check.
  *
  * "unavailable" is distinct from "inactive" on purpose: `configureIap` no-ops
- * when the platform is not iOS or EXPO_PUBLIC_REVENUECAT_IOS_KEY is missing, and
- * a network failure looks the same. Callers must not read that silence as
- * non-payment — see shouldRevokeAccess in src/lib/accessGate.ts.
+ * when the platform is not iOS or EXPO_PUBLIC_REVENUECAT_IOS_KEY is missing,
+ * and a network failure looks the same. With a hard paywall, reading that
+ * silence as non-payment locks out every paying subscriber at once — the same
+ * failure shape as the missing Supabase env vars behind two guideline 2.1(a)
+ * rejections. See shouldRevokeAccess in src/lib/accessGate.ts.
  */
 export async function entitlementState(): Promise<EntitlementState> {
   if (!configured) return "unavailable";
@@ -80,4 +77,9 @@ export async function entitlementState(): Promise<EntitlementState> {
   } catch {
     return "unavailable";
   }
+}
+
+export async function hasActiveEntitlement(): Promise<boolean> {
+  const info = await refreshCustomerInfo();
+  return hasEntitlement(info);
 }
