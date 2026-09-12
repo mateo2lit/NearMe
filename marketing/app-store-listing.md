@@ -51,10 +51,10 @@ Coverage and inventory vary by location. NearMe shows an honest empty state when
 
 NearMe is a subscription app and requires an active subscription to use.
 
-• NearMe Weekly — $4.99 per week, auto-renewing
-• NearMe Annual — $79.99 per year, auto-renewing
+• NearMe Pro Weekly — 1 week free, then $4.99 per week, auto-renewing
+• NearMe Pro Annual — 1 week free, then $79.99 per year, auto-renewing
 
-Payment is charged to your Apple ID at confirmation of purchase. Your subscription renews automatically for the same period unless you cancel at least 24 hours before the end of the current period. Where a free trial is offered, it converts to a paid subscription unless cancelled at least 24 hours before the trial ends, and any unused portion of a trial is forfeited if you subscribe during it. Manage or cancel in iPhone Settings, then your name, then Subscriptions. Deleting the app does not cancel a subscription. Refunds are handled by Apple.
+Payment is charged to your Apple ID at confirmation of purchase. Your subscription renews automatically for the same period unless you cancel at least 24 hours before the end of the current period. Each plan includes a 1-week free trial, which converts to a paid subscription unless cancelled at least 24 hours before the trial ends. Any unused portion of a trial is forfeited if you subscribe during it. The free trial is available once per Apple ID. Manage or cancel in iPhone Settings, then your name, then Subscriptions. Deleting the app does not cancel a subscription. Refunds are handled by Apple.
 
 Terms of Use (EULA): https://mateo2lit.github.io/NearMe/terms.html
 
