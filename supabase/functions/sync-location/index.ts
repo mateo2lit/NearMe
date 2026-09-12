@@ -2,6 +2,8 @@ import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.103.0";
 import { generateTags } from "../_shared/tag-generator.ts";
 import { hasServiceRole } from "../_shared/service-auth.ts";
+import { nextVenuesSyncedAt, shouldDiscoverVenues, syncLogFilter, syncPolicy } from "../_shared/sync-log.ts";
+import { writeVerifiedEvents } from "../_shared/event-writes.ts";
 import {
   mapTMCategory,
   mapVenueCategory,
@@ -49,9 +51,16 @@ const VENUE_EVENT_SCHEMA = {
       enum: ["nightlife", "music", "sports", "food", "arts", "community", "fitness", "outdoors", "movies"],
     },
     subcategory: { type: "string" },
+    // An array-form `type` combined with `enum` is rejected by structured
+    // outputs: "Invalid schema: Enum value 'monday' does not match declared
+    // type '['string','null']'". Every venue-extract call 400'd on this.
+    // anyOf is the portable way to say "one of these days, or null", and keeps
+    // the field required.
     day_of_week: {
-      type: ["string", "null"],
-      enum: ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", null],
+      anyOf: [
+        { type: "string", enum: ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"] },
+        { type: "null" },
+      ],
     },
     time: { type: ["string", "null"], description: 'e.g. "7:30 PM", or null' },
     is_free: { type: "boolean" },
@@ -144,7 +153,6 @@ const MEETUP_API_TOKEN = Deno.env.get("MEETUP_API_TOKEN");
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
-const SYNC_COOLDOWN_HOURS = 2;
 const PLACES_URL = "https://places.googleapis.com/v1/places:searchNearby";
 const UPSTREAM_TIMEOUT_MS = 12_000; // hard cap on any single upstream API call
 
@@ -1340,12 +1348,14 @@ const RATE_LIMIT_WINDOW_MIN = 60; // per hour
 async function checkRateLimit(clientId: string, ip: string | null): Promise<{ allowed: boolean; remaining: number }> {
   const since = new Date(Date.now() - RATE_LIMIT_WINDOW_MIN * 60000).toISOString();
 
-  const { count } = await supabase
+  const { count, error } = await supabase
     .from("rate_limits")
     .select("*", { count: "exact", head: true })
     .eq("client_id", clientId)
     .eq("endpoint", "sync-location")
     .gte("called_at", since);
+
+  if (error) throw new Error(`rate limit lookup failed: ${error.message}`);
 
   const used = count || 0;
   if (used >= RATE_LIMIT_MAX) {
@@ -1353,11 +1363,12 @@ async function checkRateLimit(clientId: string, ip: string | null): Promise<{ al
   }
 
   // Log this call
-  await supabase.from("rate_limits").insert({
+  const { error: writeError } = await supabase.from("rate_limits").insert({
     client_id: clientId,
     endpoint: "sync-location",
     ip: ip || null,
   });
+  if (writeError) throw new Error(`rate limit write failed: ${writeError.message}`);
 
   return { allowed: true, remaining: RATE_LIMIT_MAX - used - 1 };
 }
@@ -1366,7 +1377,7 @@ async function checkRateLimit(clientId: string, ip: string | null): Promise<{ al
 function isAbusiveRequest(lat: number, lng: number, radiusMiles: number): boolean {
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return true;
   if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return true;
-  if (radiusMiles < 0 || radiusMiles > 100) return true;
+  if (!Number.isFinite(radiusMiles) || radiusMiles <= 0 || radiusMiles > 100) return true;
   return false;
 }
 
@@ -1377,10 +1388,9 @@ serve(async (req: Request) => {
     const body = await req.json();
     const lat = body.lat;
     const lng = body.lng;
-    const radiusMiles = body.radius_miles || 15;
-    // Cost guard: public/client requests are catalog-only. AI extraction,
-    // Places expansion and venue crawling require an explicit curator job.
-    const allowAi = body.allow_ai === true && hasServiceRole(req);
+    const radiusMiles = body.radius_miles ?? 15;
+    // Only the shared curator job may bypass the cooldown and force a refresh.
+    const isCurator = hasServiceRole(req);
 
     if (lat == null || lng == null) {
       return new Response(JSON.stringify({ error: "lat and lng required" }), {
@@ -1416,28 +1426,32 @@ serve(async (req: Request) => {
     const gridKey = `${gridLat},${gridLng}`;
 
     // Check both geohash and legacy grid_key for existing sync
-    const { data: syncLog } = await supabase
+    const { data: syncLog, error: syncLogError } = await supabase
       .from("sync_log")
-      .select("synced_at, event_count, geohash")
-      .or(`geohash.eq.${geohash},grid_key.eq.${gridKey}`)
+      .select("synced_at, event_count, geohash, venues_synced_at, venue_count")
+      .or(syncLogFilter(geohash, gridKey))
       .order("synced_at", { ascending: false })
       .limit(1);
+
+    if (syncLogError) {
+      // Never silent: an unreadable sync_log used to look exactly like a
+      // never-synced location, which disabled the cooldown entirely.
+      console.error("[sync] sync_log lookup failed:", syncLogError.message);
+    }
 
     const lastSync = syncLog?.[0]?.synced_at;
     const lastCount = syncLog?.[0]?.event_count || 0;
     const hoursSince = lastSync
       ? (Date.now() - new Date(lastSync).getTime()) / 3600000
       : Infinity;
-    const minutesSince = hoursSince * 60;
+    const { inCooldown, allowAi } = syncPolicy({
+      lastSync, lastCount, lookupFailed: !!syncLogError,
+      isCurator, requestedAi: body.allow_ai === true,
+    });
 
-    // Two-tier cooldown: prior sync was healthy (≥20 events) → full 2hr cooldown.
-    // Prior sync was thin (<20) → only 15min cooldown so users can re-fetch and
-    // hit the pack-the-feed floor without waiting 2hr on a starved feed.
-    const wasHealthy = lastCount >= 20;
-    const inFullCooldown = wasHealthy && hoursSince < SYNC_COOLDOWN_HOURS;
-    const inThinCooldown = !wasHealthy && lastCount > 0 && minutesSince < 15;
-
-    if ((inFullCooldown || inThinCooldown) && !allowAi) {
+    // Curator runs are scheduled, not user-triggered, so the cooldown that
+    // protects against per-open client cost does not apply to them.
+    if (inCooldown) {
       return new Response(
         JSON.stringify({
           synced: false,
@@ -1454,18 +1468,39 @@ serve(async (req: Request) => {
 
     console.log(`[sync] ${gridKey} geohash=${geohash} (${hoursSince.toFixed(1)}h since)`);
 
-    // 1. Venues
-    const venueCount = allowAi
-      ? await syncVenues(lat, lng, radiusMiles * 1609.34)
-      : 0;
-
-    // 2. Fast API sources in parallel. SeatGeek/Bandsintown/Yelp removed —
+    // 1. Fast API sources in parallel. SeatGeek/Bandsintown/Yelp removed —
     // their APIs are silently dead in our coverage. When the prior sync was
     // thin, date-window-aware fetchers widen their range (A5 fallback).
     const [tm, eb] = await Promise.all([
       fetchTicketmaster(lat, lng, radiusMiles),
       fetchEventbrite(lat, lng, radiusMiles, { expandDates: thinPriorSync }),
     ]);
+
+    // Publish reliable catalog results before venue crawling or LLM work.
+    // A later source timeout must not discard already discovered plans.
+    const catalog = [...tm, ...eb].filter((event) => event.start_time);
+    for (const event of catalog) event.description = cleanText(event.description);
+    await writeVerifiedEvents(supabase, catalog);
+
+    // 2. Refresh venue inventory for the slower sources below. Venue
+    // discovery is the most expensive upstream call we make, so it runs on a
+    // 7-day TTL per cell rather than on every crawl. `venueCount` stays 0 on a
+    // skipped crawl; the log write below preserves the prior count so a skip
+    // cannot make a healthy cell look venue-less.
+    const priorVenueCount = syncLog?.[0]?.venue_count ?? 0;
+    const priorVenuesSyncedAt = syncLog?.[0]?.venues_synced_at ?? null;
+    const discoverVenues = shouldDiscoverVenues({
+      venuesSyncedAt: priorVenuesSyncedAt,
+      allowAi,
+    });
+    const venueCount = discoverVenues
+      ? await syncVenues(lat, lng, radiusMiles * 1609.34)
+      : 0;
+    if (!discoverVenues) {
+      console.log(`[venues] skip discovery (last ${priorVenuesSyncedAt ?? "never"}, allowAi=${allowAi})`);
+    } else if (venueCount === 0) {
+      console.warn("[venues] discovery ran but found 0 venues — not starting the TTL; check GOOGLE_PLACES_API_KEY quota/restrictions");
+    }
 
     // 3. Compute variety hint from fast-source results so Claude-driven sources
     // (Reddit, venue scanning) bias toward under-represented categories. This
@@ -1799,26 +1834,27 @@ serve(async (req: Request) => {
       e.description = cleanText(e.description);
     }
 
-    if (unique.length > 0) {
-      const verifiedAt = new Date().toISOString();
-      const verified = unique.map((event) => ({
-        ...event,
-        last_verified_at: verifiedAt,
-        verification_status: event.source_url || event.ticket_url ? "verified" : "unverified",
-      }));
-      await supabase.from("events").upsert(verified, { onConflict: "source,source_id" });
-    }
+    await writeVerifiedEvents(supabase, unique);
 
     // Log sync with both geohash and grid_key for backwards compat
-    await supabase.from("sync_log").upsert({
+    const { error: logWriteError } = await supabase.from("sync_log").upsert({
       grid_key: gridKey,
       geohash,
       lat: gridLat,
       lng: gridLng,
       synced_at: new Date().toISOString(),
       event_count: unique.length,
-      venue_count: venueCount,
+      // A discovery that found nothing keeps the prior count and the prior
+      // timestamp, so a Places failure retries on the next crawl instead of
+      // being cached for a week.
+      venue_count: discoverVenues && venueCount > 0 ? venueCount : priorVenueCount,
+      venues_synced_at: nextVenuesSyncedAt({
+        discovered: discoverVenues,
+        venueCount,
+        prior: priorVenuesSyncedAt,
+      }),
     }, { onConflict: "grid_key" });
+    if (logWriteError) throw new Error(`sync log write failed: ${logWriteError.message}`);
 
     return new Response(
       JSON.stringify({

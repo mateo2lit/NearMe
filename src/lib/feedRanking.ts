@@ -107,7 +107,7 @@ function scoreOne(event: Event, prefs: UserPreferences, feedback: FeedbackMap, s
   score += preferenceSignalBias(event, signals);
 
   const rounded = Math.max(0, Math.min(100, Math.round(score)));
-  if (!reasons.length) reasons.push(event.distance != null ? "nearby and coming up" : "coming up soon");
+  if (!reasons.length) reasons.push(event.distance != null && event.distance <= radius ? "nearby and coming up" : "coming up soon");
   return {
     ...event,
     rank_score: rounded,

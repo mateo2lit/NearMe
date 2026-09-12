@@ -23,9 +23,16 @@ const SCANNER_EVENT_SCHEMA = {
       enum: ["nightlife", "music", "sports", "food", "arts", "community", "fitness", "outdoors", "movies"],
     },
     subcategory: { type: "string" },
+    // An array-form `type` combined with `enum` is rejected by structured
+    // outputs: "Invalid schema: Enum value 'monday' does not match declared
+    // type '['string','null']'". Every venue-extract call 400'd on this.
+    // anyOf is the portable way to say "one of these days, or null", and keeps
+    // the field required.
     day_of_week: {
-      type: ["string", "null"],
-      enum: ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", null],
+      anyOf: [
+        { type: "string", enum: ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"] },
+        { type: "null" },
+      ],
     },
     time: { type: ["string", "null"], description: 'e.g. "7:30 PM"' },
     is_free: { type: "boolean" },

@@ -1,8 +1,10 @@
+import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Image } from "expo-image";
 import { Ionicons } from "@expo/vector-icons";
 import { Event } from "../types";
 import { AppColors, RADIUS, SHADOWS, SPACING, TYPE, useAppTheme } from "../constants/theme";
+import { getEventImage } from "../constants/images";
 import { effectiveStart } from "../lib/time-windows";
 import { formatDistance } from "../services/events";
 
@@ -37,8 +39,28 @@ interface Props {
 export default function PlanCard({ event, saved, onOpen, onSave, onDismiss, compact, index }: Props) {
   const { colors } = useAppTheme();
   const styles = makeStyles(colors);
+  // Most ingest sources (reddit, meetup, espn, pickleheads, highschool, claude)
+  // never populate image_url, so a card that only renders event.image_url is a
+  // bare icon most of the time. Fall back to the curated category artwork, and
+  // fall back again if the source's own image 404s.
+  const [imageFailed, setImageFailed] = useState(false);
+  const imageUri = getEventImage(
+    imageFailed ? null : event.image_url,
+    event.category,
+    event.subcategory,
+    event.title,
+    event.description,
+    event.tags,
+    `${event.venue?.name || ""} ${event.address || ""}`,
+  );
   const venue = event.venue?.name || event.address?.split(",")[0] || "Location in listing";
-  const why = event.matchReasons?.slice(0, 2).join(" · ") || "Nearby and coming up";
+  const why = event.matchReasons?.slice(0, 2).join(" · ") || (event.outsideRadiusMiles != null ? "Coming up soon" : "Nearby and coming up");
+  // Pack-the-feed widening can reach past the radius the user chose. When it
+  // does, say so on the card — a distance alone reads as "nearby".
+  const outside =
+    event.outsideRadiusMiles != null && event.distance != null
+      ? `${formatDistance(event.distance)} — outside your ${event.outsideRadiusMiles} mi radius`
+      : null;
   const verified = event.last_verified_at
     ? `Source updated ${new Date(event.last_verified_at).toLocaleDateString([], { month: "short", day: "numeric" })}`
     : event.source_url || event.ticket_url ? "Source linked" : "Community listing";
@@ -47,18 +69,22 @@ export default function PlanCard({ event, saved, onOpen, onSave, onDismiss, comp
     <Pressable
       onPress={onOpen}
       accessibilityRole="button"
-      accessibilityLabel={`${event.title}, ${eventTimeText(event)}, ${venue}, ${priceText(event)}`}
+      accessibilityLabel={`${event.title}, ${eventTimeText(event)}, ${venue}, ${priceText(event)}${outside ? `, ${outside}` : ""}`}
       style={({ pressed }) => [styles.card, compact && styles.compactCard, pressed && styles.pressed]}
     >
       <View style={[styles.media, compact && styles.compactMedia]}>
-        {event.image_url ? (
-          <Image source={{ uri: event.image_url }} style={StyleSheet.absoluteFill} contentFit="cover" transition={180} accessibilityLabel={`Photo for ${event.title}`} />
-        ) : (
-          <View style={styles.placeholder}>
-            <Ionicons name={CATEGORY_ICON[event.category] || "calendar-outline"} size={compact ? 30 : 42} color={colors.accent} />
-            <Text style={styles.category}>{event.category}</Text>
-          </View>
-        )}
+        <View style={styles.placeholder}>
+          <Ionicons name={CATEGORY_ICON[event.category] || "calendar-outline"} size={compact ? 30 : 42} color={colors.accent} />
+          <Text style={styles.category}>{event.category}</Text>
+        </View>
+        <Image
+          source={{ uri: imageUri }}
+          style={StyleSheet.absoluteFill}
+          contentFit="cover"
+          transition={180}
+          onError={() => setImageFailed(true)}
+          accessibilityLabel={`Photo for ${event.title}`}
+        />
         {index != null && !compact && <View style={styles.indexBadge}><Text style={styles.indexText}>{index}</Text></View>}
         <View style={styles.priceBadge}><Text style={styles.priceText}>{priceText(event)}</Text></View>
       </View>
@@ -69,6 +95,12 @@ export default function PlanCard({ event, saved, onOpen, onSave, onDismiss, comp
           <Ionicons name="location-outline" size={17} color={colors.muted} />
           <Text style={styles.meta} numberOfLines={1}>{venue}{event.distance != null ? ` · ${formatDistance(event.distance)}` : ""}</Text>
         </View>
+        {outside && (
+          <View style={styles.outsideRow}>
+            <Ionicons name="navigate-outline" size={15} color={colors.hot} />
+            <Text style={styles.outsideText} numberOfLines={2}>{outside}</Text>
+          </View>
+        )}
         {!compact && (
           <View style={styles.whyRow}>
             <Ionicons name="checkmark-circle" size={17} color={colors.success} />
@@ -111,6 +143,8 @@ function makeStyles(c: AppColors) { return StyleSheet.create({
   compactTitle: { fontSize: 18, lineHeight: 23 },
   metaRow: { flexDirection: "row", alignItems: "center", gap: 5 },
   meta: { flex: 1, color: c.muted, fontSize: TYPE.meta, lineHeight: 21 },
+  outsideRow: { flexDirection: "row", alignItems: "center", gap: 5, paddingVertical: 6, paddingHorizontal: 8, borderRadius: RADIUS.sm, backgroundColor: c.hotSoft },
+  outsideText: { flex: 1, color: c.hot, fontSize: TYPE.caption, lineHeight: 18, fontWeight: "700" },
   whyRow: { flexDirection: "row", alignItems: "flex-start", gap: 6, padding: 10, borderRadius: RADIUS.sm, backgroundColor: c.successSoft },
   why: { flex: 1, color: c.success, fontSize: TYPE.caption, lineHeight: 18, fontWeight: "700" },
   footer: { minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },

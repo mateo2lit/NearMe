@@ -6,6 +6,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppColors, BOCA_RATON, RADIUS, SPACING, TYPE, useAppTheme } from "../src/constants/theme";
 import { geocodeAddress, refreshLocation, setManualLocation, useLocation } from "../src/hooks/useLocation";
 import { usePreferences } from "../src/hooks/usePreferences";
+import PaywallStep from "../src/components/PaywallStep";
+import { markSubscribed } from "../src/services/subscription";
+import { needsPaywall } from "../src/lib/accessGate";
+import { entitlementState } from "../src/services/iap";
 import { track } from "../src/services/analytics";
 import { fetchNearbyEvents } from "../src/services/events";
 import { EventCategory } from "../src/types";
@@ -87,9 +91,28 @@ export default function Onboarding() {
       },
     };
     await savePreferences(next);
-    await completeOnboarding();
     track("onboarding_completed", { category_count: categories.length, intent_count: intents.length, radius, budget_max: budget, accessibility_count: accessibility.length }).catch(() => {});
+    // Warm the cell while the user is on the paywall, so a successful trial
+    // lands on a populated feed instead of a spinner. Guideline 2.1(a) rejected
+    // this app twice on an empty first screen.
     fetchNearbyEvents(location.lat, location.lng, radius).catch(() => {});
+
+    // Someone who reinstalled, switched devices, or tapped "clear local data"
+    // still owns their subscription. Charging them twice is a support problem
+    // and reads as a deceptive billing pattern, so confirm first.
+    const state = await entitlementState();
+    setSaving(false);
+    if (!needsPaywall(state)) {
+      await unlock();
+      return;
+    }
+    setStep(4);
+  };
+
+  // Only reached after RevenueCat confirms an active entitlement.
+  const unlock = async () => {
+    await markSubscribed();
+    await completeOnboarding();
     router.replace("/(tabs)");
   };
 
@@ -101,12 +124,20 @@ export default function Onboarding() {
         <Text style={styles.hero}>Three plans worth leaving home for.</Text>
         <Text style={styles.heroBody}>Tell us what fits your life. We'll rank nearby events by time, distance, budget and trust—not by who paid to appear.</Text>
         <View style={styles.promiseList}>
-          <Promise icon="location-outline" text="Your radius is always respected" styles={styles} colors={colors} />
+          <Promise icon="location-outline" text="See the distance before making plans" styles={styles} colors={colors} />
           <Promise icon="options-outline" text="Useful for quiet afternoons through lively nights" styles={styles} colors={colors} />
-          <Promise icon="lock-open-outline" text="Free to explore. No subscription required" styles={styles} colors={colors} />
+          <Promise icon="shield-checkmark-outline" text="Ranked by fit, never by who paid to appear" styles={styles} colors={colors} />
         </View>
       </View>
       <View><Pressable style={styles.primary} onPress={() => setStep(1)} accessibilityRole="button"><Text style={styles.primaryText}>Find my plans</Text><Ionicons name="arrow-forward" size={21} color="#FFFFFF" /></Pressable><Text style={styles.ageNote}>By continuing, you confirm that you are at least 18 years old.</Text></View>
+    </View>
+  );
+
+  if (step === 4) return (
+    // PaywallStep carries its own horizontal padding, so the wrapper only
+    // supplies safe-area insets.
+    <View style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top, paddingBottom: Math.max(insets.bottom, 16) }}>
+      <PaywallStep onSubscribed={unlock} onBack={() => setStep(3)} />
     </View>
   );
 
@@ -127,12 +158,13 @@ export default function Onboarding() {
         </QuestionLayout>
       )}
       {step === 3 && (
-        <QuestionLayout title="Make it fit real life" body="These are hard constraints where data is available. You can change them anytime." onNext={finish} nextDisabled={saving || !ageBand} nextLabel={saving ? "Building your feed…" : "Show my best three"} styles={styles}>
+        <QuestionLayout title="Make it fit real life" body="These are hard constraints where data is available. You can change them anytime." onNext={finish} nextDisabled={saving || !ageBand} nextLabel={saving ? "Building your feed…" : "See my plans"} styles={styles}>
           <Text style={styles.label}>AGE ELIGIBILITY</Text><View style={styles.wrap}>{[["18-20", "I'm 18–20"], ["21+", "I'm 21+"]].map(([id, label]) => <Choice key={id} label={label} selected={ageBand === id} onPress={() => setAgeBand(id as "18-20" | "21+")} styles={styles} />)}</View>
           <Text style={styles.label}>WHEN</Text><View style={styles.wrap}>{TIMES.map(([id, label]) => <Choice key={id} label={label} selected={times.includes(id)} onPress={() => toggleTime(id)} styles={styles} />)}</View>
           <Text style={styles.label}>SOCIAL ENERGY</Text><View style={styles.wrap}>{[["quiet", "Quiet"], ["easygoing", "Easygoing"], ["lively", "Lively"]].map(([id, label]) => <Choice key={id} label={label} selected={energy === id} onPress={() => setEnergy(id)} styles={styles} />)}</View>
           <Text style={styles.label}>MAX EVENT PRICE</Text><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.wrap}>{[[0, "Free"], [25, "$25"], [50, "$50"], [100, "$100"], [null, "Any"]].map(([value, label]) => <Choice key={label as string} label={label as string} selected={budget === value} onPress={() => setBudget(value as number | null)} styles={styles} />)}</ScrollView>
-          <Text style={styles.label}>MAX DISTANCE</Text><View style={styles.wrap}>{[5, 10, 15, 25].map((value) => <Choice key={value} label={`${value} miles`} selected={radius === value} onPress={() => setRadius(value)} styles={styles} />)}</View>
+          <Text style={styles.label}>SEARCH RADIUS</Text><View style={styles.wrap}>{[5, 10, 15, 25].map((value) => <Choice key={value} label={`${value} miles`} selected={radius === value} onPress={() => setRadius(value)} styles={styles} />)}</View>
+          <Text style={styles.questionBody}>The default 10-mile search can suggest plans up to 100 miles away when local options are scarce. Farther plans are labeled. Other radii stay within your selection.</Text>
           <Text style={styles.label}>ACCESS & SETTING · OPTIONAL</Text><View style={styles.wrap}>{ACCESS.map(([id, label]) => <Choice key={id} label={label} selected={accessibility.includes(id)} onPress={() => toggle(accessibility, id, setAccessibility)} styles={styles} />)}</View>
         </QuestionLayout>
       )}
@@ -148,7 +180,7 @@ function LocationStep({ value, onChange, onNext, styles, colors }: any) {
   const gps = async () => { setBusy(true); await refreshLocation(); setBusy(false); };
   useEffect(() => { if (live.lat != null && live.lng != null && !value) onChange({ label: live.cityName || "Current location", lat: live.lat, lng: live.lng }); }, [live.lat, live.lng]);
   const search = async () => { if (!input.trim()) return; Keyboard.dismiss(); setBusy(true); const found = await geocodeAddress(input.trim()); setBusy(false); if (found) { await choose(found); setInput(""); } };
-  return <QuestionLayout title="Where should we look?" body="We'll only show events inside the radius you choose." onNext={onNext} nextDisabled={!value} styles={styles}>
+  return <QuestionLayout title="Where should we look?" body="Choose a starting point for local plans. Each listing shows its distance." onNext={onNext} nextDisabled={!value} styles={styles}>
     <Pressable style={styles.locationButton} onPress={gps}><View style={styles.locationIcon}><Ionicons name="navigate" size={24} color={colors.accent} /></View><View style={{ flex: 1 }}><Text style={styles.locationTitle}>{busy ? "Finding you…" : "Use current location"}</Text><Text style={styles.locationBody}>Best for plans close to where you are now</Text></View>{busy ? <ActivityIndicator color={colors.accent} /> : <Ionicons name="chevron-forward" size={21} color={colors.muted} />}</Pressable>
     <Text style={styles.label}>OR ENTER A CITY OR ADDRESS</Text><View style={styles.searchRow}><TextInput value={input} onChangeText={setInput} onSubmitEditing={search} placeholder="City, state or address" placeholderTextColor={colors.muted} style={styles.input} returnKeyType="search" accessibilityLabel="City or address" /><Pressable style={[styles.searchButton, !input.trim() && styles.disabled]} onPress={search} disabled={!input.trim()}><Ionicons name="search" size={22} color="#FFFFFF" /></Pressable></View>
     <Text style={styles.label}>QUICK CHOICES</Text><View style={styles.wrap}><Choice label="Boca Raton" selected={value?.label?.includes("Boca")} onPress={() => choose({ label: "Boca Raton, FL", ...BOCA_RATON })} styles={styles} /><Choice label="Miami" selected={value?.label?.includes("Miami")} onPress={() => choose({ label: "Miami, FL", lat: 25.7617, lng: -80.1918 })} styles={styles} /></View>

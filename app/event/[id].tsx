@@ -5,6 +5,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppColors, RADIUS, SPACING, TYPE, useAppTheme } from "../../src/constants/theme";
+import { getEventImage } from "../../src/constants/images";
 import { eventTimeText, priceText } from "../../src/components/PlanCard";
 import { DidYouGo } from "../../src/components/DidYouGo";
 import { effectiveEnd } from "../../src/lib/time-windows";
@@ -29,6 +30,7 @@ export default function EventDetail() {
   const { savedIds, toggleSave } = useSaved();
   const [event, setEvent] = useState<Event | null>(() => getSavedEvents().find((item) => item.id === id) ?? null);
   const [loading, setLoading] = useState(!event);
+  const [heroFailed, setHeroFailed] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -76,12 +78,24 @@ export default function EventDetail() {
   const venue = event.venue?.name || event.address?.split(",")[0] || "Venue in listing";
   const source = event.source.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
   const past = effectiveEnd(event).getTime() <= Date.now();
+  // Same reason as PlanCard: most sources leave image_url null, so the hero
+  // needs the curated category artwork rather than a bare icon.
+  const heroUri = getEventImage(
+    heroFailed ? null : event.image_url,
+    event.category,
+    event.subcategory,
+    event.title,
+    event.description,
+    event.tags,
+    `${event.venue?.name || ""} ${event.address || ""}`,
+  );
 
   return (
     <View style={styles.screen}>
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 140 }}>
         <View style={[styles.hero, { paddingTop: insets.top + 8 }]}>
-          {event.image_url ? <Image source={{ uri: event.image_url }} style={StyleSheet.absoluteFill} contentFit="cover" transition={180} accessibilityLabel={`Photo for ${event.title}`} /> : <View style={styles.placeholder}><Ionicons name={CATEGORY_ICON[event.category] || "calendar-outline"} size={70} color={colors.accent} /><Text style={styles.placeholderLabel}>{event.category}</Text></View>}
+          <View style={styles.placeholder}><Ionicons name={CATEGORY_ICON[event.category] || "calendar-outline"} size={70} color={colors.accent} /><Text style={styles.placeholderLabel}>{event.category}</Text></View>
+          <Image source={{ uri: heroUri }} style={StyleSheet.absoluteFill} contentFit="cover" transition={180} onError={() => setHeroFailed(true)} accessibilityLabel={`Photo for ${event.title}`} />
           <View style={styles.heroTop}>
             <Pressable style={styles.roundButton} onPress={() => router.back()} accessibilityRole="button" accessibilityLabel="Close event"><Ionicons name="close" size={25} color={colors.text} /></Pressable>
             <Pressable style={styles.roundButton} onPress={share} accessibilityRole="button" accessibilityLabel="Share event"><Ionicons name="share-outline" size={23} color={colors.text} /></Pressable>
@@ -94,7 +108,7 @@ export default function EventDetail() {
           <InfoRow icon="calendar-outline" title={eventTimeText(event)} body={event.is_recurring ? `Recurring · ${event.recurrence_rule || "check source for schedule"}` : event.additionalStartTimes?.length ? `${event.additionalStartTimes.length + 1} times available` : undefined} styles={styles} colors={colors} />
           <Pressable onPress={openDirections} accessibilityRole="button"><InfoRow icon="location-outline" title={venue} body={`${event.address}${event.distance != null ? ` · ${formatDistance(event.distance)}` : ""}`} trailing="Directions" styles={styles} colors={colors} /></Pressable>
 
-          {(event.blurb || event.rank_score != null) && <View style={styles.fit}><Ionicons name="checkmark-circle" size={22} color={colors.success} /><View style={{ flex: 1 }}><Text style={styles.fitTitle}>Why it surfaced</Text><Text style={styles.fitBody}>{event.blurb || "Near your preferences, within your radius and coming up soon."}</Text></View></View>}
+          {(event.blurb || event.rank_score != null) && <View style={styles.fit}><Ionicons name="checkmark-circle" size={22} color={colors.success} /><View style={{ flex: 1 }}><Text style={styles.fitTitle}>Why it surfaced</Text><Text style={styles.fitBody}>{event.blurb || "Matches your preferences and is coming up soon."}</Text></View></View>}
 
           {!!event.description && <View style={styles.section}><Text style={styles.sectionTitle}>What to expect</Text><Text style={styles.description}>{event.description}</Text></View>}
           {!!event.tags?.length && <View style={styles.section}><Text style={styles.sectionTitle}>Good to know</Text><View style={styles.tags}>{event.tags.slice(0, 8).map((tag) => <View key={tag} style={styles.tag}><Text style={styles.tagText}>{tag.replace(/-/g, " ")}</Text></View>)}</View></View>}

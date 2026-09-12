@@ -167,7 +167,7 @@ export default function ForYouScreen() {
       <View style={[styles.center, { paddingTop: insets.top }]}>
         <View style={styles.emptyIcon}><Ionicons name="location-outline" size={34} color={colors.accent} /></View>
         <Text style={styles.emptyTitle}>Choose where to explore</Text>
-        <Text style={styles.emptyBody}>Set a city or use your location so every recommendation stays inside your chosen radius.</Text>
+        <Text style={styles.emptyBody}>Set a city or use your location to find plans around you.</Text>
         <Pressable style={styles.primaryButton} onPress={() => router.push("/(tabs)/settings")} accessibilityRole="button"><Text style={styles.primaryButtonText}>Set location</Text></Pressable>
       </View>
     );
@@ -213,12 +213,12 @@ export default function ForYouScreen() {
           <View style={styles.emptyCard}>
             <Ionicons name="map-outline" size={34} color={colors.accent} />
             <Text style={styles.emptyTitle}>No verified plans inside {preferences.radius} miles yet</Text>
-            <Text style={styles.emptyBody}>We won't quietly send you to another city. Expand the radius yourself, or pull down later as local sources update.</Text>
+            <Text style={styles.emptyBody}>Try another distance, or pull down later as local sources update. Any suggestions beyond the default radius show how far away they are.</Text>
             <Pressable style={styles.secondaryButton} onPress={expandRadius} accessibilityRole="button"><Text style={styles.secondaryButtonText}>Expand to {preferences.radius < 25 ? 25 : 50} miles</Text></Pressable>
           </View>
         ) : (
           <>
-            <View style={styles.sectionHeader}><View><Text style={styles.sectionTitle}>Your best 3</Text><Text style={styles.sectionSubtitle}>Ranked for fit, distance and trust</Text></View><View style={styles.countPill}><Text style={styles.countText}>{ranked.length} nearby</Text></View></View>
+            <View style={styles.sectionHeader}><View><Text style={styles.sectionTitle}>Your best 3</Text><Text style={styles.sectionSubtitle}>Ranked for fit, distance and trust</Text></View><View style={styles.countPill}><Text style={styles.countText}>{ranked.length} plans</Text></View></View>
             <View style={styles.cardStack}>
               {sections.best.map((event, index) => <PlanCard key={event.id} event={event} index={index + 1} saved={savedIds.has(event.id)} onOpen={() => openEvent(event, "best_three")} onSave={() => saveEvent(event)} onDismiss={() => setDismissTarget(event)} />)}
             </View>

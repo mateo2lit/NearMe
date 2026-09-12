@@ -22,9 +22,12 @@ The HTML files are in `/docs`. Here's how to get them live on a real URL.
    - Click **Save**
 
 3. **Wait 2-3 minutes**, then your pages are live at:
-   - Support: `https://<yourusername>.github.io/<reponame>/`
-   - Privacy: `https://<yourusername>.github.io/<reponame>/privacy.html`
-   - Terms: `https://<yourusername>.github.io/<reponame>/terms.html`
+   - Support: `https://mateo2lit.github.io/NearMe/`
+   - Privacy: `https://mateo2lit.github.io/NearMe/privacy.html`
+   - Terms: `https://mateo2lit.github.io/NearMe/terms.html`
+
+   These are live as of September 11, 2026. GitHub Pages paths are case
+   sensitive: `NearMe` resolves, `nearme` returns a 404.
 
 ## Option B: Netlify (drag-and-drop)
 

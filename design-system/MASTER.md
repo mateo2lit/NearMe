@@ -4,11 +4,11 @@ NearMe is a calm, editorial city guide for adults 18+. The product should feel u
 
 ## Product principles
 
-- Lead with three strong plans, not inventory volume or AI language.
-- Never widen location, hide price uncertainty, or imply verification that did not occur.
+- Lead with three strong plans, not inventory volume.
+- Never hide price uncertainty or imply verification that did not occur. At the default radius a thin area may reach further out, and anything it reaches is labeled with its real distance. A radius the user picks is a hard limit.
 - Do not repeat an event on the same screen.
 - Real event imagery is optional. Use an intentional category tile instead of unrelated stock photography.
-- Core discovery is free. Monetization must follow demonstrated value and describe only shipped benefits.
+- NearMe is hard paywalled: a short free trial converts into a paid subscription, and there is no free tier. Describe only shipped benefits.
 
 ## Semantic color
 

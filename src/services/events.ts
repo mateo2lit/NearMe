@@ -2,6 +2,7 @@ import { Event, EventCategory } from "../types";
 import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY } from "./supabase";
 import { getCachedEvents, setCachedEvents } from "./eventCache";
 import { markSyncStart, markSyncDone, setSyncContext } from "../hooks/useSyncStatus";
+import { DEFAULT_RADIUS_MILES } from "../constants/theme";
 
 /**
  * Trigger a sync for the user's location.
@@ -12,7 +13,8 @@ export async function triggerLocationSync(
   lat: number,
   lng: number,
   radiusMiles: number = 15,
-  waitForCompletion: boolean = false
+  waitForCompletion: boolean = false,
+  opts?: { allowAi?: boolean }
 ): Promise<{ synced: boolean; events?: number }> {
   const request = fetch(`${SUPABASE_URL}/functions/v1/sync-location`, {
     method: "POST",
@@ -20,9 +22,18 @@ export async function triggerLocationSync(
       Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
       "Content-Type": "application/json",
     },
-    // Client refreshes may update inexpensive catalog sources, but expensive
-    // AI/venue crawling is reserved for explicit shared curator jobs.
-    body: JSON.stringify({ lat, lng, radius_miles: radiusMiles, allow_ai: false, trigger: "client" }),
+    // Catalog-only by default: the shared curator job does the expensive
+    // AI/venue crawling on a schedule so no single client pays for it. The one
+    // exception is a genuinely starved area — see fetchNearbyEvents. The
+    // backend still has the final say (cooldown + per-IP rate limit), so this
+    // is a request for the full pipeline, not a command.
+    body: JSON.stringify({
+      lat,
+      lng,
+      radius_miles: radiusMiles,
+      allow_ai: opts?.allowAi === true,
+      trigger: "client",
+    }),
   });
 
   const captureContext = (data: any) => {
@@ -40,8 +51,8 @@ export async function triggerLocationSync(
       .then(async (res) => {
         try {
           const data = await res.json();
-          captureContext(data);
-          markSyncDone(data?.upserted || 0);
+          if (res.ok) captureContext(data);
+          markSyncDone(res.ok && data?.synced ? data.upserted || 0 : 0);
         } catch {
           markSyncDone(0);
         }
@@ -54,6 +65,10 @@ export async function triggerLocationSync(
     markSyncStart();
     const res = await request;
     const data = await res.json();
+    if (!res.ok) {
+      markSyncDone(0);
+      return { synced: false };
+    }
     captureContext(data);
     markSyncDone(data?.upserted || 0);
     return { synced: !!data?.synced, events: data?.upserted };
@@ -88,14 +103,74 @@ async function rpcDiscover(
   if (error) {
     console.error("[events] RPC error:", error);
     lastFetchError = error.message || "RPC failed";
-    return [];
+    throw new Error(lastFetchError);
   }
   lastFetchError = null;
   return (data || []).map((e: any) => ({ ...e, tags: e.tags || [] }));
 }
 
-/** Fetch inside the exact radius and filters requested. Sparse results remain
- * honest; source refresh runs in the background and affects a later refresh. */
+const MIN_FEED_EVENTS = 20;
+
+/**
+ * How many dated, one-off plans a feed needs before it counts as healthy.
+ *
+ * Raw volume is not a good enough test. Boca returned 348 events inside 10
+ * miles and still looked empty, because every one of them was a recurring
+ * venue special last verified four months earlier — weekly bowling nights and
+ * happy hours. They cleared the volume floor, so widening never ran and the
+ * real dated concerts 12-40mi away stayed invisible. A wall of recurring
+ * filler is not a feed of plans.
+ */
+const MIN_DATED_EVENTS = 8;
+
+/** Radii the default search will reach for, in order, before giving up. */
+const WIDER_RADII = [15, 30, 50, 100];
+
+/** True while the feed still lacks either volume or real dated plans. */
+function feedIsThin(events: Event[]): boolean {
+  if (events.length < MIN_FEED_EVENTS) return true;
+  return events.filter((e) => !e.is_recurring).length < MIN_DATED_EVENTS;
+}
+
+/**
+ * Merge `extra` into `base` by id. Anything genuinely farther away than the
+ * user's chosen radius carries `outsideRadiusMiles` so the card can say so.
+ * We tag from the event's own distance rather than from which query found it —
+ * a widened query also re-returns in-radius rows, and those are not "far".
+ */
+function mergeUnique(base: Event[], extra: Event[], radiusMiles: number): Event[] {
+  const seen = new Set(base.map((e) => e.id));
+  const merged = [...base];
+  for (const e of extra) {
+    if (seen.has(e.id)) continue;
+    seen.add(e.id);
+    merged.push(
+      e.distance != null && e.distance > radiusMiles
+        ? { ...e, outsideRadiusMiles: radiusMiles }
+        : e,
+    );
+  }
+  return merged;
+}
+
+/**
+ * Fetch events. Two regimes:
+ *
+ * 1. **Default search** (no explicit user filters): pack-the-feed. If the exact
+ *    radius returns <20, progressively widen. Anything the widening reaches
+ *    beyond the user's radius is tagged `outsideRadiusMiles`, so the UI states
+ *    the real distance instead of implying it is nearby. 1.1.0 dropped widening
+ *    altogether and shipped an empty feed — honest, but useless.
+ *
+ * 2. **Explicit search** (user picked a radius other than the default, or added
+ *    tags/categories): their choice is a hard constraint. No widening, no
+ *    filter dropping — if they ask for 2mi singles events and there are 3, they
+ *    see those 3.
+ *
+ * Either way, a starved area asks the backend for a full AI-backed sync. The
+ * backend decides whether to honour it (curator jobs always; clients only when
+ * the area really is thin, and never more often than the cooldown allows).
+ */
 export async function fetchNearbyEvents(
   lat: number,
   lng: number,
@@ -106,19 +181,41 @@ export async function fetchNearbyEvents(
 ): Promise<Event[]> {
   if (!supabase) return [];
 
+  const cacheQuery = { radiusMiles, categories, tags };
   if (opts?.cachedOnly) {
-    return filterPastEvents((await getCachedEvents(lat, lng)) || []);
+    return filterPastEvents((await getCachedEvents(lat, lng, cacheQuery)) || []);
   }
 
-  // Radius is a promise to the user, not a feed-density hint. Fetch exactly
-  // what they asked for and improve that same area in the background.
-  const exactEvents = filterPastEvents(
-    await rpcDiscover(lat, lng, radiusMiles, categories, tags),
-  );
-  if (exactEvents.length > 0) setCachedEvents(lat, lng, exactEvents);
-  triggerLocationSync(lat, lng, radiusMiles, false).catch(() => {});
-  return exactEvents;
+  const discover = async (r: number) =>
+    filterPastEvents(await rpcDiscover(lat, lng, r, categories, tags));
 
+  const hasExplicitFilter =
+    (categories?.length ?? 0) > 0 ||
+    (tags?.length ?? 0) > 0 ||
+    radiusMiles !== DEFAULT_RADIUS_MILES;
+
+  let events = await discover(radiusMiles);
+  // Whether the user's actual area is starved — judged before any widening,
+  // because filling the feed from 30mi away does not make their area healthy.
+  const areaIsStarved = feedIsThin(events);
+  // A filtered result count cannot establish the health of the whole area.
+  const unfiltered = !categories?.length && !tags?.length;
+  triggerLocationSync(lat, lng, radiusMiles, false, { allowAi: unfiltered && areaIsStarved }).catch(() => {});
+
+  if (!hasExplicitFilter) {
+    for (const r of WIDER_RADII.filter((r) => r > radiusMiles)) {
+      if (!feedIsThin(events)) break;
+      try {
+        events = mergeUnique(events, await discover(r), radiusMiles);
+      } catch {
+        // Keep local results if an optional wider query fails.
+        break;
+      }
+    }
+  }
+
+  await setCachedEvents(lat, lng, events, cacheQuery);
+  return events;
 }
 
 export async function fetchEventById(id: string): Promise<Event | null> {

@@ -75,6 +75,25 @@ function sharedClient() {
 
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 
+/**
+ * Whether a model accepts `output_config.effort`.
+ *
+ * Haiku 4.5 and Sonnet 4.5 reject it with
+ * `400 This model does not support the effort parameter.` Because every
+ * extraction path here runs on FAST_MODEL (Haiku 4.5) and passed
+ * `effort: "low"`, venue extraction, Meetup and neighborhood naming were
+ * failing on every single call — silently, since callers log the 400 as a
+ * warning and move on. Effort is supported on Opus 4.5 and the 4.6+ family.
+ *
+ * Unknown models are treated as unsupported: omitting effort costs a little
+ * quality, sending it to a model that refuses it costs the whole call.
+ */
+const EFFORT_CAPABLE = /^claude-(opus-(4-5|4-6|4-7|4-8|5)|sonnet-(4-6|5)|fable-5|mythos-5)/;
+
+export function supportsEffort(model: string): boolean {
+  return EFFORT_CAPABLE.test(model);
+}
+
 export interface ClaudeJsonOptions {
   /** Short identifier for logs and the cost ledger, e.g. "venue-extract". */
   label: string;
@@ -144,7 +163,8 @@ export async function callClaudeJson<T>(
         messages: [{ role: "user", content: opts.prompt }],
         output_config: {
           format: { type: "json_schema", schema: opts.schema },
-          ...(opts.effort ? { effort: opts.effort } : {}),
+          // Only send effort where the model accepts it — see supportsEffort.
+          ...(opts.effort && supportsEffort(model) ? { effort: opts.effort } : {}),
         },
       },
       { signal: controller.signal },

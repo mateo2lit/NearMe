@@ -9,6 +9,7 @@ import { geocodeAddress, refreshLocation, useLocation } from "../../src/hooks/us
 import { usePreferences } from "../../src/hooks/usePreferences";
 import { track } from "../../src/services/analytics";
 import { configureIap, hasActiveEntitlement, restorePurchases } from "../../src/services/iap";
+import { markSubscribed } from "../../src/services/subscription";
 import { ensurePermissions, syncReminders } from "../../src/services/reminders";
 import { getSavedEvents } from "../../src/services/savedStore";
 import { EventCategory, UserPreferences } from "../../src/types";
@@ -93,10 +94,10 @@ export default function YouScreen() {
       const result = await restorePurchases();
       setPremium(result.active);
       if (result.active) {
-        await AsyncStorage.setItem("@nearme_subscribed", "true");
+        await markSubscribed();
         track("subscription_restored").catch(() => {});
       }
-      Alert.alert(result.active ? "Purchase restored" : "No active plan found", result.active ? "NearMe Plus is active on this device." : "Use the Apple ID that originally purchased NearMe Plus.");
+      Alert.alert(result.active ? "Purchase restored" : "No active plan found", result.active ? "Your subscription is active on this device." : "Use the Apple ID that originally purchased the subscription.");
     } catch {
       Alert.alert("Restore unavailable", "Please check your connection and try again.");
     } finally { setPurchaseBusy(null); }
@@ -104,7 +105,13 @@ export default function YouScreen() {
 
   const reset = () => Alert.alert("Start over?", "This clears preferences and locally saved plans from this device.", [
     { text: "Cancel", style: "cancel" },
-    { text: "Clear data", style: "destructive", onPress: async () => { await AsyncStorage.clear(); router.replace("/onboarding"); } },
+    { text: "Clear data", style: "destructive", onPress: async () => {
+      await AsyncStorage.clear();
+      // AsyncStorage.clear() also wipes the cached entitlement. Re-establish it
+      // so a paying subscriber is not asked to buy the app a second time.
+      try { if (await hasActiveEntitlement()) await markSubscribed(); } catch { /* re-verified on next launch */ }
+      router.replace("/onboarding");
+    } },
   ]);
 
   if (loading) return <View style={styles.center}><ActivityIndicator color={colors.accent} /></View>;
@@ -117,9 +124,9 @@ export default function YouScreen() {
         <View style={styles.locationRow}><View style={styles.iconCircle}><Ionicons name="location" size={21} color={colors.accent} /></View><View style={{ flex: 1 }}><Text style={styles.rowTitle}>{location.cityName || preferences.customLocation?.label || "Location not set"}</Text><Text style={styles.rowBody}>{preferences.customLocation ? "Custom location" : "Current device location"}</Text></View><Pressable style={styles.smallButton} onPress={useGps}><Text style={styles.smallButtonText}>Use GPS</Text></Pressable></View>
         <Text style={styles.fieldLabel}>Use another city or address</Text>
         <View style={styles.inputRow}><TextInput style={styles.input} value={address} onChangeText={setAddressInput} onSubmitEditing={submitAddress} placeholder="City, state or address" placeholderTextColor={colors.muted} returnKeyType="search" accessibilityLabel="City or address" /><Pressable style={[styles.submit, (!address.trim() || geocoding) && styles.disabled]} onPress={submitAddress} disabled={!address.trim() || geocoding}>{geocoding ? <ActivityIndicator color="#FFFFFF" /> : <Ionicons name="arrow-forward" size={22} color="#FFFFFF" />}</Pressable></View>
-        <Text style={styles.fieldLabel}>Maximum distance</Text>
+        <Text style={styles.fieldLabel}>Search radius</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.choiceRow}>{RADII.map((radius) => <Choice key={radius} label={`${radius} mi`} selected={preferences.radius === radius} onPress={() => patchPreferences({ radius })} styles={styles} />)}</ScrollView>
-        <Text style={styles.helper}>NearMe never expands beyond this radius unless you change it.</Text>
+        <Text style={styles.helper}>The default 10-mile search may include clearly labeled suggestions up to 100 miles away when local plans are scarce. Other radii stay within your selection.</Text>
       </Section>
 
       <Section title="What you enjoy" icon="sparkles-outline" styles={styles} colors={colors}>
@@ -145,14 +152,17 @@ export default function YouScreen() {
         <ToggleRow icon="calendar-outline" title="Saved-plan reminders" body="A day before and the morning of. Quiet hours are 10 PM–8 AM." value={notifications} onValueChange={changeNotifications} styles={styles} colors={colors} />
       </Section>
 
-      <Section title="NearMe Plus" icon="diamond-outline" styles={styles} colors={colors}>
-        {premium ? <View style={styles.premiumActive}><Ionicons name="checkmark-circle" size={24} color={colors.success} /><View style={{ flex: 1 }}><Text style={styles.rowTitle}>Plus is active</Text><Text style={styles.rowBody}>Your existing entitlement remains recognized while the new member experience is prepared.</Text></View></View> : <><Text style={styles.plusLead}>Core discovery is now free. New Plus purchases are temporarily paused until the next member features deliver clear ongoing value.</Text><Text style={styles.helper}>This prevents anyone from paying for unfinished benefits. Existing subscribers can restore below.</Text></>}
+      <Section title="Subscription" icon="diamond-outline" styles={styles} colors={colors}>
+        {premium ? <View style={styles.premiumActive}><Ionicons name="checkmark-circle" size={24} color={colors.success} /><View style={{ flex: 1 }}><Text style={styles.rowTitle}>Your subscription is active</Text><Text style={styles.rowBody}>Manage or cancel in your Apple ID settings. Changes take effect at the end of the current period.</Text></View></View> : <><Text style={styles.plusLead}>Your subscription is not active on this device.</Text><Text style={styles.helper}>If you subscribed with a different Apple ID, tap Restore purchases below.</Text></>}
+        {premium && <Pressable style={styles.linkButton} onPress={() => Linking.openURL("https://apps.apple.com/account/subscriptions").catch(() => {})} accessibilityRole="link"><Text style={styles.linkText}>Manage subscription</Text></Pressable>}
         <Pressable style={styles.linkButton} onPress={restore}><Text style={styles.linkText}>{purchaseBusy === "restore" ? "Restoring…" : "Restore purchases"}</Text></Pressable>
       </Section>
 
       <Section title="About & privacy" icon="shield-checkmark-outline" styles={styles} colors={colors}>
         <LinkRow label="Privacy policy" onPress={() => Linking.openURL("https://mateo2lit.github.io/NearMe/privacy.html")} styles={styles} colors={colors} />
-        <LinkRow label="Terms of use" onPress={() => Linking.openURL("https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")} styles={styles} colors={colors} />
+        <LinkRow label="Terms of use" onPress={() => Linking.openURL("https://mateo2lit.github.io/NearMe/terms.html")} styles={styles} colors={colors} />
+        {/* The privacy policy promises this path, so the app has to offer it. */}
+        <LinkRow label="Request your data or deletion" onPress={() => Linking.openURL("mailto:dbh28tekkit@gmail.com?subject=NearMe%20data%20request").catch(() => {})} styles={styles} colors={colors} />
         <Pressable style={styles.dangerRow} onPress={reset}><Ionicons name="trash-outline" size={21} color={colors.hot} /><Text style={styles.dangerText}>Clear local data and start over</Text></Pressable>
       </Section>
     </ScrollView>

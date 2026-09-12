@@ -1,5 +1,5 @@
 import { assertEquals, assertAlmostEquals } from "https://deno.land/std@0.177.0/testing/asserts.ts";
-import { calcCostUsd, SONNET_PRICE, HAIKU_PRICE, WEB_SEARCH_PRICE_PER_CALL } from "./anthropic.ts";
+import { calcCostUsd, FAST_MODEL, DISCOVERY_MODEL, supportsEffort, SONNET_PRICE, HAIKU_PRICE, WEB_SEARCH_PRICE_PER_CALL } from "./anthropic.ts";
 
 Deno.test("calcCostUsd — Sonnet typical run", () => {
   // 30K input, 2.5K output, 4 web searches
@@ -41,4 +41,25 @@ Deno.test("constants reflect Anthropic public pricing", () => {
   assertEquals(HAIKU_PRICE.inputPerM, 1);
   assertEquals(HAIKU_PRICE.outputPerM, 5);
   assertEquals(WEB_SEARCH_PRICE_PER_CALL, 0.01);
+});
+
+// ─── effort is not universal ─────────────────────────────────
+// Every venue-extract, meetup-extract and neighborhood call was 400ing with
+// "This model does not support the effort parameter." Seven call sites pass
+// effort: "low", and FAST_MODEL is Haiku 4.5, which rejects it outright.
+
+Deno.test("Haiku 4.5 rejects effort, so we never send it", () => {
+  assertEquals(supportsEffort(FAST_MODEL), false);
+  assertEquals(supportsEffort("claude-haiku-4-5"), false);
+  assertEquals(supportsEffort("claude-sonnet-4-5"), false);
+});
+
+Deno.test("the discovery model does support effort", () => {
+  assertEquals(supportsEffort(DISCOVERY_MODEL), true);
+  assertEquals(supportsEffort("claude-sonnet-5"), true);
+  assertEquals(supportsEffort("claude-opus-5"), true);
+});
+
+Deno.test("an unrecognized model is treated as unsupported rather than 400ing", () => {
+  assertEquals(supportsEffort("some-future-model"), false);
 });
