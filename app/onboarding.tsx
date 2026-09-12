@@ -1612,11 +1612,15 @@ function PaywallStep({ onSubscribe, onBack }: { onSubscribe: () => void; onBack:
   const annualTrialDays = trialDaysFor(annualPkg);
   const weeklyTrialDays = trialDaysFor(weeklyPkg);
   const trialDays = plan === "yearly" ? annualTrialDays : weeklyTrialDays;
+  // While the store is still loading there is no offering yet, so trialDaysFor
+  // returns null for a reason that says nothing about the product. Showing
+  // "Billed immediately" there would flash the wrong disclosure for a second
+  // and then correct itself. Say nothing until we actually know.
   const trialText = (days: number | null) =>
-    days != null ? `${days}-day free trial` : "Billed immediately";
+    loading ? "" : days != null ? `${days}-day free trial` : "Billed immediately";
   const priceText = plan === "yearly"
-    ? `${trialDays != null ? `${trialDays} days free, then ` : ""}${annualPrice}/year (${annualPerMonth})`
-    : `${trialDays != null ? `${trialDays} days free, then ` : ""}${weeklyPrice}/week`;
+    ? `${!loading && trialDays != null ? `${trialDays} days free, then ` : ""}${annualPrice}/year (${annualPerMonth})`
+    : `${!loading && trialDays != null ? `${trialDays} days free, then ` : ""}${weeklyPrice}/week`;
 
   const handleSubscribe = async () => {
     if (purchasing) return;
@@ -1794,7 +1798,7 @@ function PaywallStep({ onSubscribe, onBack }: { onSubscribe: () => void; onBack:
             title="Yearly"
             price={annualPrice}
             period="/year"
-            subtext={`Just ${annualPerMonth} · ${trialText(annualTrialDays)}`}
+            subtext={[`Just ${annualPerMonth}`, trialText(annualTrialDays)].filter(Boolean).join(" · ")}
             badge="MOST POPULAR · SAVE 69%"
             highlighted
           />
