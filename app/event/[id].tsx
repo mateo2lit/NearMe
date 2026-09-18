@@ -16,6 +16,8 @@ import { TAG_MAP } from "../../src/constants/tags";
 import { getEventImage } from "../../src/constants/images";
 import HeroCard from "../../src/components/HeroCard";
 import ViewOriginalLink from "../../src/components/ViewOriginalLink";
+import SourceTrust from "../../src/components/SourceTrust";
+import { isMultiDaySpan } from "../../src/lib/time-windows";
 import { COLORS, RADIUS, SPACING } from "../../src/constants/theme";
 import { Event } from "../../src/types";
 
@@ -150,9 +152,19 @@ export default function EventDetail() {
   const category = CATEGORY_MAP[event.category];
   const start = effectiveStart(event);
   const end = event.end_time ? new Date(event.end_time) : null;
-  const dayStr = start.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" }).toUpperCase();
-  const timeStr = start.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  const endTimeStr = end ? end.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : null;
+  // A span longer than a sitting is a date range. Rendering it as a clock
+  // range produced "4:00 AM - 1:00 PM" for a vendor-application window that
+  // actually ran Sept 1 to Oct 10.
+  const multiDay = isMultiDaySpan(event);
+  const dayStr = multiDay
+    ? "DATES"
+    : start.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" }).toUpperCase();
+  const timeStr = multiDay
+    ? `${start.toLocaleDateString([], { month: "short", day: "numeric" })} – ${end!.toLocaleDateString([], { month: "short", day: "numeric" })}`
+    : start.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const endTimeStr = multiDay || !end
+    ? null
+    : end.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
   const whoTag = (event.tags || []).find((t) => TAG_MAP[t]?.dimension === "who");
   const venueName = event.venue?.name || event.address?.split(",")[0] || "Location";
@@ -240,6 +252,10 @@ export default function EventDetail() {
               </View>
             )}
           </View>
+        </View>
+
+        <View style={styles.trustWrap}>
+          <SourceTrust event={event} />
         </View>
 
         <View style={styles.blocks}>
@@ -369,6 +385,9 @@ const styles = StyleSheet.create({
   titleMeta: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 8 },
   titleMetaText: { fontSize: 13, color: "#fff", fontWeight: "700" },
   titleMetaDot: { color: "#fff", fontSize: 13 },
+  trustWrap: {
+    paddingHorizontal: 16,
+  },
   blocks: { padding: SPACING.md, gap: SPACING.md },
   block: {
     flexDirection: "row", gap: 12,

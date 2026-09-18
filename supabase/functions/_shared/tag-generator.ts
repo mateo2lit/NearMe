@@ -3,6 +3,8 @@
  * Runs server-side during sync pipeline.
  */
 
+import { partsInZone } from "./local-time.ts";
+
 interface EventInput {
   category: string;
   subcategory?: string;
@@ -13,7 +15,33 @@ interface EventInput {
   end_time?: string | null;
   ticket_url?: string | null;
   venue_category?: string;
+  /** Recurring venue nights get the `weekly-regular` tag. */
+  is_recurring?: boolean;
+  /**
+   * IANA zone for the venue. Without it, `late-night` and `daytime` are
+   * decided by the edge runtime's UTC clock — a 10 PM show reads as 2 AM.
+   */
+  timezone?: string;
 }
+
+/**
+ * Drink deals by any other name.
+ *
+ * The happy-hour filter used to match only the literal phrase "happy hour", so
+ * a Tap 42 "Bottomless Brunch" — unlimited mimosas, bloody marys and cocktails
+ * — sailed straight past it and into the main feed (TestFlight, 2026-09-17).
+ * Every one of these is the same thing: a venue discounting drinks on a
+ * schedule.
+ */
+const HAPPY_HOUR_KEYWORDS = [
+  "happy hour", "happyhour", "bottomless", "mimosa", "drink special",
+  "drink specials", "2 for 1", "two for one", "2-for-1", "twofer",
+  "half off", "half-off", "half price", "half-price", "buy one get one",
+  "bogo", "ladies night", "industry night", "wine down", "wine wednesday",
+  "thirsty thursday", "sunday funday", "well drinks", "draft special",
+  "beer special", "martini monday", "taco tuesday", "all you can drink",
+  "unlimited drinks", "free flowing", "free-flowing", "bar special",
+];
 
 const DRINKING_KEYWORDS = [
   "cocktail", "beer", "wine", "happy hour", "margarita", "drinks",
@@ -106,6 +134,20 @@ export function generateTags(event: EventInput): string[] {
     tags.push("drinking");
   }
 
+  // Happy hour / drink deals. Implies drinking and a 21+ audience — a
+  // bottomless brunch is not a family outing.
+  if (textContains(text, HAPPY_HOUR_KEYWORDS)) {
+    tags.push("happy-hour");
+    if (!tags.includes("drinking")) tags.push("drinking");
+    if (!tags.includes("21+") && !tags.includes("18+")) tags.push("21+");
+  }
+
+  // Weekly regulars: a venue's standing night. Real events, but they happen
+  // 52 times a year, so the feed treats them as texture rather than news.
+  if (event.is_recurring) {
+    tags.push("weekly-regular");
+  }
+
   // Live music
   if (
     cat === "music" ||
@@ -166,9 +208,13 @@ export function generateTags(event: EventInput): string[] {
     tags.push("date-night");
   }
 
-  // Time-based
+  // Time-based. `getHours()` reads the runtime's clock, which is UTC in an
+  // edge function — that tagged a 10 PM show as 2 AM "late-night" and a 3 PM
+  // matinee as "late-night" too. Read the hour in the venue's own zone.
   if (event.start_time) {
-    const hour = new Date(event.start_time).getHours();
+    const hour = event.timezone
+      ? partsInZone(new Date(event.start_time), event.timezone).hour
+      : new Date(event.start_time).getHours();
     if (hour >= 22 || hour < 4) {
       tags.push("late-night");
     } else if (hour < 17) {

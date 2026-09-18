@@ -43,6 +43,11 @@ describe("time-windows", () => {
   });
 
   it("effectiveStart: recurring weekly event with past start_time rolls to next occurrence", () => {
+    // Pinned to a Wednesday. effectiveStart reads the real clock, so without a
+    // fixed time this failed every Friday between 5pm and 8pm — today's 5pm
+    // occurrence is correctly still in progress then, and therefore in the
+    // past, which is exactly what the assertion below forbids.
+    jest.useFakeTimers().setSystemTime(new Date("2026-04-15T14:00:00"));
     const recurring = {
       start_time: "2024-01-05T17:00:00", // a past Friday at 5pm
       is_recurring: true,
@@ -52,6 +57,7 @@ describe("time-windows", () => {
     expect(result.getTime()).toBeGreaterThan(Date.now());
     expect(result.getDay()).toBe(5); // Friday
     expect(result.getHours()).toBe(17);
+    jest.useRealTimers();
   });
   it("effectiveStart: non-recurring event returns original start_time", () => {
     const oneOff = { start_time: "2030-06-15T20:00:00" };

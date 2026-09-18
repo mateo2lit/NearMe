@@ -52,6 +52,33 @@ const ACCEPTABLE_BARE_NIGHT_TITLES = new Set<string>([
   "blues night",
 ]);
 
+/**
+ * Announcements that aren't things you can go to.
+ *
+ * "Call for Vendors | Warehouse Market 2026" shipped to TestFlight on
+ * 2026-09-17 as a nine-hour Tuesday event. It's a vendor application window:
+ * the deadline was read as an end time, the actual market is two months later,
+ * and there is nothing at the venue to attend. Venue calendars carry a lot of
+ * this — submission calls, auditions, applications, sponsorship asks — and all
+ * of it is noise in a "what's happening tonight" feed.
+ *
+ * Deliberately not here: job fairs, open houses and info sessions. Those have
+ * a time and a place and you can walk into them.
+ */
+const NON_EVENT_PATTERNS: RegExp[] = [
+  /\bcall\s+(for|to)\s+(vendors?|artists?|entries|submissions?|makers?|performers?|speakers?|papers?)\b/i,
+  /\b(vendor|artist|exhibitor|booth|craft(er)?)\s+(application|applications|registration|sign[\s-]?ups?|opportunit\w+)\b/i,
+  /\bapplications?\s+(are\s+)?(open|now\s+open|close|closing|due)\b/i,
+  /\b(submission|entry|application|registration)\s+deadline\b/i,
+  /\bdeadline\s+to\s+(apply|submit|enter|register)\b/i,
+  /\bauditions?\b/i,
+  /\bnow\s+(hiring|accepting\s+(applications|submissions|vendors))\b/i,
+  /\b(sponsorship|sponsor)\s+(opportunit\w+|packages?)\b/i,
+  /\bmembership\s+drive\b/i,
+  /\brequest\s+for\s+(proposals?|qualifications?)\b/i,
+  /\bseeking\s+(vendors?|artists?|volunteers?|sponsors?)\b/i,
+];
+
 export type ScraperReject = {
   ok: false;
   reason: string;
@@ -85,6 +112,16 @@ export function validateScrapedEvent(input: {
   // the venue name back as the event title when it can't find a real event).
   if (venueName && lcTitle === venueName.toLowerCase()) {
     return { ok: false, reason: `title is just the venue name` };
+  }
+
+  // Not-an-event check runs against title and description together, because
+  // the giveaway is often in the body ("Vendor application deadline is October
+  // 10th") under a title that reads like a normal listing.
+  const haystack = `${title} ${description}`;
+  for (const pat of NON_EVENT_PATTERNS) {
+    if (pat.test(haystack)) {
+      return { ok: false, reason: `not an attendable event: "${title}"` };
+    }
   }
 
   // Acceptable bare-night formats bypass the generic check below.

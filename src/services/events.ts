@@ -2,7 +2,7 @@ import { Event, EventCategory } from "../types";
 import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY } from "./supabase";
 import { getCachedEvents, setCachedEvents } from "./eventCache";
 import { markSyncStart, markSyncDone, setSyncContext } from "../hooks/useSyncStatus";
-import { sortByStartTime as sortEventsByStart } from "../lib/time-windows";
+import { sortByStartTime as sortEventsByStart, isMultiDaySpan } from "../lib/time-windows";
 import { dedupeSameDayDuplicates as dedupeSameDay } from "../lib/dedupe";
 import {
   BIG_EVENT_MIN_RESULTS,
@@ -100,6 +100,9 @@ async function rpcDiscover(
   lastFetchError = null;
   return (data || []).map((e: any) => ({ ...e, tags: e.tags || [] }));
 }
+
+/** Mirrors MAX_LIVE_HOURS in lib/time-windows — one definition of "now". */
+const MAX_LIVE_HOURS_MS = 6 * 3600_000;
 
 const MIN_FEED_EVENTS = 20;
 
@@ -278,7 +281,27 @@ export function getEventTimeLabel(event: Event): { label: string; color: string 
   const end = effectiveEnd(event).getTime();
 
   if (end <= now) return { label: "Ended", color: "#9090b0" };
-  if (start <= now && end > now) return { label: "HAPPENING NOW", color: "#ff6b6b" };
+
+  // Date ranges get described by their dates. This label used to say
+  // "HAPPENING NOW" for anything whose start had passed and whose end hadn't —
+  // which is how a Sept 1 to Oct 10 vendor-application window sat in the feed
+  // claiming to be live for five weeks.
+  if (isMultiDaySpan(event)) {
+    const endDate = new Date(end);
+    const label = start <= now
+      ? `Through ${endDate.toLocaleDateString([], { month: "short", day: "numeric" })}`
+      : `${new Date(start).toLocaleDateString([], { month: "short", day: "numeric" })} – ${endDate.toLocaleDateString([], { month: "short", day: "numeric" })}`;
+    return { label, color: "#7c6cf0" };
+  }
+
+  if (start <= now && end > now) {
+    // Same six-hour sanity cap isHappeningNow uses. Without it, one stale row
+    // with a bad end_time claims the loudest badge in the app indefinitely.
+    if (now - start > MAX_LIVE_HOURS_MS) {
+      return { label: "Check with venue", color: "#9090b0" };
+    }
+    return { label: "HAPPENING NOW", color: "#ff6b6b" };
+  }
 
   const minsUntil = Math.round((start - now) / 60000);
   if (minsUntil <= 60) return { label: `Starts in ${minsUntil} min`, color: "#ffb347" };

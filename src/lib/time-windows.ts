@@ -29,6 +29,22 @@ const DEFAULT_DURATION_MS = 3 * 3600_000;
 // "happening" at 7pm Thursday is the canonical example).
 const MAX_LIVE_HOURS = 6;
 
+/**
+ * Past this length, a stored span is a date range rather than a sitting.
+ *
+ * "Call for Vendors | Warehouse Market 2026" ran Sept 1 to Oct 10, because the
+ * vendor application deadline was read as an end time. The feed cheerfully
+ * labelled it HAPPENING NOW for five straight weeks. Nothing you attend runs
+ * 18 hours, so anything longer gets described by its dates and is never
+ * treated as live.
+ */
+const MULTI_DAY_HOURS = 18;
+
+/** True when the event's stored span is a date range, not a single sitting. */
+export function isMultiDaySpan(event: EventLike): boolean {
+  return rawDuration(event) > MULTI_DAY_HOURS * 3600_000;
+}
+
 function rawDuration(event: EventLike): number {
   if (!event.end_time) return DEFAULT_DURATION_MS;
   const rawStart = new Date(event.start_time).getTime();
@@ -151,6 +167,8 @@ export function isHappeningNow(
   // claiming to be live).
   if (start > n) return false;
   if (n - start > MAX_LIVE_HOURS * 3600_000) return false;
+  // A five-week "event" is a date range; it is never happening right now.
+  if (isMultiDaySpan(event)) return false;
   return end > n;
 }
 

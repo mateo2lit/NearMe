@@ -14,6 +14,7 @@ import { detectAdultSignal, isAdultVenue } from "../_shared/adult-filter.ts";
 import { validateScrapedEvent, normalizeDayOfWeek } from "../_shared/scraper-quality.ts";
 import { fetchMeetupEvents } from "../_shared/meetup-fetcher.ts";
 import { fetchCollegeSports } from "../_shared/espn-sports.ts";
+import { nextLocalOccurrence, timezoneForCoords } from "../_shared/local-time.ts";
 import {
   badgeTag,
   BIG_EVENT_TAG,
@@ -664,6 +665,7 @@ async function fetchTicketmaster(lat: number, lng: number, radiusMiles: number) 
       const tags = generateTags({
         category, subcategory, title: e.name, description: e.info,
         is_free: false, start_time: e.dates?.start?.dateTime || null, ticket_url: e.url,
+        timezone: timezoneForCoords(eLat, eLng),
       });
 
       events.push({
@@ -712,6 +714,7 @@ function toBigEventRows(raw: Awaited<ReturnType<typeof fetchBigEvents>>) {
     const tags = generateTags({
       category, subcategory, title: e.name, description: e.info,
       is_free: false, start_time: e.startTime, ticket_url: e.ticketUrl,
+      timezone: timezoneForCoords(e.lat, e.lng),
     });
 
     rows.push({
@@ -818,6 +821,7 @@ async function fetchEventbrite(
       category: "community", subcategory: "event",
       title: eb.name?.text || "", description: eb.description?.text,
       is_free, start_time: eb.start?.utc || null, ticket_url: eb.url,
+      timezone: timezoneForCoords(eLat, eLng),
     });
     events.push({
       source: "community", source_id: `eb-${eb.id}`,
@@ -1007,6 +1011,7 @@ async function fetchRedditEvents(
           title: ev.title, description: ev.description,
           is_free: ev.is_free || false,
           start_time: ev.start_time, ticket_url: ev.source_url,
+          timezone: timezoneForCoords(lat, lng),
         });
         events.push({
           source: "reddit",
@@ -1067,6 +1072,7 @@ async function extractWithClaude(
   html: string,
   venueName: string,
   venueCategory: string,
+  venueTimezone: string,
   opts?: { categoryHint?: { wellCovered: string[]; underRepresented: string[] } },
 ) {
   if (!ANTHROPIC_API_KEY) return [];
@@ -1117,7 +1123,7 @@ async function extractWithClaude(
         description: item.description || "",
         category: item.category || "community",
         subcategory: item.subcategory || "event",
-        start_time: getNextOccurrence(canonicalDay, item.time),
+        start_time: nextLocalOccurrence(canonicalDay, item.time, venueTimezone),
         end_time: null,
         is_recurring: !!canonicalDay,
         recurrence_rule: canonicalDay ? `every ${canonicalDay}` : null,
@@ -1129,36 +1135,6 @@ async function extractWithClaude(
   }
 }
 
-function getNextOccurrence(dayName?: string | null, time?: string): string | null {
-  if (!dayName) return null;
-  const dayMap: Record<string, number> = {
-    sunday: 0, monday: 1, tuesday: 2, wednesday: 3,
-    thursday: 4, friday: 5, saturday: 6,
-  };
-  const target = dayMap[dayName.toLowerCase()];
-  if (target === undefined) return null;
-
-  const now = new Date();
-  let days = target - now.getDay();
-  if (days < 0) days += 7;
-  const next = new Date(now);
-  next.setDate(next.getDate() + days);
-
-  if (time) {
-    const t = time.match(/(\d{1,2}):?(\d{2})?\s*(AM|PM)?/i);
-    if (t) {
-      let h = parseInt(t[1]);
-      const m = parseInt(t[2] || "0");
-      const ap = t[3]?.toUpperCase();
-      if (ap === "PM" && h < 12) h += 12;
-      if (ap === "AM" && h === 12) h = 0;
-      next.setHours(h, m, 0, 0);
-    }
-  } else {
-    next.setHours(19, 0, 0, 0);
-  }
-  return next.toISOString();
-}
 
 async function scanVenues(
   lat: number,
@@ -1297,9 +1273,13 @@ async function scanVenues(
               return [];
             }
             claudeCalls++;
-            events = await extractWithClaude(html, venue.name, venue.category, {
-              categoryHint: opts?.categoryHint,
-            });
+            events = await extractWithClaude(
+              html,
+              venue.name,
+              venue.category,
+              timezoneForCoords(venue.lat, venue.lng),
+              { categoryHint: opts?.categoryHint },
+            );
           }
 
           // Scraped events get a quality bar + adult guard before persistence.
@@ -1327,7 +1307,11 @@ async function scanVenues(
               console.log(`[scanner] drop adult: "${e.title}" @ ${venue.name}`);
               continue;
             }
-            const tags = generateTags({ ...e, venue_category: venue.category });
+            const tags = generateTags({
+              ...e,
+              venue_category: venue.category,
+              timezone: timezoneForCoords(venue.lat, venue.lng),
+            });
             passing.push({
               venue_id: venue.id, source: "scraped",
               source_id: `${venue.id}-${e.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 60)}`,
@@ -1549,6 +1533,11 @@ serve(async (req: Request) => {
     // Track whether the prior sync was thin so fetchers can widen date ranges (A5)
     const thinPriorSync = lastCount > 0 && lastCount < 20;
 
+    // Every source below reports times in the venue's local clock. Edge
+    // functions run in UTC, so without this the hour-based tags (late-night,
+    // daytime) are wrong by the offset for the whole region.
+    const syncTimezone = timezoneForCoords(lat, lng);
+
     console.log(`[sync] ${gridKey} geohash=${geohash} (${hoursSince.toFixed(1)}h since)`);
 
     // 1. Fast API sources in parallel. SeatGeek/Bandsintown/Yelp removed —
@@ -1696,6 +1685,7 @@ serve(async (req: Request) => {
         is_free: ev.is_free,
         start_time: ev.start_time,
         ticket_url: ev.source_url,
+        timezone: syncTimezone,
       });
       meetup.push({
         source: "meetup",
@@ -1742,6 +1732,7 @@ serve(async (req: Request) => {
         is_free: ev.is_free,
         start_time: ev.start_time,
         ticket_url: ev.source_url,
+        timezone: syncTimezone,
       });
       espn.push({
         source: "espn",
@@ -1787,6 +1778,7 @@ serve(async (req: Request) => {
         is_free: ev.is_free,
         start_time: ev.start_time,
         ticket_url: ev.source_url,
+        timezone: syncTimezone,
       });
       pickleheads.push({
         source: "pickleheads",
@@ -1838,6 +1830,7 @@ serve(async (req: Request) => {
         is_free: ev.is_free,
         start_time: ev.start_time,
         ticket_url: ev.source_url,
+        timezone: syncTimezone,
       });
       university.push({
         source: "university",
@@ -1884,6 +1877,7 @@ serve(async (req: Request) => {
         is_free: ev.is_free,
         start_time: ev.start_time,
         ticket_url: ev.source_url,
+        timezone: syncTimezone,
       });
       hs.push({
         source: "highschool",

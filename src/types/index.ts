@@ -39,6 +39,11 @@ export interface Event {
   ticket_url: string | null;
   attendance: number | null;
   source_url: string | null;
+  // Written by the sync pipeline (migration 015). Present on the detail
+  // screen, which selects the whole row; absent from the feed RPC's column
+  // list, so treat both as optional.
+  last_verified_at?: string | null;
+  verification_status?: string | null;
   tags: string[];
   rank_score?: number;
   blurb?: string;

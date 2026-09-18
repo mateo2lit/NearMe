@@ -1,5 +1,6 @@
 import { Event } from "../types";
 import {
+  effectiveStart,
   isHappeningNowOrSoon,
   isSameCalendarDay,
   isThisWeekend,
@@ -38,11 +39,11 @@ function buildPickedForYou(picks: Event[]): RowBuilder {
 const HAPPENING_SOON_HOURS = 12;
 
 const happeningNow: RowBuilder = (events, now) => {
-  const filtered = sortByStartTime(
+  const filtered = preferOneOffs(sortByStartTime(
     events.filter((e) =>
       isHappeningNowOrSoon(e, HAPPENING_SOON_HOURS, now)
     )
-  );
+  ));
   return filtered.length >= 1
     ? { id: "happening-now", title: "Live & Up Next", icon: "flame", events: filtered }
     : null;
@@ -163,6 +164,43 @@ function buildGoalRow(goalId: string): RowBuilder {
   };
 }
 
+/**
+ * A venue's standing night — trivia every Tuesday, bottomless brunch every
+ * Saturday. Real, but they happen 52 times a year, so they shouldn't crowd out
+ * the things that only happen once. They get their own row instead of the
+ * headline slots.
+ */
+export function isWeeklyRegular(e: Event): boolean {
+  return hasTag(e, "weekly-regular") || (!!e.is_recurring && e.source === "scraped");
+}
+
+/**
+ * Put one-off events first, and drop the regulars entirely once there are
+ * enough one-offs to carry the row. Keeps the pack-the-feed promise: a thin
+ * night still shows regulars rather than an empty row.
+ */
+function preferOneOffs(events: Event[], minOneOffs = 3): Event[] {
+  const oneOffs = events.filter((e) => !isWeeklyRegular(e));
+  const regulars = events.filter(isWeeklyRegular);
+  if (oneOffs.length >= minOneOffs) return oneOffs;
+  return [...oneOffs, ...regulars];
+}
+
+const weeklyRegulars: RowBuilder = (events, now) => {
+  const filtered = sortByStartTime(
+    events.filter((e) => isWeeklyRegular(e) && isThisWeek(e, now))
+  );
+  return filtered.length >= MIN_EVENTS_PER_ROW
+    ? { id: "weekly-regulars", title: "Regulars this week", icon: "repeat", events: filtered }
+    : null;
+};
+
+/** Within the next seven days, counted from the event's next occurrence. */
+function isThisWeek(e: Event, now: Date): boolean {
+  const start = effectiveStart(e).getTime();
+  return start >= now.getTime() && start <= now.getTime() + 7 * 86400_000;
+}
+
 const happyHoursAndSpecials: RowBuilder = (events) => {
   const filtered = sortByStartTime(events.filter(isHappyHourLike));
   return filtered.length >= MIN_EVENTS_PER_ROW
@@ -184,6 +222,7 @@ export function buildDiscoveryRows(
     ...goalBuilders,
     freeTonight,
     happyHoursAndSpecials,
+    weeklyRegulars,
     withinOneMile,
     thisWeekend,
   ];
