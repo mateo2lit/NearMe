@@ -45,6 +45,15 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="big"
+        options={{
+          title: "Big",
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="ticket" size={size} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="saved"
         options={{
           title: "Saved",

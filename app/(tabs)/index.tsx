@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef, Fragment } from "react";
 import {
   View, Text, StyleSheet, TouchableOpacity, FlatList, RefreshControl,
   Animated, Easing, AccessibilityInfo, ScrollView,
@@ -16,7 +16,7 @@ import SearchOverlay from "../../src/components/SearchOverlay";
 import EmptyState from "../../src/components/EmptyState";
 import { SyncStatusBanner } from "../../src/components/SyncStatusBanner";
 import { BouncingDots } from "../../src/components/BouncingDots";
-import { fetchNearbyEvents, applyHiddenFilter, filterPastEvents, filterHappyHour, sortByStartTime, dedupeSameDayDuplicates, balanceSources, balanceCategories, getLastFetchError, clearLastFetchError, formatDistance } from "../../src/services/events";
+import { fetchBigEvents, fetchNearbyEvents, applyHiddenFilter, filterPastEvents, filterHappyHour, sortByStartTime, dedupeSameDayDuplicates, balanceSources, balanceCategories, getLastFetchError, clearLastFetchError, formatDistance } from "../../src/services/events";
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from "../../src/services/supabase";
 import { getFeedHandoff, clearFeedHandoff } from "../../src/services/eventCache";
 import { useLocation } from "../../src/hooks/useLocation";
@@ -422,6 +422,15 @@ export default function DiscoverScreen() {
   const [hiddenRowIds, setHiddenRowIds] = useState<string[]>([]);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [userInterests, setUserInterests] = useState<{ categories: string[]; tags: string[]; goals: string[] }>({ categories: [], tags: [], goals: [] });
+  // Big events ride outside the feed's radius and filters entirely, so they
+  // load on their own and never interact with the When/mood/category state.
+  const [bigEvents, setBigEvents] = useState<Event[]>([]);
+  useEffect(() => {
+    if (location.lat == null || location.lng == null) return;
+    fetchBigEvents(location.lat, location.lng)
+      .then(setBigEvents)
+      .catch(() => setBigEvents([]));
+  }, [location.lat, location.lng]);
 
   const claude = useClaudeRefresh({ supabaseUrl: SUPABASE_URL, anonKey: SUPABASE_ANON_KEY });
 
@@ -636,6 +645,19 @@ export default function DiscoverScreen() {
     return [...claudeOnes, ...others];
   }, [whenFiltered, claude.state.ranking]);
 
+  // Slots in after the first discovery row: visible without hunting, but not
+  // ahead of what's happening tonight a few blocks away. Hides itself rather
+  // than rendering a one-card row.
+  const bigRow = bigEvents.length >= 3 ? (
+    <DiscoveryRow
+      title="Big Events"
+      icon="ticket"
+      events={bigEvents.slice(0, 10)}
+      onPressEvent={(e) => router.push(`/event/${e.id}`)}
+      onSeeAll={() => router.push("/(tabs)/big")}
+    />
+  ) : null;
+
   const allForSearch = events;
   const liveCount = useCallback(
     (v: FilterValue) => {
@@ -802,15 +824,18 @@ export default function DiscoverScreen() {
                   onScout={onRefresh}
                   scouting={claude.state.state === "phase1" || claude.state.state === "phase2"}
                 />
-                {rows.map((r) => (
-                  <DiscoveryRow
-                    key={r.id}
-                    title={r.title}
-                    icon={r.icon as any}
-                    events={r.events}
-                    onPressEvent={(e) => router.push(`/event/${e.id}`)}
-                  />
+                {rows.map((r, i) => (
+                  <Fragment key={r.id}>
+                    <DiscoveryRow
+                      title={r.title}
+                      icon={r.icon as any}
+                      events={r.events}
+                      onPressEvent={(e) => router.push(`/event/${e.id}`)}
+                    />
+                    {i === 0 && bigRow}
+                  </Fragment>
                 ))}
+                {rows.length === 0 && bigRow}
                 {flatFeed.length > 0 && (
                   <View style={styles.divider}>
                     <View style={styles.dividerLine} />

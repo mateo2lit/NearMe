@@ -14,6 +14,12 @@ import { detectAdultSignal, isAdultVenue } from "../_shared/adult-filter.ts";
 import { validateScrapedEvent, normalizeDayOfWeek } from "../_shared/scraper-quality.ts";
 import { fetchMeetupEvents } from "../_shared/meetup-fetcher.ts";
 import { fetchCollegeSports } from "../_shared/espn-sports.ts";
+import {
+  badgeTag,
+  BIG_EVENT_TAG,
+  fetchBigEvents,
+  mergeBigEvents,
+} from "../_shared/big-events.ts";
 import { fetchPickleheadsEvents } from "../_shared/pickleheads.ts";
 import { fetchUniversityEvents } from "../_shared/university-events.ts";
 import { fetchHighSchoolSports } from "../_shared/highschool-sports.ts";
@@ -677,6 +683,52 @@ async function fetchTicketmaster(lat: number, lng: number, radiusMiles: number) 
   }
   console.log(`[tm] ${events.length}`);
   return events;
+}
+
+// ─── Big Events ──────────────────────────────────────────────
+
+/**
+ * Turn classified big-event extracts into event rows. Mirrors the Ticketmaster
+ * mapping above (same category mapper, same adult guard, same tag generator)
+ * and adds the `big_event` tag plus a badge slug the app renders on the card.
+ */
+function toBigEventRows(raw: Awaited<ReturnType<typeof fetchBigEvents>>) {
+  const rows: any[] = [];
+  for (const e of raw) {
+    if (!e.startTime) continue;
+    const adultSignal = detectAdultSignal({
+      title: e.name,
+      description: e.info,
+      venueName: e.venueName,
+    });
+    if (adultSignal.hard) {
+      console.log(`[big] drop adult: "${e.name}" @ ${e.venueName || "unknown"}`);
+      continue;
+    }
+
+    const { category, subcategory } = mapTMCategory([
+      { segment: { name: e.segment || "" }, genre: { name: e.genre || "" } },
+    ]);
+    const tags = generateTags({
+      category, subcategory, title: e.name, description: e.info,
+      is_free: false, start_time: e.startTime, ticket_url: e.ticketUrl,
+    });
+
+    rows.push({
+      source: e.source, source_id: e.source_id,
+      title: e.name, description: e.info,
+      category, subcategory,
+      lat: e.lat, lng: e.lng, address: e.address,
+      image_url: e.imageUrl,
+      start_time: e.startTime, end_time: e.endTime,
+      is_recurring: false, recurrence_rule: null, is_free: false,
+      price_min: e.priceMin, price_max: e.priceMax,
+      ticket_url: e.ticketUrl, source_url: e.ticketUrl,
+      tags: [...new Set([...tags, BIG_EVENT_TAG, badgeTag(e.badge), `big-kind-${e.kind}`])],
+    });
+  }
+  console.log(`[big] ${rows.length} after filtering`);
+  return rows;
 }
 
 // ─── Eventbrite ──────────────────────────────────────────────
@@ -1502,14 +1554,25 @@ serve(async (req: Request) => {
     // 1. Fast API sources in parallel. SeatGeek/Bandsintown/Yelp removed —
     // their APIs are silently dead in our coverage. When the prior sync was
     // thin, date-window-aware fetchers widen their range (A5 fallback).
-    const [tm, eb] = await Promise.all([
+    const [tm, eb, bigRaw] = await Promise.all([
       fetchTicketmaster(lat, lng, radiusMiles),
       fetchEventbrite(lat, lng, radiusMiles, { expandDates: thinPriorSync }),
+      fetchBigEvents({
+        lat,
+        lng,
+        apiKey: TM_API_KEY,
+        fetchJson: async (url) => await (await timeoutFetch(url)).json(),
+      }),
     ]);
+
+    // Big events — arena sports and touring acts inside driving distance, well
+    // outside the 5mi feed radius. Same adult guard and tag generation as every
+    // other source; the `big_event` tag is what the Big tab queries on.
+    const big = toBigEventRows(bigRaw);
 
     // Publish reliable catalog results before venue crawling or LLM work.
     // A later source timeout must not discard already discovered plans.
-    const catalog = [...tm, ...eb].filter((event) => event.start_time);
+    const catalog = mergeBigEvents([...tm, ...eb], big).filter((event) => event.start_time);
     for (const event of catalog) event.description = cleanText(event.description);
     await writeVerifiedEvents(supabase, catalog);
 
@@ -1847,10 +1910,10 @@ serve(async (req: Request) => {
     console.log(`[hs] ${hs.length} after filtering`);
 
     // 5. Dedupe and upsert
-    const all = [
+    const all = mergeBigEvents([
       ...tm, ...eb, ...reddit, ...scraped, ...meetup,
       ...espn, ...pickleheads, ...university, ...hs,
-    ].filter((e) => e.start_time);
+    ], big).filter((e) => e.start_time);
     const seen = new Set<string>();
     const unique = all.filter((e) => {
       const key = `${e.source}:${e.source_id}`;
@@ -1895,6 +1958,7 @@ serve(async (req: Request) => {
         venues_error: venueResult.error,
         venues: venueCount,
         ticketmaster: tm.length,
+        big_events: big.length,
         eventbrite: eb.length,
         reddit: reddit.length,
         scraped: scraped.length,

@@ -2,6 +2,15 @@ import { Event, EventCategory } from "../types";
 import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY } from "./supabase";
 import { getCachedEvents, setCachedEvents } from "./eventCache";
 import { markSyncStart, markSyncDone, setSyncContext } from "../hooks/useSyncStatus";
+import { sortByStartTime as sortEventsByStart } from "../lib/time-windows";
+import { dedupeSameDayDuplicates as dedupeSameDay } from "../lib/dedupe";
+import {
+  BIG_EVENT_MIN_RESULTS,
+  BIG_EVENT_RADIUS_MILES,
+  BIG_EVENT_TAG,
+  BIG_EVENT_WIDE_RADIUS_MILES,
+  isWithinBigWindow,
+} from "../lib/bigEvents";
 
 /**
  * Trigger a sync for the user's location.
@@ -192,6 +201,33 @@ export async function fetchNearbyEvents(
   }
 
   return events;
+}
+
+/**
+ * Big events — arena sports and touring acts within driving distance, tagged
+ * during sync. Deliberately separate from `fetchNearbyEvents`: this ignores the
+ * user's radius entirely, because the whole point is what's worth a drive.
+ *
+ * Widens to 150mi when 75 comes back thin, same pack-the-feed instinct as the
+ * main feed: a short list beats an empty one, and an empty one is a dead tab.
+ */
+export async function fetchBigEvents(
+  lat: number,
+  lng: number,
+  now: Date = new Date()
+): Promise<Event[]> {
+  if (!supabase) return [];
+
+  const query = async (radius: number) => {
+    const rows = await rpcDiscover(lat, lng, radius, undefined, [BIG_EVENT_TAG]);
+    return filterPastEvents(rows, now).filter((e) => isWithinBigWindow(e, now));
+  };
+
+  let events = await query(BIG_EVENT_RADIUS_MILES);
+  if (events.length < BIG_EVENT_MIN_RESULTS) {
+    events = mergeUnique(events, await query(BIG_EVENT_WIDE_RADIUS_MILES));
+  }
+  return sortEventsByStart(dedupeSameDay(events));
 }
 
 export async function fetchEventById(id: string): Promise<Event | null> {
