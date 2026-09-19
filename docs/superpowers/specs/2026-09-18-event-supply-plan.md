@@ -140,36 +140,33 @@ that invented the 7 PM bird walk and removes the token spend with it. Worth
 doing because it is about fifty lines and the venues it covers are museums and
 theaters, which run the events most worth attending.
 
-**Why this matters beyond volume:** it replaces the Claude HTML pass for those
-venues, which removes the class of bug that produced the fabricated 7 PM times,
-and removes the token cost at the same time. The scraper should try this path
-first and fall back to HTML only when it 404s.
+The scraper should try this path first and fall back to HTML only when it 404s.
 
-### 2.2 iCal / .ics feeds
+### 2.3 iCal / .ics feeds
 
 Libraries, parks departments, museums and municipal sites publish these
 routinely. There is already ICS parsing in `university-events.ts` to reuse.
 Free, exact, no LLM.
 
-### 2.3 Localist, generalized
+### 2.4 Localist, generalized
 
 Already used for university calendars. Cities, museums and libraries run it
 too. Rather than discovering universities and guessing their Localist URL,
 probe the same candidate paths against any nearby institution.
 
-### 2.4 Library systems (LibCal / Springshare)
+### 2.5 Library systems (LibCal / Springshare)
 
 Public libraries are dense, reliably scheduled, free to attend, family-safe,
 and almost never covered by ticketing platforms. The Palm Beach County system
 runs LibCal, which exposes public calendar and iCal endpoints.
 
-### 2.5 Farmers markets (USDA Local Food Directories)
+### 2.6 Farmers markets (USDA Local Food Directories)
 
 Free API, needs a key. Exactly the inventory we deleted as stale this week —
 recurring, popular, weekend-daytime, and family-friendly, which is the slot the
 catalog is thinnest in.
 
-### 2.6 City and county open data
+### 2.7 City and county open data
 
 Parks and recreation calendars, municipal event feeds, often CivicPlus or
 Revize with RSS/iCal. The `municipal` source already exists with 5 events; it
