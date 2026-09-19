@@ -88,7 +88,8 @@ export type EventSource =
   | "espn"
   | "pickleheads"
   | "university"
-  | "highschool";
+  | "highschool"
+  | "google_events";
 
 export type SwipeAction = "save" | "skip";
 
@@ -112,8 +113,9 @@ export interface UserPreferences {
   categories: EventCategory[];
   tags: string[];
   radius: number; // miles
-  lat: number;
-  lng: number;
+  // Null until a real location is resolved — never a hardcoded city.
+  lat: number | null;
+  lng: number | null;
   customLocation?: CustomLocation | null;
   onboarding?: OnboardingAnswers;
   hiddenCategories?: string[];

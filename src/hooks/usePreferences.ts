@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { EventCategory, UserPreferences } from "../types";
-import { BOCA_RATON, DEFAULT_RADIUS_MILES } from "../constants/theme";
+import { DEFAULT_RADIUS_MILES } from "../constants/theme";
 import { supabase } from "../services/supabase";
 import { getUserId } from "../services/identity";
 
@@ -20,12 +20,16 @@ const ONBOARDED_KEY = "@nearme_onboarded";
  */
 export const getOrCreateUserId = getUserId;
 
+// No default coordinates. The app used to start life believing every user was
+// in Boca Raton, which is only correct for one of them. useLocation resolves a
+// real position or reports needsSetup; a fallback here would just make a wrong
+// answer look like a confident one.
 const DEFAULT_PREFS: UserPreferences = {
   categories: [],
   tags: [],
   radius: DEFAULT_RADIUS_MILES,
-  lat: BOCA_RATON.lat,
-  lng: BOCA_RATON.lng,
+  lat: null,
+  lng: null,
 };
 
 export function usePreferences() {

@@ -19,6 +19,7 @@ import ViewOriginalLink from "../../src/components/ViewOriginalLink";
 import SourceTrust from "../../src/components/SourceTrust";
 import { isMultiDaySpan } from "../../src/lib/time-windows";
 import { hasUnknownTime } from "../../src/lib/freshness";
+import { priceLabel } from "../../src/lib/money";
 import { COLORS, RADIUS, SPACING } from "../../src/constants/theme";
 import { Event } from "../../src/types";
 
@@ -174,13 +175,7 @@ export default function EventDetail() {
   const venueName = event.venue?.name || event.address?.split(",")[0] || "Location";
   const distanceStr = event.distance != null ? formatDistance(event.distance) : null;
 
-  const priceStr = event.is_free
-    ? "Free"
-    : event.price_min && event.price_max
-    ? `$${event.price_min}–$${event.price_max}`
-    : event.price_min
-    ? `$${event.price_min}+`
-    : "Tickets";
+  const priceStr = priceLabel(event);
 
   return (
     <View style={styles.container}>

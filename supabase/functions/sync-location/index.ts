@@ -14,6 +14,10 @@ import { detectAdultSignal, isAdultVenue } from "../_shared/adult-filter.ts";
 import { validateScrapedEvent, normalizeDayOfWeek } from "../_shared/scraper-quality.ts";
 import { fetchMeetupEvents } from "../_shared/meetup-fetcher.ts";
 import { fetchCollegeSports } from "../_shared/espn-sports.ts";
+import { fetchTheEventsCalendar, parseJsonLdEvents } from "../_shared/venue-feeds.ts";
+import { categorizeCivic, fetchCivicSource } from "../_shared/civic-events.ts";
+import { assessCatalog } from "../_shared/catalog-quality.ts";
+import { fetchGoogleEvents } from "../_shared/google-events.ts";
 import {
   nextLocalOccurrence,
   parseWallClock,
@@ -169,10 +173,12 @@ const SUPABASE_SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const TM_API_KEY = Deno.env.get("TICKETMASTER_API_KEY");
 const GOOGLE_API_KEY = Deno.env.get("GOOGLE_PLACES_API_KEY");
 const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
-const EVENTBRITE_TOKEN = Deno.env.get("EVENTBRITE_TOKEN");
 // Optional: Meetup GraphQL bearer token. When set, the Meetup fetcher
 // uses the official API instead of HTML scraping. See meetup-fetcher.ts.
 const MEETUP_API_TOKEN = Deno.env.get("MEETUP_API_TOKEN");
+// Optional: SerpApi key for Google Events. 250 searches/month free. Unset
+// means this source is simply off — see _shared/google-events.ts.
+const SERPAPI_KEY = Deno.env.get("SERPAPI_KEY");
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
@@ -197,6 +203,24 @@ async function timeoutFetch(
   } finally {
     clearTimeout(id);
   }
+}
+
+
+/**
+ * Why each source came back empty.
+ *
+ * Google Places venue discovery was dead from roughly May to September 2026
+ * and nobody noticed, because `if (!res.ok) break;` and "this area genuinely
+ * has no events" produced the same silent zero. Eventbrite hid behind the same
+ * pattern for years while returning 404. A source that fails should say so in
+ * the sync response, where it is visible without reading logs.
+ */
+const sourceErrors: Record<string, string> = {};
+
+function noteSourceError(source: string, detail: unknown) {
+  const text = detail instanceof Error ? detail.message : String(detail);
+  if (!sourceErrors[source]) sourceErrors[source] = text.slice(0, 200);
+  console.error(`[${source}] ${text}`);
 }
 
 interface VenueScanHealth {
@@ -554,6 +578,70 @@ const VENUE_TYPES = [
  * line. That is how venue discovery stayed dead from roughly May to September
  * 2026 while every sync reported success.
  */
+
+/**
+ * Fetch the Enterprise-tier details for venues we haven't stored before.
+ *
+ * Splitting this out of Nearby Search is what keeps discovery inside Google's
+ * free allowance: the cheap call fans out across 14 place types per cell,
+ * while this one runs once per genuinely new venue and its result is kept
+ * forever. A venue's website and photo effectively never change; re-buying
+ * them on every crawl is what exhausted the quota.
+ *
+ * Defensive by design: if the lookup fails the venue is still stored, just
+ * without a website, and the next crawl can try again.
+ */
+async function enrichNewVenues(
+  venues: Array<Record<string, any>>,
+): Promise<Array<Record<string, any>>> {
+  if (!GOOGLE_API_KEY || venues.length === 0) return venues;
+
+  const ids = venues.map((v) => v.google_place_id);
+  const { data: existing } = await supabase
+    .from("venues")
+    .select("google_place_id")
+    .in("google_place_id", ids);
+  const known = new Set((existing || []).map((r: any) => r.google_place_id));
+
+  const fresh = venues.filter((v) => !known.has(v.google_place_id));
+  console.log(`[venues] ${fresh.length} new of ${venues.length} — enriching only those`);
+
+  let enrichedCount = 0;
+  for (const venue of fresh) {
+    try {
+      const res = await timeoutFetch(
+        `https://places.googleapis.com/v1/places/${venue.google_place_id}`,
+        {
+          headers: {
+            "X-Goog-Api-Key": GOOGLE_API_KEY,
+            "X-Goog-FieldMask": "websiteUri,nationalPhoneNumber,rating,priceLevel,photos",
+          },
+        },
+      );
+      const details = await res.json();
+      if (!res.ok || details?.error) {
+        console.log(`[venues] details failed for ${venue.name}: ${details?.error?.status ?? res.status}`);
+        continue;
+      }
+      venue.website = details.websiteUri || null;
+      venue.phone = details.nationalPhoneNumber || null;
+      venue.rating = details.rating || null;
+      venue.price_level = mapPriceLevel(details.priceLevel);
+      venue.photo_url = details.photos?.[0]
+        ? `https://places.googleapis.com/v1/${details.photos[0].name}/media?maxHeightPx=600&key=${GOOGLE_API_KEY}`
+        : null;
+      enrichedCount++;
+    } catch (err) {
+      console.log(`[venues] details error for ${venue.name}:`, err);
+    }
+  }
+  console.log(`[venues] enriched ${enrichedCount}/${fresh.length} new venues`);
+
+  // Venues we already know keep their stored website/photo: returning them
+  // without those fields would wipe good data on upsert.
+  return venues.filter((v) => !known.has(v.google_place_id));
+}
+
 async function syncVenues(
   lat: number,
   lng: number,
@@ -573,8 +661,23 @@ async function syncVenues(
         headers: {
           "Content-Type": "application/json",
           "X-Goog-Api-Key": GOOGLE_API_KEY,
+          // Nearby Search asks for Pro-tier fields ONLY.
+          //
+          // Google bills each call at the highest tier of any field requested,
+          // and the free monthly allowance shrinks with it: 5,000 calls at Pro,
+          // 1,000 at Enterprise. `websiteUri`, `rating` and `nationalPhone`
+          // are Enterprise; `photos` is Enterprise + Atmosphere. Asking for
+          // them here billed every one of the 14 discovery calls per cell at
+          // the top tier and burned the allowance after ~71 cells — which is
+          // how venue discovery died with "Quota exceeded for
+          // SearchNearbyRequest per day" and stayed dead from May to September
+          // 2026.
+          //
+          // The website and photo still matter (the scraper needs the site,
+          // the card needs the image), so they are fetched per venue by
+          // enrichVenue() below — once, for new venues only, and stored.
           "X-Goog-FieldMask":
-            "places.id,places.displayName,places.formattedAddress,places.location,places.types,places.rating,places.priceLevel,places.nationalPhoneNumber,places.websiteUri,places.photos",
+            "places.id,places.displayName,places.formattedAddress,places.location,places.types",
         },
         body: JSON.stringify({
           includedTypes: [type],
@@ -590,6 +693,7 @@ async function syncVenues(
       if (!response.ok || data?.error) {
         const detail = data?.error?.message ?? data?.error?.status ?? `HTTP ${response.status}`;
         if (!firstError) firstError = String(detail).slice(0, 300);
+        noteSourceError("google_places", detail);
         console.error(`[venues] ${type} rejected: ${response.status} ${JSON.stringify(data?.error ?? data).slice(0, 300)}`);
         continue;
       }
@@ -604,13 +708,8 @@ async function syncVenues(
             lng: place.location.longitude,
             address: place.formattedAddress,
             category: mapVenueCategory(place.types || []),
-            phone: place.nationalPhoneNumber || null,
-            website: place.websiteUri || null,
-            photo_url: place.photos?.[0]
-              ? `https://places.googleapis.com/v1/${place.photos[0].name}/media?maxHeightPx=600&key=${GOOGLE_API_KEY}`
-              : null,
-            rating: place.rating || null,
-            price_level: mapPriceLevel(place.priceLevel),
+            // website/photo/rating are fetched by enrichNewVenues() — they are
+            // Enterprise-tier fields and must not ride on the discovery call.
           });
         }
       }
@@ -628,7 +727,16 @@ async function syncVenues(
   });
 
   if (unique.length > 0) {
-    await supabase.from("venues").upsert(unique, { onConflict: "google_place_id" });
+    // Enrich only the venues we have never seen. The website is what makes a
+    // venue scrapable and the photo is what makes its card look like anything,
+    // but both are expensive Google fields, and neither changes often enough
+    // to pay for on every crawl.
+    const enriched = await enrichNewVenues(unique);
+    if (enriched.length > 0) {
+      await supabase.from("venues").upsert(enriched, { onConflict: "google_place_id" });
+    } else {
+      console.log("[venues] all discovered venues already known — nothing to write");
+    }
   }
   if (unique.length === 0) {
     console.error(`[venues] 0 venues discovered. first upstream error: ${firstError ?? "none reported — area may genuinely have no matching venues"}`);
@@ -655,6 +763,13 @@ async function fetchTicketmaster(lat: number, lng: number, radiusMiles: number) 
 
     const res = await timeoutFetch(url.toString());
     const data = await res.json();
+    if (!res.ok || data?.fault || data?.errors) {
+      noteSourceError(
+        "ticketmaster",
+        data?.fault?.faultstring ?? data?.errors?.[0]?.detail ?? `HTTP ${res.status}`,
+      );
+      return [];
+    }
     for (const e of data?._embedded?.events || []) {
       const venue = e._embedded?.venues?.[0];
       const eLat = venue?.location?.latitude ? parseFloat(venue.location.latitude) : null;
@@ -697,7 +812,7 @@ async function fetchTicketmaster(lat: number, lng: number, radiusMiles: number) 
       });
     }
   } catch (err) {
-    console.error("[tm] error:", err);
+    noteSourceError("ticketmaster", err);
   }
   console.log(`[tm] ${events.length}`);
   return events;
@@ -749,114 +864,6 @@ function toBigEventRows(raw: Awaited<ReturnType<typeof fetchBigEvents>>) {
   console.log(`[big] ${rows.length} after filtering`);
   return rows;
 }
-
-// ─── Eventbrite ──────────────────────────────────────────────
-
-async function fetchEventbrite(
-  lat: number,
-  lng: number,
-  radiusMiles: number,
-  opts?: { expandDates?: boolean },
-) {
-  if (!EVENTBRITE_TOKEN) return [];
-
-  const queries = [
-    { q: "", label: "general" },
-    { q: "singles dating speed dating mixer", label: "dating" },
-    { q: "happy hour trivia karaoke", label: "bar-nights" },
-    { q: "pickleball basketball volleyball pickup soccer running club tennis", label: "pickup-sports" },
-  ];
-
-  const MAX_PAGES_PER_QUERY = 4; // up to ~200 per query at 50/page
-
-  // ISO without millis (Eventbrite is picky about format)
-  const iso = (d: Date) => d.toISOString().replace(/\.\d{3}Z$/, "Z");
-  const rangeStart = iso(new Date());
-  const rangeEnd = iso(new Date(Date.now() + 30 * 86400000));
-
-  const rawById = new Map<string, any>();
-
-  for (const { q, label } of queries) {
-    for (let page = 1; page <= MAX_PAGES_PER_QUERY; page++) {
-      try {
-        const url = new URL("https://www.eventbriteapi.com/v3/events/search/");
-        url.searchParams.set("location.latitude", String(lat));
-        url.searchParams.set("location.longitude", String(lng));
-        url.searchParams.set("location.within", `${radiusMiles}mi`);
-        if (opts?.expandDates) {
-          // Sparse-market fallback: widen window now → now+30d
-          url.searchParams.set("start_date.range_start", rangeStart);
-          url.searchParams.set("start_date.range_end", rangeEnd);
-        } else {
-          url.searchParams.set("start_date.keyword", "this_week");
-        }
-        url.searchParams.set("expand", "venue");
-        url.searchParams.set("page", String(page));
-        if (q) url.searchParams.set("q", q);
-
-        const res = await timeoutFetch(url.toString(), {
-          headers: { Authorization: `Bearer ${EVENTBRITE_TOKEN}` },
-        });
-        if (!res.ok) break;
-        const data = await res.json();
-        const pageEvents = data?.events || [];
-        if (!pageEvents.length) break;
-        for (const eb of pageEvents) {
-          if (!rawById.has(eb.id)) rawById.set(eb.id, eb);
-        }
-        if (!data?.pagination?.has_more_items) break;
-      } catch (err) {
-        console.error(`[eb:${label}:p${page}] error:`, err);
-        break;
-      }
-    }
-    console.log(`[eb:${label}] cumulative=${rawById.size}`);
-  }
-
-  const events: any[] = [];
-  for (const eb of rawById.values()) {
-    const venue = eb.venue;
-    const eLat = venue?.latitude ? parseFloat(venue.latitude) : null;
-    const eLng = venue?.longitude ? parseFloat(venue.longitude) : null;
-    if (!eLat || !eLng) continue;
-
-    // Adult-content guard. Eventbrite hosts a wide variety of listings —
-    // many strip clubs and adult venues self-publish here.
-    const adultSignal = detectAdultSignal({
-      title: eb.name?.text,
-      description: eb.description?.text,
-      venueName: venue?.name,
-    });
-    if (adultSignal.hard) {
-      console.log(`[eb] drop adult: "${eb.name?.text}" @ ${venue?.name || "unknown"}`);
-      continue;
-    }
-
-    const is_free = eb.is_free || false;
-    const tags = generateTags({
-      category: "community", subcategory: "event",
-      title: eb.name?.text || "", description: eb.description?.text,
-      is_free, start_time: eb.start?.utc || null, ticket_url: eb.url,
-      timezone: timezoneForCoords(eLat, eLng),
-    });
-    events.push({
-      source: "community", source_id: `eb-${eb.id}`,
-      title: eb.name?.text || "",
-      description: (eb.description?.text || "").slice(0, 500) || null,
-      category: "community", subcategory: "event",
-      lat: eLat, lng: eLng,
-      address: [venue?.address?.address_1, venue?.address?.city, venue?.address?.region].filter(Boolean).join(", "),
-      image_url: eb.logo?.url || null,
-      start_time: eb.start?.utc || null, end_time: eb.end?.utc || null,
-      is_recurring: false, recurrence_rule: null, is_free,
-      price_min: null, price_max: null,
-      ticket_url: eb.url || null, source_url: eb.url || null, tags,
-    });
-  }
-  console.log(`[eb] ${events.length}`);
-  return events;
-}
-
 // ─── Reddit local subreddits ─────────────────────────────────
 
 // National sports subreddits — added to every location so a local
@@ -871,42 +878,66 @@ const NATIONAL_SPORTS_SUBS = [
   "tennis",
 ];
 
-// Location → subreddit mapping. Mixes city subs (events, food, nightlife)
-// with nearby university subs (college sports, college events). The goal
-// is broader coverage of locally-interesting stuff — especially sports —
-// than what TM and Eventbrite alone surface.
-function subredditsForLocation(lat: number, lng: number): string[] {
-  const subs: string[] = [...NATIONAL_SPORTS_SUBS];
-  // Boca / South Florida — FAU is the dominant local college; UMiami next door
-  if (lat > 25.7 && lat < 26.8 && lng > -80.5 && lng < -79.8) {
-    subs.push("BocaRaton", "southflorida", "florida", "FAU", "Miami", "MiamiHurricanes");
-  }
-  // Austin — Longhorns dominate the local sports scene
-  else if (lat > 30.1 && lat < 30.5 && lng > -97.9 && lng < -97.5) {
-    subs.push("Austin", "texas", "LonghornNation", "UTAustin");
-  }
-  // NYC — Columbia + NYU + St. John's
-  else if (lat > 40.5 && lat < 40.9 && lng > -74.1 && lng < -73.7) {
-    subs.push("nyc", "AskNYC", "Columbia", "nyu");
-  }
-  // LA — UCLA + USC
-  else if (lat > 33.7 && lat < 34.3 && lng > -118.7 && lng < -118.1) {
-    subs.push("LosAngeles", "AskLosAngeles", "ucla", "USC");
-  }
-  // Chicago — Northwestern + UChicago + DePaul
-  else if (lat > 41.6 && lat < 42.1 && lng > -87.9 && lng < -87.5) {
-    subs.push("chicago", "AskChicago", "NUFootball", "Northwestern", "uchicago");
-  }
-  // Orlando — UCF (Knights are huge locally)
-  else if (lat > 28.3 && lat < 28.7 && lng > -81.5 && lng < -81.1) {
-    subs.push("orlando", "ucf", "UCFKnights");
-  }
-  // Tampa — USF Bulls + Bucs
-  else if (lat > 27.8 && lat < 28.1 && lng > -82.6 && lng < -82.3) {
-    subs.push("tampa", "USF", "tampabaybuccaneers");
-  }
-  return subs;
+/**
+ * Subreddits to search for a location, anywhere in the world.
+ *
+ * This used to be a hardcoded ladder of five US metros — Boca, Austin, NYC, LA,
+ * Chicago — and everywhere else got the national sports subs and nothing
+ * local. A user in Denver, Lisbon or Osaka was invisible to this source by
+ * construction.
+ *
+ * City subreddits follow strong conventions (r/Denver, r/lisbon, r/osaka), so
+ * the city name the neighborhood lookup already returns is enough to guess
+ * them. Wrong guesses cost one 404 and are skipped; the curated entries stay
+ * for metros where the obvious name isn't the active sub.
+ */
+const CURATED_SUBS: Array<{ box: [number, number, number, number]; subs: string[] }> = [
+  // lat min, lat max, lng min, lng max
+  { box: [25.7, 26.8, -80.5, -79.8], subs: ["BocaRaton", "southflorida", "FAU", "Miami"] },
+  { box: [30.1, 30.5, -97.9, -97.5], subs: ["Austin", "UTAustin"] },
+  { box: [40.5, 40.9, -74.1, -73.7], subs: ["nyc", "AskNYC"] },
+  { box: [33.7, 34.3, -118.7, -118.1], subs: ["LosAngeles", "AskLosAngeles"] },
+  { box: [41.6, 42.1, -87.9, -87.5], subs: ["chicago", "AskChicago"] },
+  { box: [28.3, 28.7, -81.5, -81.1], subs: ["orlando", "ucf"] },
+  { box: [27.8, 28.1, -82.6, -82.3], subs: ["tampa", "USF"] },
+];
+
+/** "São Paulo" → "saopaulo"; "New York" → "newyork". */
+function subredditize(name: string): string {
+  return name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]/g, "");
 }
+
+export function subredditsForLocation(
+  lat: number,
+  lng: number,
+  cityName?: string | null,
+): string[] {
+  const subs: string[] = [];
+
+  for (const entry of CURATED_SUBS) {
+    const [latMin, latMax, lngMin, lngMax] = entry.box;
+    if (lat > latMin && lat < latMax && lng > lngMin && lng < lngMax) {
+      subs.push(...entry.subs);
+      break;
+    }
+  }
+
+  // Derived from wherever the user actually is.
+  if (cityName) {
+    const slug = subredditize(cityName);
+    if (slug.length >= 3) {
+      subs.push(slug);
+      if (!subs.includes(`Ask${slug}`)) subs.push(`Ask${slug}`);
+    }
+  }
+
+  subs.push(...NATIONAL_SPORTS_SUBS);
+  return [...new Set(subs)];
+}
+
 
 // ─── Variety hint helpers ───────────────────────────────────
 // After fast sources return, we compute which categories are well-represented
@@ -943,24 +974,87 @@ function varietyHintBlock(hint?: { wellCovered: string[]; underRepresented: stri
   return lines.join("\n");
 }
 
+
+// Reddit stopped serving its public JSON endpoints to cloud IPs; every request
+// from the edge function comes back 403, which the code swallowed as "no posts
+// here" (surfaced 2026-09-18 by the new per-source error reporting). Read-only
+// app-only OAuth still works and is free: create a "script" app at
+// https://www.reddit.com/prefs/apps and set REDDIT_CLIENT_ID and
+// REDDIT_CLIENT_SECRET. Without them this source skips itself and says why,
+// rather than pretending the city is quiet.
+const REDDIT_CLIENT_ID = Deno.env.get("REDDIT_CLIENT_ID");
+const REDDIT_CLIENT_SECRET = Deno.env.get("REDDIT_CLIENT_SECRET");
+
+let redditToken: { value: string; expiresAt: number } | null = null;
+
+async function getRedditToken(): Promise<string | null> {
+  if (!REDDIT_CLIENT_ID || !REDDIT_CLIENT_SECRET) return null;
+  if (redditToken && redditToken.expiresAt > Date.now() + 60_000) {
+    return redditToken.value;
+  }
+  try {
+    const basic = btoa(`${REDDIT_CLIENT_ID}:${REDDIT_CLIENT_SECRET}`);
+    const res = await timeoutFetch("https://www.reddit.com/api/v1/access_token", {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${basic}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+        "User-Agent": "NearMe/1.0 (events aggregator)",
+      },
+      body: "grant_type=client_credentials",
+    });
+    const body = await res.json();
+    if (!res.ok || !body?.access_token) {
+      noteSourceError("reddit", `auth failed: ${body?.error ?? res.status}`);
+      return null;
+    }
+    redditToken = {
+      value: body.access_token,
+      expiresAt: Date.now() + (body.expires_in ?? 3600) * 1000,
+    };
+    return redditToken.value;
+  } catch (err) {
+    noteSourceError("reddit", err);
+    return null;
+  }
+}
+
 async function fetchRedditEvents(
   lat: number,
   lng: number,
-  opts?: { categoryHint?: { wellCovered: string[]; underRepresented: string[] } },
+  opts?: {
+    categoryHint?: { wellCovered: string[]; underRepresented: string[] };
+    cityName?: string | null;
+  },
 ) {
-  const subs = subredditsForLocation(lat, lng);
+  const subs = subredditsForLocation(lat, lng, opts?.cityName);
   if (!subs.length || !ANTHROPIC_API_KEY) return [];
 
+  const token = await getRedditToken();
+  if (!token) {
+    noteSourceError(
+      "reddit",
+      "no REDDIT_CLIENT_ID/SECRET set — Reddit blocks unauthenticated cloud requests with 403",
+    );
+    return [];
+  }
+
   const events: any[] = [];
-  for (const sub of subs.slice(0, 2)) {
+  for (const sub of subs.slice(0, 3)) {
     try {
       // Query broadened to include sports terms — college subreddits surface
       // game/watch-party announcements more than generic "event" posts.
-      const url = `https://www.reddit.com/r/${sub}/search.json?q=event+OR+tonight+OR+this+weekend+OR+game+OR+tailgate+OR+watch+party+OR+vs.&restrict_sr=1&sort=new&limit=25&t=week`;
+      const url = `https://oauth.reddit.com/r/${sub}/search?q=event+OR+tonight+OR+this+weekend+OR+game+OR+tailgate+OR+watch+party+OR+vs.&restrict_sr=1&sort=new&limit=25&t=week`;
       const res = await timeoutFetch(url, {
-        headers: { "User-Agent": "NearMe-Bot/1.0" },
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "User-Agent": "NearMe/1.0 (events aggregator)",
+        },
       });
-      if (!res.ok) continue;
+      if (!res.ok) {
+        noteSourceError("reddit", `r/${sub} HTTP ${res.status}`);
+        continue;
+      }
       const data = await res.json();
       const posts = data?.data?.children || [];
 
@@ -1046,7 +1140,7 @@ async function fetchRedditEvents(
         });
       }
     } catch (err) {
-      console.error(`[reddit:${sub}] error:`, err);
+      noteSourceError("reddit", err);
     }
   }
   console.log(`[reddit] ${events.length}`);
@@ -1214,6 +1308,7 @@ async function scanVenues(
   console.log(`[scanner] ${toScan.length}/${nearby.length} venues (${due.length} due, budget=${scanBudget}, fast=${fastEventCount})`);
   const all: any[] = [];
   let claudeCalls = 0;
+  let feedVenues = 0;
   let skippedUnchanged = 0;
   let skippedNoSignal = 0;
   let dedicatedPages = 0;
@@ -1285,7 +1380,61 @@ async function scanVenues(
             return [];
           }
 
-          let events = extractSchemaOrgEvents(html, sourceUrl);
+          // Structured feed first. Where a venue publishes one, it gives exact
+          // start times and real titles for free — no tokens, and no model in
+          // a position to invent a 7pm that the venue never advertised.
+          let usedFeed = false;
+          let events: any[] = (await fetchTheEventsCalendar(sourceUrl, (u) => timeoutFetch(u, { timeoutMs: 8000 }), timezoneForCoords(venue.lat, venue.lng)))
+            .map((f) => ({
+              title: f.title,
+              description: f.description,
+              category: "community",
+              subcategory: "event",
+              start_time: f.start_time,
+              end_time: f.end_time,
+              is_recurring: false,
+              recurrence_rule: null,
+              is_free: f.is_free,
+              price_min: f.price_min,
+              price_max: null,
+              image_url: f.image_url,
+              feed_source_url: f.source_url,
+              time_unconfirmed: !f.time_confirmed,
+            }));
+          if (events.length > 0) {
+            usedFeed = true;
+            feedVenues++;
+            console.log(`[scanner] ${venue.name}: ${events.length} from structured feed`);
+          }
+
+          if (events.length === 0) {
+            const jsonLd = parseJsonLdEvents(html, sourceUrl).map((f) => ({
+              title: f.title,
+              description: f.description,
+              category: "community",
+              subcategory: "event",
+              start_time: f.start_time,
+              end_time: f.end_time,
+              is_recurring: false,
+              recurrence_rule: null,
+              is_free: f.is_free,
+              price_min: f.price_min,
+              price_max: null,
+              image_url: f.image_url,
+              feed_source_url: f.source_url,
+              time_unconfirmed: !f.time_confirmed,
+            }));
+            if (jsonLd.length > 0) {
+              events = jsonLd;
+              usedFeed = true;
+              feedVenues++;
+              console.log(`[scanner] ${venue.name}: ${jsonLd.length} from schema.org`);
+            }
+          }
+
+          if (events.length === 0) {
+            events = extractSchemaOrgEvents(html, sourceUrl);
+          }
           if (events.length === 0) {
             if (!hasLocalEventSignal(pageText)) {
               skippedNoSignal++;
@@ -1340,7 +1489,7 @@ async function scanVenues(
               venue_category: venue.category,
               timezone: timezoneForCoords(venue.lat, venue.lng),
             });
-            if (e.time_unconfirmed) tags.push(TIME_TBA_TAG);
+            if ((e as any).time_unconfirmed) tags.push(TIME_TBA_TAG);
             passing.push({
               venue_id: venue.id, source: "scraped",
               source_id: `${venue.id}-${e.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 60)}`,
@@ -1351,7 +1500,8 @@ async function scanVenues(
               start_time: e.start_time, end_time: e.end_time,
               is_recurring: e.is_recurring, recurrence_rule: e.recurrence_rule,
               is_free: e.is_free, price_min: e.price_min, price_max: e.price_max,
-              ticket_url: null, source_url: sourceUrl,
+              ticket_url: null,
+              source_url: (e as any).feed_source_url || sourceUrl,
               tags,
             });
           }
@@ -1383,8 +1533,203 @@ async function scanVenues(
       if (r.status === "fulfilled" && r.value.length > 0) all.push(...r.value);
     }
   }
-  console.log(`[scanner] ${all.length} events, claude_calls=${claudeCalls}, dedicated_pages=${dedicatedPages}, unchanged=${skippedUnchanged}, no_signal=${skippedNoSignal}`);
+  console.log(`[scanner] ${all.length} events, feeds=${feedVenues}, claude_calls=${claudeCalls}, dedicated_pages=${dedicatedPages}, unchanged=${skippedUnchanged}, no_signal=${skippedNoSignal}`);
   return all;
+}
+
+
+/**
+ * Libraries, parks departments and city calendars near the user.
+ *
+ * These run the free, family-safe, reliably-scheduled programme that no
+ * ticketing platform indexes — and they publish it as data far more often than
+ * bars do. On 2026-09-18 the catalog near Boca held 5 `municipal` events
+ * against 490 sports meetups, which says more about where we were looking than
+ * about what was happening.
+ *
+ * Venues already in the table are reused, so this costs no Google quota: the
+ * library and park rows were discovered during ordinary venue sync.
+ */
+async function fetchCivicEvents(
+  lat: number,
+  lng: number,
+  radiusMeters: number,
+): Promise<any[]> {
+  const { data: venues, error } = await supabase
+    .from("venues")
+    .select("id, name, website, lat, lng, address, category")
+    .not("website", "is", null)
+    .in("category", ["park", "venue", "other"]);
+
+  if (error) {
+    noteSourceError("civic", error.message);
+    return [];
+  }
+  if (!venues?.length) return [];
+
+  const degPerMile = 1 / 69;
+  const radiusMiles = radiusMeters / 1609.34;
+  const nearby = venues.filter((v: any) =>
+    Math.abs(v.lat - lat) < degPerMile * radiusMiles &&
+    Math.abs(v.lng - lng) < degPerMile * radiusMiles
+  );
+
+  // Institutions worth asking. Name matching is crude but effective: Places
+  // categorizes a public library as "other" or "venue", not as a library.
+  const CIVIC_NAME = /librar|park|recreation|museum|botanic|community cent|civic|city of |town of |cultural/i;
+  const candidates = nearby
+    .filter((v: any) => CIVIC_NAME.test(v.name || "") || v.category === "park")
+    .slice(0, 12);
+
+  if (candidates.length === 0) return [];
+  console.log(`[civic] probing ${candidates.length} civic venues`);
+
+  const out: any[] = [];
+  let withFeeds = 0;
+
+  for (const venue of candidates) {
+    try {
+      const events = await fetchCivicSource(
+        { name: venue.name, website: venue.website, lat: venue.lat, lng: venue.lng },
+        (url) => timeoutFetch(url, { timeoutMs: 7000 }) as any,
+        { daysForward: 21 },
+      );
+      if (events.length === 0) continue;
+      withFeeds++;
+
+      for (const e of events.slice(0, 20)) {
+        if (!e.title || !e.start_time) continue;
+        const quality = validateScrapedEvent({
+          title: e.title,
+          description: e.description,
+          venueName: venue.name,
+        });
+        if (!quality.ok) continue;
+        const adultSignal = detectAdultSignal({
+          title: e.title,
+          description: e.description,
+          venueName: venue.name,
+        });
+        if (adultSignal.hard) continue;
+
+        const { category, subcategory } = categorizeCivic(e.title, e.description);
+        const tags = generateTags({
+          category, subcategory,
+          title: e.title, description: e.description,
+          is_free: true,
+          start_time: e.start_time,
+          ticket_url: e.source_url,
+          timezone: timezoneForCoords(venue.lat, venue.lng),
+        });
+        if (!e.time_confirmed) tags.push(TIME_TBA_TAG);
+
+        out.push({
+          venue_id: venue.id,
+          source: "municipal",
+          source_id: `civic-${venue.id}-${e.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 60)}`,
+          title: e.title,
+          description: e.description || null,
+          category, subcategory,
+          lat: venue.lat, lng: venue.lng,
+          address: e.location ? `${e.location}, ${venue.address}` : venue.address,
+          image_url: null,
+          start_time: e.start_time,
+          end_time: e.end_time,
+          is_recurring: false,
+          recurrence_rule: null,
+          is_free: true,
+          price_min: null, price_max: null,
+          ticket_url: null,
+          source_url: e.source_url,
+          tags,
+        });
+      }
+    } catch (err) {
+      console.log(`[civic] ${venue.name} failed:`, err);
+    }
+  }
+
+  console.log(`[civic] ${out.length} events from ${withFeeds}/${candidates.length} venues with feeds`);
+  return out;
+}
+
+
+/**
+ * Google Events rows, mapped to catalog rows.
+ *
+ * Off unless SERPAPI_KEY is set. When it is, this is the broadest net we have
+ * for a metro we know nothing about: it reaches Facebook Events and Eventbrite
+ * listings that no API of ours can see.
+ */
+async function fetchGoogleEventsRows(
+  lat: number,
+  lng: number,
+  cityName: string | null,
+): Promise<any[]> {
+  if (!SERPAPI_KEY || !cityName) return [];
+
+  const raw = await fetchGoogleEvents({
+    cityName,
+    apiKey: SERPAPI_KEY,
+    fetchJson: (url) => timeoutFetch(url, { timeoutMs: 15000 }) as any,
+    onError: (detail) => noteSourceError("google_events", detail),
+  });
+
+  const rows: any[] = [];
+  for (const e of raw) {
+    if (!e.title || !e.start_time) continue;
+
+    const quality = validateScrapedEvent({
+      title: e.title,
+      description: e.description,
+      venueName: e.venue_name,
+    });
+    if (!quality.ok) continue;
+
+    const adultSignal = detectAdultSignal({
+      title: e.title,
+      description: e.description,
+      venueName: e.venue_name,
+    });
+    if (adultSignal.hard) continue;
+
+    const tags = generateTags({
+      category: "community",
+      subcategory: "event",
+      title: e.title,
+      description: e.description,
+      is_free: false,
+      start_time: e.start_time,
+      ticket_url: e.source_url,
+      timezone: timezoneForCoords(lat, lng),
+    });
+    if (!e.time_confirmed) tags.push(TIME_TBA_TAG);
+
+    rows.push({
+      source: "google_events",
+      source_id: `ge-${e.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 60)}-${e.start_time.slice(0, 10)}`,
+      title: e.title,
+      description: e.description || null,
+      category: "community",
+      subcategory: "event",
+      // Google gives an address, not coordinates. Anchor to the search centre
+      // so the row is geofenced sanely; the address is what users read.
+      lat, lng,
+      address: e.address || cityName,
+      image_url: e.image_url,
+      start_time: e.start_time,
+      end_time: null,
+      is_recurring: false,
+      recurrence_rule: null,
+      is_free: false,
+      price_min: null, price_max: null,
+      ticket_url: e.source_url,
+      source_url: e.source_url,
+      tags,
+    });
+  }
+  console.log(`[google-events] ${rows.length} rows after filtering`);
+  return rows;
 }
 
 // ─── Neighborhood Discovery (B3) ─────────────────────────────
@@ -1481,6 +1826,10 @@ function isAbusiveRequest(lat: number, lng: number, radiusMiles: number): boolea
 
 serve(async (req: Request) => {
   try {
+    // Edge instances are reused between requests, so a stale error from the
+    // previous caller would otherwise be reported as this one's.
+    for (const key of Object.keys(sourceErrors)) delete sourceErrors[key];
+
     const body = await req.json();
     const lat = body.lat;
     const lng = body.lng;
@@ -1572,9 +1921,12 @@ serve(async (req: Request) => {
     // 1. Fast API sources in parallel. SeatGeek/Bandsintown/Yelp removed —
     // their APIs are silently dead in our coverage. When the prior sync was
     // thin, date-window-aware fetchers widen their range (A5 fallback).
-    const [tm, eb, bigRaw] = await Promise.all([
+    // Eventbrite used to sit here. Its public search endpoint
+    // (/v3/events/search/) has returned 404 for years — verified again on
+    // 2026-09-18, with and without a token — and the code swallowed the 404,
+    // so it silently spent up to 16 requests per sync to add nothing.
+    const [tm, bigRaw] = await Promise.all([
       fetchTicketmaster(lat, lng, radiusMiles),
-      fetchEventbrite(lat, lng, radiusMiles, { expandDates: thinPriorSync }),
       fetchBigEvents({
         lat,
         lng,
@@ -1590,7 +1942,7 @@ serve(async (req: Request) => {
 
     // Publish reliable catalog results before venue crawling or LLM work.
     // A later source timeout must not discard already discovered plans.
-    const catalog = mergeBigEvents([...tm, ...eb], big).filter((event) => event.start_time);
+    const catalog = mergeBigEvents([...tm], big).filter((event) => event.start_time);
     for (const event of catalog) event.description = cleanText(event.description);
     await writeVerifiedEvents(supabase, catalog);
 
@@ -1618,7 +1970,7 @@ serve(async (req: Request) => {
     // 3. Compute variety hint from fast-source results so Claude-driven sources
     // (Reddit, venue scanning) bias toward under-represented categories. This
     // is the B5 "fill the gap" prompt addendum.
-    const categoryHint = computeCategoryHint([...tm, ...eb]);
+    const categoryHint = computeCategoryHint([...tm]);
     console.log(
       `[variety] well-covered=[${categoryHint.wellCovered.join(",")}] under=[${categoryHint.underRepresented.join(",")}]`,
     );
@@ -1629,26 +1981,38 @@ serve(async (req: Request) => {
     // HS sports via Places-discovered schools. Each is best-effort — any one
     // returning [] just means that source had no data for this location.
     const radiusMeters = radiusMiles * 1609.34;
+
+    // Resolved first, not in parallel: it names the city, and both Reddit and
+    // Meetup need that to search anywhere outside the handful of US metros
+    // that used to be hardcoded. One small model call.
+    const neighborhoodInfo = allowAi ? await fetchNeighborhood(lat, lng) : null;
+    const cityName = neighborhoodInfo?.neighborhood || null;
+
     const [
       reddit,
       scraped,
-      neighborhoodInfo,
+      civic,
+      googleEvents,
       meetupRaw,
       espnRaw,
       pickleheadsRaw,
       uniRaw,
       hsRaw,
     ] = await Promise.all([
-      allowAi ? fetchRedditEvents(lat, lng, { categoryHint }) : Promise.resolve([]),
+      allowAi ? fetchRedditEvents(lat, lng, { categoryHint, cityName }) : Promise.resolve([]),
       allowAi ? scanVenues(lat, lng, radiusMeters, {
         categoryHint,
-        fastEventCount: tm.length + eb.length,
+        fastEventCount: tm.length,
         thinPriorSync,
       }) : Promise.resolve([]),
-      allowAi ? fetchNeighborhood(lat, lng) : Promise.resolve(null),
+      // Cheap: reads venues we already have, and most of these publish iCal,
+      // so it costs HTTP and no tokens.
+      fetchCivicEvents(lat, lng, radiusMeters),
+      fetchGoogleEventsRows(lat, lng, cityName),
       allowAi && ANTHROPIC_API_KEY
         ? fetchMeetupEvents({
             lat, lng,
+            cityName: cityName || undefined,
             anthropicKey: ANTHROPIC_API_KEY,
             meetupToken: MEETUP_API_TOKEN || undefined,
           })
@@ -1934,7 +2298,7 @@ serve(async (req: Request) => {
 
     // 5. Dedupe and upsert
     const all = mergeBigEvents([
-      ...tm, ...eb, ...reddit, ...scraped, ...meetup,
+      ...tm, ...reddit, ...scraped, ...civic, ...googleEvents, ...meetup,
       ...espn, ...pickleheads, ...university, ...hs,
     ], big).filter((e) => e.start_time);
     const seen = new Set<string>();
@@ -1953,6 +2317,24 @@ serve(async (req: Request) => {
     }
 
     await writeVerifiedEvents(supabase, unique);
+
+    // What does someone standing here actually get? Counting rows written
+    // measures our effort; this measures the product. Read back from the
+    // catalog rather than from `unique`, so it includes everything already
+    // stored for this area, which is what the feed will show.
+    const { data: nearbyForQuality } = await supabase
+      .from("events")
+      .select("start_time, end_time, category, source_url, ticket_url, tags, last_verified_at, source")
+      .gte("lat", lat - 0.25).lte("lat", lat + 0.25)
+      .gte("lng", lng - 0.25).lte("lng", lng + 0.25)
+      .gte("start_time", new Date().toISOString())
+      .limit(1000);
+    const quality = assessCatalog(nearbyForQuality || []);
+    console.log(
+      `[quality] ${quality.upcoming} upcoming, ${Math.round(quality.confirmedShare * 100)}% timed, ` +
+      `${quality.categories} categories, ready=${quality.readyToCharge}` +
+      (quality.gaps.length ? ` — ${quality.gaps.join("; ")}` : ""),
+    );
 
     // Log sync with both geohash and grid_key for backwards compat
     const { error: logWriteError } = await supabase.from("sync_log").upsert({
@@ -1979,11 +2361,15 @@ serve(async (req: Request) => {
         synced: true,
         lat, lng, geohash,
         venues_error: venueResult.error,
+        // Empty object means every source that ran, ran clean.
+        source_errors: sourceErrors,
+        quality,
         venues: venueCount,
         ticketmaster: tm.length,
         big_events: big.length,
-        eventbrite: eb.length,
         reddit: reddit.length,
+        civic: civic.length,
+        google_events: googleEvents.length,
         scraped: scraped.length,
         meetup: meetup.length,
         espn: espn.length,

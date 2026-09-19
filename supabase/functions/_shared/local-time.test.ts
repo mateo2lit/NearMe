@@ -19,15 +19,38 @@ Deno.test("timezoneForCoords maps the catalog's metros", () => {
 
 Deno.test("timezoneForCoords gets the cities longitude bands alone would miss", () => {
   assertEquals(timezoneForCoords(33.749, -84.388), "America/New_York");    // Atlanta
-  assertEquals(timezoneForCoords(42.3314, -83.0458), "America/New_York");  // Detroit
-  assertEquals(timezoneForCoords(39.7684, -86.1581), "America/New_York");  // Indianapolis
+  assertEquals(timezoneForCoords(42.3314, -83.0458), "America/Detroit");   // Detroit
+  assertEquals(timezoneForCoords(39.7684, -86.1581), "America/Indiana/Indianapolis");
   assertEquals(timezoneForCoords(36.1627, -86.7816), "America/Chicago");   // Nashville
   assertEquals(timezoneForCoords(37.9748, -87.5558), "America/Chicago");   // Evansville
   assertEquals(timezoneForCoords(36.1699, -115.1398), "America/Los_Angeles"); // Las Vegas
 });
 
+Deno.test("timezoneForCoords works outside the United States", () => {
+  // The old longitude bands sent every one of these to America/New_York,
+  // which would have stored a London 8pm show five hours off.
+  assertEquals(timezoneForCoords(51.5074, -0.1278), "Europe/London");
+  assertEquals(timezoneForCoords(48.8566, 2.3522), "Europe/Paris");
+  assertEquals(timezoneForCoords(35.6762, 139.6503), "Asia/Tokyo");
+  assertEquals(timezoneForCoords(-33.8688, 151.2093), "Australia/Sydney");
+  assertEquals(timezoneForCoords(19.076, 72.8777), "Asia/Kolkata");
+  assertEquals(timezoneForCoords(-23.5505, -46.6333), "America/Sao_Paulo");
+  assertEquals(timezoneForCoords(19.4326, -99.1332), "America/Mexico_City");
+  assertEquals(timezoneForCoords(43.6532, -79.3832), "America/Toronto");
+});
+
+Deno.test("a venue in Tokyo keeps its own wall clock", () => {
+  const iso = nextLocalOccurrence("saturday", "7:00 PM", "Asia/Tokyo", new Date("2026-09-17T16:00:00Z"));
+  assertEquals(partsInZone(new Date(iso!), "Asia/Tokyo").hour, 19);
+  // 7pm Saturday in Tokyo is 10am UTC the same day.
+  assertEquals(iso, "2026-09-19T10:00:00.000Z");
+});
+
 Deno.test("timezoneForCoords falls back rather than throwing", () => {
-  assertEquals(timezoneForCoords(NaN, NaN), "America/New_York");
+  // UTC, not a US zone: an unknown location should not be quietly assigned to
+  // Florida's clock.
+  assertEquals(timezoneForCoords(NaN, NaN), "UTC");
+  assertEquals(timezoneForCoords(999, 999), "UTC");
 });
 
 Deno.test("zonedTimeToUtc converts a Florida wall clock to the right instant", () => {

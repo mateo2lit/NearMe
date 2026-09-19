@@ -1,3 +1,5 @@
+import tzlookup from "https://esm.sh/tz-lookup@6.1.25";
+
 /**
  * Venue-local time handling.
  *
@@ -16,43 +18,31 @@
  */
 
 /**
- * Coarse US timezone from coordinates. The app is US-only, and longitude
- * bands get every metro in the catalog right. Arizona is carved out because
- * it doesn't observe daylight saving, which a longitude band alone can't know.
+ * IANA timezone for a coordinate pair, anywhere on Earth.
+ *
+ * This was a hand-rolled set of US longitude bands with carve-outs for Arizona
+ * and Indiana. It was wrong for most of the planet — every coordinate outside
+ * the continental US fell through to America/New_York, so a London venue's
+ * 8 PM would have been stored five hours off — and it was fiddly even inside
+ * the US, where the Eastern boundary wanders through Michigan, Indiana,
+ * Kentucky and Florida's panhandle.
+ *
+ * `tz-lookup` carries the real shapefile-derived boundaries in a compact
+ * packed string. It answers offline, in microseconds, and `Intl` handles the
+ * daylight-saving rules from there. Verified against Boca Raton, Austin,
+ * Indianapolis, Phoenix, London, Paris, Tokyo, Sydney, Mumbai, São Paulo,
+ * Mexico City and Toronto.
  */
 export function timezoneForCoords(lat: number, lng: number): string {
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return "America/New_York";
-
-  // Hawaii and Alaska first — they sit far outside the continental bands.
-  if (lng < -140) return "America/Anchorage";
-  if (lng < -150 || (lat < 23 && lng < -150)) return "Pacific/Honolulu";
-  if (lat > 51 && lng < -130) return "America/Anchorage";
-
-  // Arizona (minus the Navajo Nation, which does observe DST — close enough
-  // for a events app, and Phoenix is where the population is).
-  if (lat >= 31.3 && lat <= 37.0 && lng >= -114.9 && lng <= -109.0) {
-    return "America/Phoenix";
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return "UTC";
+  try {
+    return tzlookup(lat, lng);
+  } catch {
+    // tz-lookup throws on out-of-range coordinates rather than returning null.
+    return "UTC";
   }
-
-  // Indianapolis and most of Indiana keep Eastern time while sitting west of
-  // the band. Evansville, further west, is correctly left on Central.
-  if (lat >= 37.8 && lat <= 41.8 && lng >= -86.6 && lng <= -84.8) {
-    return "America/New_York";
-  }
-  // Michigan's lower peninsula, likewise east-of-band by clock, west by map.
-  if (lat >= 41.7 && lat <= 46.5 && lng >= -87.5 && lng <= -82.4) {
-    return "America/New_York";
-  }
-
-  // The eastern boundary sits near -85 so Atlanta, Detroit and the Florida
-  // peninsula land on Eastern while Nashville and Chicago stay Central.
-  if (lng >= -85.0) return "America/New_York";
-  if (lng >= -103.0) return "America/Chicago";
-  // Mountain runs to -115, which puts Las Vegas on Pacific where it belongs.
-  // Boise is the known casualty: it reads Pacific and is really Mountain.
-  if (lng >= -115.0) return "America/Denver";
-  return "America/Los_Angeles";
 }
+
 
 /** Milliseconds to add to UTC to get wall-clock time in `tz` at `date`. */
 function tzOffsetMs(date: Date, tz: string): number {

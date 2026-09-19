@@ -37,17 +37,25 @@ serve(async (req: Request) => {
     );
   }
 
-  // Accept lat/lng from request body, default to Boca Raton
-  let lat = 26.3587;
-  let lng = -80.0831;
+  // Coordinates are required. This used to default to Boca Raton, so a
+  // malformed request quietly crawled Florida on someone else's behalf.
+  let lat: number | null = null;
+  let lng: number | null = null;
   let radiusMeters = 16000;
 
   try {
     const body = await req.json();
-    if (body.lat) lat = body.lat;
-    if (body.lng) lng = body.lng;
+    if (typeof body.lat === "number") lat = body.lat;
+    if (typeof body.lng === "number") lng = body.lng;
     if (body.radius_meters) radiusMeters = body.radius_meters;
-  } catch { /* use defaults */ }
+  } catch { /* handled by the guard below */ }
+
+  if (lat == null || lng == null) {
+    return new Response(
+      JSON.stringify({ error: "lat and lng are required" }),
+      { status: 400, headers: { "Content-Type": "application/json" } },
+    );
+  }
 
   try {
     console.log(`[sync-venues] Starting for ${lat},${lng} radius=${radiusMeters}m`);

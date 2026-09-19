@@ -4,6 +4,7 @@ import { Event } from "../types";
 import EventImage from "./EventImage";
 import { effectiveStart, formatDistance } from "../services/events";
 import { bigEventBadge, cityFromAddress } from "../lib/bigEvents";
+import { currencyForCoords, formatPrice } from "../lib/money";
 import { COLORS, RADIUS, SPACING } from "../constants/theme";
 
 interface Props {
@@ -13,9 +14,11 @@ interface Props {
   onSave?: () => void;
 }
 
-function priceLabel(event: Event): string | null {
+function bigEventPrice(event: Event): string | null {
   if (event.price_min == null) return null;
-  return `From $${Math.round(event.price_min)}`;
+  // Currency follows the venue, not the developer: a London show is priced in
+  // pounds whatever the device's locale says.
+  return `From ${formatPrice(event.price_min, currencyForCoords(event.lat, event.lng))}`;
 }
 
 /**
@@ -29,7 +32,7 @@ export default function BigEventCard({ event, isSaved, onPress, onSave }: Props)
   const badge = bigEventBadge(event);
   const venueName = event.venue?.name || event.address?.split(",")[0] || "";
   const city = cityFromAddress(event.address);
-  const price = priceLabel(event);
+  const price = bigEventPrice(event);
 
   const where = [venueName, city].filter(Boolean).join(" · ");
   const distance = event.distance != null ? formatDistance(event.distance) : null;

@@ -162,6 +162,14 @@ const CITY_PRESETS: Array<{ label: string; lat: number; lng: number }> = [
   { label: "San Diego, CA", lat: 32.7157, lng: -117.1611 },
   { label: "Las Vegas, NV", lat: 36.1699, lng: -115.1398 },
   { label: "Minneapolis, MN", lat: 44.9778, lng: -93.2650 },
+  // Shortcuts are a convenience, not the limit: the address field below uses
+  // the device's own geocoder and resolves anywhere in the world. A few
+  // non-US entries make that obvious instead of implying a US-only app.
+  { label: "Toronto, ON", lat: 43.6532, lng: -79.3832 },
+  { label: "London, UK", lat: 51.5074, lng: -0.1278 },
+  { label: "Dublin, IE", lat: 53.3498, lng: -6.2603 },
+  { label: "Sydney, AU", lat: -33.8688, lng: 151.2093 },
+  { label: "Mexico City, MX", lat: 19.4326, lng: -99.1332 },
 ];
 
 export default function Onboarding() {
@@ -804,7 +812,7 @@ function LocationStep({
       >
         <Text style={styles.stepTitle}>Where should I look?</Text>
         <Text style={styles.stepSubtitle}>
-          Drop a pin, pick a city, or let me use your GPS. I'll search around it. You can change this anytime.
+          Type any city or address in the world, pick a shortcut, or let me use your GPS. You can change this anytime.
         </Text>
 
         {/* Current detected/chosen location */}

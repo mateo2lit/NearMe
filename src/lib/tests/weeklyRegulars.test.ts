@@ -4,6 +4,17 @@ import { Event } from "../../types";
 
 const NOW = new Date("2026-09-18T18:00:00"); // Friday 6pm local
 
+// effectiveStart() rolls recurring events forward against the real clock, not
+// against a `now` argument, so these fixtures only mean what they say if the
+// clock is pinned. Without this the suite passes on a Friday and fails on a
+// Saturday, which is how it broke when this session crossed midnight.
+beforeEach(() => {
+  jest.useFakeTimers().setSystemTime(NOW);
+});
+afterEach(() => {
+  jest.useRealTimers();
+});
+
 function make(overrides: Partial<Event>): Event {
   return {
     id: overrides.id || Math.random().toString(),

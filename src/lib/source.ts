@@ -28,6 +28,8 @@ export function getSourceDisplayName(
       return "Campus calendar";
     case "highschool":
       return "School sports";
+    case "google_events":
+      return "Google Events";
     case "scraped": {
       if (!sourceUrl) return "source";
       try {
