@@ -138,3 +138,46 @@ export function dedupeSameDayDuplicates(
     return { ...primary, additionalStartTimes };
   });
 }
+
+/**
+ * Collapse the same recurring listing scraped onto different days.
+ *
+ * "Bird Talk & Tour: Wetland Birds" existed three times near Boca on
+ * 2026-09-18 — every Thursday, and every Friday twice — because each scan of
+ * a venue page that never stated a day produced its own guess, under its own
+ * source_id. Same title, same venue, contradictory days: at most one can be
+ * right, so keep the one confirmed most recently.
+ *
+ * Deliberately narrow: recurring events only, exact normalized title, same
+ * venue. Two genuinely different shows at one venue keep their own rows.
+ */
+export function dedupeRecurringSeries(events: Event[]): Event[] {
+  const byKey = new Map<string, Event>();
+  const out: Event[] = [];
+  const indexOf = new Map<string, number>();
+
+  for (const e of events) {
+    if (!e.is_recurring) {
+      out.push(e);
+      continue;
+    }
+    const key = `${normalizeText(e.title)}|${venueKey(e)}`;
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, e);
+      indexOf.set(key, out.length);
+      out.push(e);
+      continue;
+    }
+    const existingSeen = existing.last_verified_at ? Date.parse(existing.last_verified_at) : 0;
+    const candidateSeen = e.last_verified_at ? Date.parse(e.last_verified_at) : 0;
+    if (candidateSeen > existingSeen) {
+      byKey.set(key, e);
+      out[indexOf.get(key)!] = e;
+      if (DEDUPE_DEBUG) {
+        console.log(`[dedupe] series "${e.title}" @ ${venueKey(e)}: kept fresher copy`);
+      }
+    }
+  }
+  return out;
+}

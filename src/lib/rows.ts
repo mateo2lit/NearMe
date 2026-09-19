@@ -1,4 +1,5 @@
 import { Event } from "../types";
+import { canClaimLive } from "./freshness";
 import {
   effectiveStart,
   isHappeningNowOrSoon,
@@ -39,9 +40,13 @@ function buildPickedForYou(picks: Event[]): RowBuilder {
 const HAPPENING_SOON_HOURS = 12;
 
 const happeningNow: RowBuilder = (events, now) => {
+  // canClaimLive gates this row: an event whose start time we invented, or
+  // whose listing nobody has confirmed in three weeks, cannot honestly be
+  // presented as live or imminent. That was three of the six bad listings
+  // reported on 2026-09-18.
   const filtered = preferOneOffs(sortByStartTime(
     events.filter((e) =>
-      isHappeningNowOrSoon(e, HAPPENING_SOON_HOURS, now)
+      isHappeningNowOrSoon(e, HAPPENING_SOON_HOURS, now) && canClaimLive(e, now)
     )
   ));
   return filtered.length >= 1

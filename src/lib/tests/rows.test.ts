@@ -27,6 +27,7 @@ function make(overrides: Partial<Event>): Event {
     ticket_url: null,
     attendance: null,
     source_url: null,
+    last_verified_at: new Date().toISOString(),
     tags: [],
     ...overrides,
   };

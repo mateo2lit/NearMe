@@ -3,7 +3,8 @@ import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY } from "./supabase";
 import { getCachedEvents, setCachedEvents } from "./eventCache";
 import { markSyncStart, markSyncDone, setSyncContext } from "../hooks/useSyncStatus";
 import { sortByStartTime as sortEventsByStart, isMultiDaySpan } from "../lib/time-windows";
-import { dedupeSameDayDuplicates as dedupeSameDay } from "../lib/dedupe";
+import { dedupeSameDayDuplicates as dedupeSameDay, dedupeRecurringSeries } from "../lib/dedupe";
+import { canClaimLive, filterExpired, hasUnknownTime } from "../lib/freshness";
 import {
   BIG_EVENT_MIN_RESULTS,
   BIG_EVENT_RADIUS_MILES,
@@ -21,15 +22,28 @@ export async function triggerLocationSync(
   lat: number,
   lng: number,
   radiusMiles: number = 15,
-  waitForCompletion: boolean = false
+  waitForCompletion: boolean = false,
+  opts?: { allowAi?: boolean }
 ): Promise<{ synced: boolean; events?: number }> {
+  // sync-location gates its entire AI-driven half — venue scraping, Reddit,
+  // Meetup, campus calendars, neighborhood lookup — behind `allow_ai`, and
+  // this client never sent it. Every user-triggered sync therefore ran
+  // Ticketmaster and Eventbrite only, and the scraped catalog went unrefreshed
+  // for months: on 2026-09-18, 340 of 572 events near Boca had not been
+  // re-verified in 60 days. The curator job was supposed to cover this and is
+  // a no-op without its Vault secrets, so nothing was refreshing them at all.
+  //
+  // Cost is still bounded server-side: syncPolicy enforces a 2-hour cooldown
+  // for healthy cells, 15 minutes for thin ones, and only spends when the cell
+  // actually needs a refresh.
+  const allowAi = opts?.allowAi ?? waitForCompletion;
   const request = fetch(`${SUPABASE_URL}/functions/v1/sync-location`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ lat, lng, radius_miles: radiusMiles }),
+    body: JSON.stringify({ lat, lng, radius_miles: radiusMiles, allow_ai: allowAi }),
   });
 
   const captureContext = (data: any) => {
@@ -157,7 +171,7 @@ export async function fetchNearbyEvents(
   }
 
   const discover = async (...args: Parameters<typeof rpcDiscover>) =>
-    filterPastEvents(await rpcDiscover(...args));
+    dedupeRecurringSeries(filterExpired(filterPastEvents(await rpcDiscover(...args))));
 
   // User has explicit filter intent if any of these are set. Any radius that
   // isn't exactly the default counts — including a wider 25mi pick, since the
@@ -176,7 +190,10 @@ export async function fetchNearbyEvents(
     const refetched = await discover(lat, lng, radiusMiles, categories, tags);
     events = mergeUnique(events, refetched);
   } else {
-    triggerLocationSync(lat, lng, Math.max(radiusMiles, 15), false);
+    // Background ping also asks for the AI half. The server decides whether to
+    // spend: a healthy cell is on a 2-hour cooldown, so this costs nothing
+    // most of the time, and keeps scraped listings from aging out otherwise.
+    triggerLocationSync(lat, lng, Math.max(radiusMiles, 15), false, { allowAi: true });
   }
 
   // RESPECT USER FILTERS: if user picked explicit categories/tags or a tight
@@ -294,10 +311,19 @@ export function getEventTimeLabel(event: Event): { label: string; color: string 
     return { label, color: "#7c6cf0" };
   }
 
+  // We only know it started if we know when it starts, and only believe it's
+  // still on if we've seen the listing recently.
+  if (hasUnknownTime(event)) {
+    return { label: "Time not listed", color: "#9090b0" };
+  }
+
   if (start <= now && end > now) {
     // Same six-hour sanity cap isHappeningNow uses. Without it, one stale row
     // with a bad end_time claims the loudest badge in the app indefinitely.
     if (now - start > MAX_LIVE_HOURS_MS) {
+      return { label: "Check with venue", color: "#9090b0" };
+    }
+    if (!canClaimLive(event)) {
       return { label: "Check with venue", color: "#9090b0" };
     }
     return { label: "HAPPENING NOW", color: "#ff6b6b" };

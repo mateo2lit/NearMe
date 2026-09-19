@@ -8,6 +8,7 @@ import { isHappeningNow } from "../lib/time-windows";
 import { CATEGORY_MAP } from "../constants/categories";
 import { TAG_MAP } from "../constants/tags";
 import { getEventImage } from "../constants/images";
+import { hasUnknownTime } from "../lib/freshness";
 import { COLORS, RADIUS } from "../constants/theme";
 import { FoundForYouChip } from "./FoundForYouChip";
 
@@ -79,7 +80,9 @@ export default function FeedCard({ event, isSaved, onPress, onSave, userInterest
   const dateStr = startDate.toLocaleDateString([], {
     weekday: "short", month: "short", day: "numeric",
   }).toUpperCase();
-  const timeStr = startDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const timeStr = hasUnknownTime(event)
+    ? "Time TBA"
+    : startDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   const altTimeStr = (event.additionalStartTimes || [])
     .map((iso) =>
       new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })

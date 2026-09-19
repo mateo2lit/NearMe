@@ -14,7 +14,13 @@ import { detectAdultSignal, isAdultVenue } from "../_shared/adult-filter.ts";
 import { validateScrapedEvent, normalizeDayOfWeek } from "../_shared/scraper-quality.ts";
 import { fetchMeetupEvents } from "../_shared/meetup-fetcher.ts";
 import { fetchCollegeSports } from "../_shared/espn-sports.ts";
-import { nextLocalOccurrence, timezoneForCoords } from "../_shared/local-time.ts";
+import {
+  nextLocalOccurrence,
+  parseWallClock,
+  timezoneForCoords,
+  TIME_TBA_TAG,
+  UNKNOWN_TIME_ANCHOR,
+} from "../_shared/local-time.ts";
 import {
   badgeTag,
   BIG_EVENT_TAG,
@@ -45,6 +51,16 @@ const VENUE_EXTRACT_SYSTEM = [
   "BE AGGRESSIVE: extract any recurring activity or special event, including happy",
   "hours and drink specials that come with entertainment.",
   "Set day_of_week for recurring nights and leave it null for one-time events.",
+  "",
+  "NEVER GUESS A TIME. Set `time` only when the page states one for THIS event.",
+  "If the page does not say what time it starts, set time to null. A guessed",
+  "time is worse than no time: users plan their evening around it and arrive to",
+  "a locked door. A bird walk listed with no time is not a 7pm event.",
+  "",
+  "Only set day_of_week when the page says the event repeats weekly ('every",
+  "Friday', 'Fridays at 8'). A list of dated one-off shows is NOT a weekly",
+  "series — leave day_of_week null for those, even when they all fall on the",
+  "same weekday. A summer concert series does not run forever.",
   "If nothing is found, return an empty list.",
 ].join("\n");
 
@@ -1118,12 +1134,24 @@ async function extractWithClaude(
       // effectiveStart() on the client always parses the rule. "weds",
       // "WEDNESDAY", "wednesdays" all collapse to "wednesday".
       const canonicalDay = normalizeDayOfWeek(item.day_of_week);
+      // A venue page that doesn't print a start time used to become a 7pm
+      // event, because the default hour was applied silently. Three of the
+      // six problem listings reported on 2026-09-18 were exactly this: a
+      // wetland bird walk, a museum astronomy talk and an aquarium feeding,
+      // all "7:00 PM" and none of them true. Keep the event — it's real and
+      // it's on that day — but mark the time as unknown and say so.
+      const hasStatedTime = !!parseWallClock(item.time);
       return {
+        time_unconfirmed: !hasStatedTime,
         title: item.title || "",
         description: item.description || "",
         category: item.category || "community",
         subcategory: item.subcategory || "event",
-        start_time: nextLocalOccurrence(canonicalDay, item.time, venueTimezone),
+        start_time: nextLocalOccurrence(
+          canonicalDay,
+          hasStatedTime ? item.time : UNKNOWN_TIME_ANCHOR,
+          venueTimezone,
+        ),
         end_time: null,
         is_recurring: !!canonicalDay,
         recurrence_rule: canonicalDay ? `every ${canonicalDay}` : null,
@@ -1312,6 +1340,7 @@ async function scanVenues(
               venue_category: venue.category,
               timezone: timezoneForCoords(venue.lat, venue.lng),
             });
+            if (e.time_unconfirmed) tags.push(TIME_TBA_TAG);
             passing.push({
               venue_id: venue.id, source: "scraped",
               source_id: `${venue.id}-${e.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 60)}`,

@@ -93,11 +93,13 @@ Deno.test("the bug that started this: 11 AM brunch is not 7 AM", () => {
   assertEquals(p.hour, 11, "must read as 11 AM in Boca, not 7 AM");
 });
 
-Deno.test("no listed time defaults to 7 PM local, not 7 PM UTC", () => {
+Deno.test("an unstated time anchors at midday local, never prime time", () => {
+  // The scraper now marks these with `time-tba` and the app shows "Time not
+  // listed". The anchor only decides sort order, but it must not read as a
+  // confident 7pm evening plan — that produced a "7:00 PM" wetland bird walk.
   const now = new Date("2026-09-17T16:00:00Z");
   const iso = nextLocalOccurrence("friday", null, "America/New_York", now);
-  assertEquals(iso, "2026-09-18T23:00:00.000Z");
-  assertEquals(partsInZone(new Date(iso!), "America/New_York").hour, 19);
+  assertEquals(partsInZone(new Date(iso!), "America/New_York").hour, 12);
 });
 
 Deno.test("today's occurrence holds until its hour passes locally", () => {

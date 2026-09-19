@@ -129,8 +129,26 @@ export function parseWallClock(time?: string | null): { hour: number; minute: nu
   return { hour, minute };
 }
 
-/** Hour used when a venue lists a recurring night with no time at all. */
-export const DEFAULT_EVENT_HOUR = 19;
+/**
+ * Anchor for events whose page never printed a start time.
+ *
+ * This used to be 7 PM, which reads as a confident evening plan. It produced
+ * a "7:00 PM" wetland bird walk and a "7:00 PM" aquarium feeding — both
+ * morning activities — and buried them in the catalog alongside real evening
+ * events. Midday is a neutral placeholder; the `time-tba` tag is what the app
+ * actually renders from, so the hour here only decides sort order.
+ */
+export const DEFAULT_EVENT_HOUR = 12;
+
+/** Midday, in the format parseWallClock expects. */
+export const UNKNOWN_TIME_ANCHOR = "12:00 PM";
+
+/**
+ * Marks an event whose start time we do not know. The app shows "Time not
+ * listed" instead of a made-up clock time, and never claims such an event is
+ * happening right now — we have no idea whether it is.
+ */
+export const TIME_TBA_TAG = "time-tba";
 
 /**
  * Next occurrence of `dayName` at `time`, both read as venue-local, returned

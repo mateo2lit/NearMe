@@ -18,6 +18,7 @@ import HeroCard from "../../src/components/HeroCard";
 import ViewOriginalLink from "../../src/components/ViewOriginalLink";
 import SourceTrust from "../../src/components/SourceTrust";
 import { isMultiDaySpan } from "../../src/lib/time-windows";
+import { hasUnknownTime } from "../../src/lib/freshness";
 import { COLORS, RADIUS, SPACING } from "../../src/constants/theme";
 import { Event } from "../../src/types";
 
@@ -159,10 +160,13 @@ export default function EventDetail() {
   const dayStr = multiDay
     ? "DATES"
     : start.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" }).toUpperCase();
+  const timeUnknown = hasUnknownTime(event);
   const timeStr = multiDay
     ? `${start.toLocaleDateString([], { month: "short", day: "numeric" })} – ${end!.toLocaleDateString([], { month: "short", day: "numeric" })}`
+    : timeUnknown
+    ? "Time not listed"
     : start.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  const endTimeStr = multiDay || !end
+  const endTimeStr = multiDay || timeUnknown || !end
     ? null
     : end.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
@@ -264,6 +268,11 @@ export default function EventDetail() {
             <View style={{ flex: 1 }}>
               <Text style={styles.blockLabel}>{dayStr}</Text>
               <Text style={styles.blockValue}>{timeStr}{endTimeStr ? ` – ${endTimeStr}` : ""}</Text>
+              {timeUnknown && (
+                <Text style={styles.blockExtra}>
+                  The listing didn't give a start time — check with the venue
+                </Text>
+              )}
               {event.is_recurring && (
                 <Text style={styles.blockExtra}>
                   {event.recurrence_rule || "Repeats"}

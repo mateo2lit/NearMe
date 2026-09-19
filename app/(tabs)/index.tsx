@@ -25,6 +25,8 @@ import { useWhenFilter, WhenFilter } from "../../src/hooks/useWhenFilter";
 import { COLORS, RADIUS, DEFAULT_RADIUS_MILES } from "../../src/constants/theme";
 import { Event } from "../../src/types";
 import { buildDiscoveryRows } from "../../src/lib/rows";
+import { nightlifeTonight } from "../../src/lib/nightlife";
+import { confidencePenalty } from "../../src/lib/freshness";
 import { isTonight, isTomorrow, isThisWeekend, effectiveStart, isHappeningNow, isHappeningNowOrSoon } from "../../src/lib/time-windows";
 import { useClaudeRefresh, applyRanking } from "../../src/hooks/useClaudeRefresh";
 import { ClaudeRefreshOverlay } from "../../src/components/ClaudeRefreshOverlay";
@@ -106,6 +108,9 @@ function eventUrgencyScore(e: Event, now: Date, moodKey: MoodKey): number {
   if (e.source === "scraped" || e.source === "claude") score += 4;
   if (e.is_free) score += 5;
   if (e.image_url) score += 3;
+  // Unknown start time, stale listing or no source page: still eligible, but
+  // it should not be the first thing the app puts in front of someone.
+  score -= confidencePenalty(e, now);
   return score;
 }
 
@@ -658,6 +663,20 @@ export default function DiscoverScreen() {
     />
   ) : null;
 
+  // Bars and restaurants are mostly weekly regulars, so the feed's preference
+  // for one-off events pushes them down — on a quiet Friday that made the app
+  // look emptier than the city was. They get a row that expects them.
+  const nightlifePool = useMemo(() => nightlifeTonight(whenFiltered, now), [whenFiltered]);
+  const nightlifeRow = nightlifePool.length >= 3 ? (
+    <DiscoveryRow
+      title="Bars & nightlife tonight"
+      icon="beer"
+      events={nightlifePool.slice(0, 12)}
+      onPressEvent={(e) => router.push(`/event/${e.id}`)}
+      onSeeAll={() => router.push("/nightlife")}
+    />
+  ) : null;
+
   const allForSearch = events;
   const liveCount = useCallback(
     (v: FilterValue) => {
@@ -833,9 +852,11 @@ export default function DiscoverScreen() {
                       onPressEvent={(e) => router.push(`/event/${e.id}`)}
                     />
                     {i === 0 && bigRow}
+                    {i === 1 && nightlifeRow}
                   </Fragment>
                 ))}
                 {rows.length === 0 && bigRow}
+                {rows.length <= 1 && nightlifeRow}
                 {flatFeed.length > 0 && (
                   <View style={styles.divider}>
                     <View style={styles.dividerLine} />

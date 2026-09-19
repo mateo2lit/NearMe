@@ -1,7 +1,7 @@
-import { View, Text, Image, StyleSheet, TouchableOpacity } from "react-native";
+import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { Event } from "../types";
-import { getEventImage } from "../constants/images";
+import EventImage from "./EventImage";
 import { effectiveStart, formatDistance } from "../services/events";
 import { bigEventBadge, cityFromAddress } from "../lib/bigEvents";
 import { COLORS, RADIUS, SPACING } from "../constants/theme";
@@ -24,15 +24,6 @@ function priceLabel(event: Event): string | null {
  * distance — the three things that decide whether the drive is worth it.
  */
 export default function BigEventCard({ event, isSaved, onPress, onSave }: Props) {
-  const imageUri = getEventImage(
-    event.image_url,
-    event.category,
-    event.subcategory,
-    event.title,
-    event.description,
-    event.tags,
-    `${event.venue?.name || ""} ${event.address || ""}`,
-  );
   const start = effectiveStart(event);
   const when = `${start.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })} · ${start.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
   const badge = bigEventBadge(event);
@@ -46,7 +37,7 @@ export default function BigEventCard({ event, isSaved, onPress, onSave }: Props)
   return (
     <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.9}>
       <View style={styles.imageWrap}>
-        <Image source={{ uri: imageUri }} style={styles.image} />
+        <EventImage event={event} style={styles.image} />
         {badge && (
           <View style={styles.badge}>
             <Text style={styles.badgeText}>{badge}</Text>

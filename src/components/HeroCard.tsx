@@ -2,7 +2,8 @@ import { View, Text, Image, StyleSheet, TouchableOpacity } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { Event } from "../types";
 import { CATEGORY_MAP } from "../constants/categories";
-import { getEventImage } from "../constants/images";
+import EventImage from "./EventImage";
+import { hasUnknownTime } from "../lib/freshness";
 import { COLORS, RADIUS } from "../constants/theme";
 import { effectiveStart } from "../services/events";
 
@@ -13,12 +14,13 @@ interface Props {
 
 export default function HeroCard({ event, onPress }: Props) {
   const category = CATEGORY_MAP[event.category];
-  const imageContext = `${event.venue?.name || ""} ${event.address || ""}`;
-  const imageUri = getEventImage(event.image_url, event.category, event.subcategory, event.title, event.description, event.tags, imageContext);
 
   const startDate = effectiveStart(event);
   const dayName = startDate.toLocaleDateString([], { weekday: "short" }).toUpperCase();
-  const timeStr = startDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  // Never print a clock time we invented. See lib/freshness.
+  const timeStr = hasUnknownTime(event)
+    ? "Time TBA"
+    : startDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
   const venueName = event.venue?.name || event.address?.split(",")[0] || "";
   const distanceStr = event.distance != null ? ` · ${event.distance.toFixed(1)} mi` : "";
@@ -26,7 +28,7 @@ export default function HeroCard({ event, onPress }: Props) {
   return (
     <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.9}>
       <View style={styles.imageWrap}>
-        <Image source={{ uri: imageUri }} style={styles.image} />
+        <EventImage event={event} style={styles.image} />
         {category && (
           <View style={styles.catGlyph}>
             <Ionicons name={category.icon as any} size={13} color="#fff" />
