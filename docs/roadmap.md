@@ -1,70 +1,124 @@
 # NearMe — state of play and what to work on next
 
-Written 2026-09-12. Audit of the whole system plus growth research. Revisit and
-prune this rather than letting it rot.
+Rewritten 2026-09-19. The growth and marketing sections below still stand from
+the 2026-09-12 audit; everything above them was re-verified against production
+this week. Revisit and prune this rather than letting it rot.
 
 ## Where things actually stand
 
 | Thing | State |
 |---|---|
 | App Store | 1.0.3 (May 9 build) released and live |
-| TestFlight | 1.1.2 build 27 — May 16 UI on the current backend |
-| Working tree | 1.1.2, UI reverted to 17a39f5, backend current |
-| Database | migrations 001–020 applied |
-| Edge Functions | sync-location, curator, claude-rank, claude-discover, sync-venues deployed |
-| Curator | running every 20 min, authenticated, writing events |
-| Catalog | ~2,400 events, strongest in South Florida |
-| Monetization | hard paywall, NearMe Pro Weekly $4.99 / Annual $79.99, 1 week free trial on both |
+| TestFlight | **1.4.0 build 32**, submitted 2026-09-19 |
+| Database | migrations 001–028 applied |
+| Edge Functions | sync-location, curator, claude-rank, claude-discover, sync-venues deployed. `sync-events` deleted |
+| Curator | still a no-op — Vault secrets were never set |
+| Catalog | Hollywood FL scores 351 upcoming / 118 tonight / 83% timed / 9 categories / 0% stale → `readyToCharge: true` |
+| Monetization | hard paywall, NearMe Pro Weekly $4.99 / Annual $79.99, 1 week free trial |
 
-`sync-events` is dead code. Nothing calls it. Delete it or wire it up.
+Two design documents cover this week's work and should be read before touching
+either area:
 
-## Gaps found in the audit, ranked
+- `docs/superpowers/specs/2026-09-17-big-events-design.md` — the Big Events tab
+- `docs/superpowers/specs/2026-09-18-event-supply-plan.md` — where events come
+  from, what's dead, and how the app works outside one metro
 
-### 1. There is no product analytics at all
-The revert removed `src/services/analytics.ts`. Nothing writes to the
-`product_events` table that migration 015 created. For a just-launched paid app
-this is the most expensive gap on the list: there is no way to see how many
-people reach the paywall, how many start a trial, where onboarding loses
-people, or whether anyone comes back on day 7.
+## Shipped since the last audit
 
-Minimum viable: `paywall_viewed`, `trial_started`, `onboarding_step_completed`,
-`feed_loaded`, `event_opened`, `ticket_clicked`, `app_open`. RevenueCat already
-covers the revenue side; this covers everything before the purchase.
+**Big Events (1.2.0).** Major sports and touring acts within 75 miles over 14
+days, as a Discover row and its own tab. Ticketmaster classification decides
+what counts; parking and suite add-ons are filtered out.
 
-### 2. There is no crash reporting
-No Sentry, no Crashlytics. Crashes are invisible beyond Apple's aggregate
-reports, which are delayed and unactionable. One bad event row taking down a
-screen would go unnoticed until a review mentions it.
+**Honesty pass (1.2.1 / 1.3.0).** The app no longer states what it doesn't
+know. Fabricated 7 PM start times are marked "Time not listed", multi-day
+spans render as date ranges instead of claiming HAPPENING NOW, listings unseen
+for weeks can't claim to be live, duplicate recurring rows collapse, and a
+failed image load shows a designed placeholder rather than a blank slab. A
+bug where every scraped event ran four hours early — the venue's local clock
+was being written as UTC — was fixed and backfilled.
 
-### 3. Google Places returns zero venues
-Confirmed in the 2026-09-11 logs: 14 calls, no error thrown, `[venues] 0 unique`.
-The code only checks for a `places` array and never inspects an error body, so a
-denied request is silent. Venue scraping is the only inventory NearMe owns that
-Eventbrite and Meetup do not have, and it has been dead since roughly May.
-Check billing and whether Places API (New) is enabled, then add error logging.
+**Supply rebuild (1.4.0).** Meetup's keyword buckets went from nine
+sports-only terms to 23 covering music, comedy, food, books, dance and art.
+Eventbrite was deleted (404 endpoint for years). Google Places discovery was
+moved off the most expensive SKU. Venue scraping now prefers structured feeds
+over asking a model to read HTML. A new civic source reads libraries, parks
+and museums. The app stopped assuming Florida: real worldwide timezones,
+city-derived subreddits, venue-local currency, no hardcoded coordinates.
+
+**Measurement.** Every sync now returns a `quality` block — upcoming count,
+share with confirmed times, share with source links, category spread,
+staleness, and a `readyToCharge` verdict — plus `source_errors` naming any
+source that failed. That reporting is what exposed Reddit's 403s within
+minutes of deploying.
+
+## What needs you, not code
+
+These are outside the repo and block real supply:
+
+1. **Raise the Google Places daily quota** (Cloud Console → Places API (New) →
+   Quotas → Nearby Search requests per day), and confirm billing is enabled.
+   Venue discovery has been dead since roughly May. Highest leverage item on
+   this page: discovery feeds the scraper, which feeds the civic and
+   structured-feed paths.
+2. **Reddit app credentials** — free, from reddit.com/prefs/apps. Set
+   `REDDIT_CLIENT_ID` and `REDDIT_CLIENT_SECRET`. Reddit 403s every
+   unauthenticated cloud request, so the source is currently off.
+3. **Curator Vault secrets** — `curator_service_key` and `curator_base_url`.
+   The pg_cron job has been a no-op since it was built.
+4. **Sentry DSN** (optional) — see gap #2 below.
+5. **SerpApi key** (optional, free 250 searches/month) — turns on Google
+   Events, which reaches Facebook Events and Eventbrite listings nothing else
+   can. Code is written and dormant.
+
+## Gaps, ranked
+
+### 1. There is still no product analytics
+Unchanged and still the most expensive gap. Nothing writes to `product_events`.
+There is no way to see how many people reach the paywall, start a trial, or
+come back on day 7. Minimum viable: `paywall_viewed`, `trial_started`,
+`onboarding_step_completed`, `feed_loaded`, `event_opened`, `ticket_clicked`,
+`app_open`.
+
+### 2. Crash reporting is installed but inert
+`@sentry/react-native` and `src/services/crashReporting.ts` exist, but
+`EXPO_PUBLIC_SENTRY_DSN` was never set in the EAS production environment, so
+`initCrashReporting()` returns early and releases report nothing. Its
+build-time source-map upload also failed the 1.2.0 build until
+`SENTRY_DISABLE_AUTO_UPLOAD` was set. To finish: create the Sentry project,
+set the DSN, add org/project/auth token, then remove that flag.
+
+### 3. Supply outside South Florida is unvalidated
+The code is now geography-agnostic and the timezone handling is verified
+against a dozen cities worldwide, but no full sync has been run in Austin,
+New York or London. Until that happens, claims about coverage elsewhere are
+theory. This is about ten minutes of work and should happen before any
+marketing outside Florida.
 
 ### 4. No push notifications
-Only local reminders for saved events, and those need a native build to fire at
-all. There is no push token registration anywhere, so there is no way to bring
-anyone back. See the growth section — this is also the single biggest retention
+Only local reminders for saved events. No push token registration anywhere, so
+there is no way to bring anyone back — still the single biggest retention
 lever.
 
 ### 5. No universal links
 `associatedDomains` is unset, so a shared event link opens a web page rather
-than the app. Sharing is the one organic loop the app already has and it
-currently leaks every click.
+than the app. Sharing is the one organic loop the app has and it leaks every
+click.
 
 ### 6. Taste never persists
 Saves, dismissals and ratings live in device storage only. A reinstall wipes
-everything a subscriber taught the app. That accumulated taste is exactly what
-makes cancelling feel expensive, and right now it is worth nothing.
+everything a subscriber taught the app — which is exactly what should make
+cancelling feel expensive.
 
-### 7. Smaller things
-- Settings still says the trial and prices live only in the store; verify the
-  annual introductory offer stays configured.
-- `docs/product-research-2026-08.md` was deleted; make sure nothing references it.
+### 7. Remaining supply work from the plan
+Not yet built, in rough value order: USDA farmers markets (free API, needs a
+key), Localist generalized beyond university calendars, LibCal-specific
+handling for library systems, and city open-data feeds. All free; see the
+supply plan for detail.
+
+### 8. Smaller things
 - No cost alerting on Google Cloud or Anthropic. Set a budget alert on both.
 - No staging environment. Every migration goes straight to production.
+- Verify the annual introductory offer stays configured in App Store Connect.
 
 ## Growth: what the evidence says
 
