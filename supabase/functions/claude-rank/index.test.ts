@@ -1,6 +1,7 @@
 import { assertEquals } from "https://deno.land/std@0.177.0/testing/asserts.ts";
 import { handleRankRequest } from "./index.ts";
 import { makeFakeSupabase } from "../_shared/test-fakes.ts";
+import { supportsEffort } from "../_shared/anthropic.ts";
 
 const fakeProfile = {
   goals: ["live-music","drinks-nightlife"],
@@ -72,4 +73,58 @@ Deno.test("rank — circuit off returns 503 with structured body", async () => {
     deps: { supabase: offSupabase as any, anthropic: fakeAnthropic as any, runWriter: async () => {} },
   });
   assertEquals(res.status, 503);
+});
+
+// A fake that enforces the one API rule this call site kept breaking: Haiku 4.5
+// rejects `output_config.effort` with a 400. The permissive fake above returns a
+// valid ranking no matter what is sent, so it never caught this.
+const strictAnthropic = {
+  messages: {
+    create: async (opts: any) => {
+      if (opts.output_config?.effort && !supportsEffort(opts.model)) {
+        throw new Error(
+          `400 {"type":"error","error":{"type":"invalid_request_error","message":"This model does not support the effort parameter."}}`,
+        );
+      }
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({ rankings: [
+            { event_id: "e1", rank_score: 95, blurb: "Live music + free" },
+            { event_id: "e2", rank_score: 5, blurb: "Active scene" },
+          ] }),
+        }],
+        usage: { input_tokens: 1000, output_tokens: 80, cache_read_input_tokens: 0 },
+        model: opts.model,
+      };
+    },
+  },
+};
+
+Deno.test("rank — survives a model that rejects the effort parameter", async () => {
+  const res = await handleRankRequest({
+    body: { user_id: "u1", event_ids: ["e1","e2"] },
+    deps: { supabase: fakeSupabase as any, anthropic: strictAnthropic as any, runWriter: async () => {} },
+  });
+  assertEquals(res.status, 200);
+  const json = await res.json();
+  // The whole point: a real ranking comes back instead of the empty array the
+  // swallowed 400 produced.
+  assertEquals(json.length, 2);
+  assertEquals(json[0].event_id, "e1");
+});
+
+Deno.test("rank — records an ok status when ranking succeeds", async () => {
+  const rows: any[] = [];
+  await handleRankRequest({
+    body: { user_id: "u1", event_ids: ["e1","e2"] },
+    deps: {
+      supabase: fakeSupabase as any,
+      anthropic: strictAnthropic as any,
+      runWriter: async (row: any) => { rows.push(row); },
+    },
+  });
+  assertEquals(rows.length, 1);
+  assertEquals(rows[0].status, "ok");
+  assertEquals(rows[0].error_message, null);
 });

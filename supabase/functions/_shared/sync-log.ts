@@ -15,6 +15,12 @@ export function syncLogFilter(geohash: string, gridKey: string): string {
 export function syncPolicy(input: {
   lastSync?: string | null;
   lastCount: number;
+  /**
+   * No longer consulted for `allowAi`: it existed to stop an unreadable
+   * sync_log from authorizing public AI spend, and a client can no longer
+   * authorize any. Kept so callers need not change and so re-widening the
+   * policy cannot silently drop the check.
+   */
   lookupFailed: boolean;
   isCurator: boolean;
   requestedAi: boolean;
@@ -26,12 +32,18 @@ export function syncPolicy(input: {
   const cooldownMs = healthy ? 2 * 3_600_000 : 15 * 60_000;
   // An empty completed sync still consumed upstream quota and must cool down.
   const inCooldown = !!input.lastSync && ageKnown && ageMs < cooldownMs;
-  const needsRefresh = !healthy || ageMs >= 2 * 3_600_000;
   return {
     inCooldown: !input.isCurator && inCooldown,
-    allowAi: input.requestedAi && (input.isCurator || (
-      !input.lookupFailed && ageKnown && !inCooldown && needsRefresh
-    )),
+    // Only a service-role curator run may spend on the LLM.
+    //
+    // Event data is not user-specific — a venue's calendar is the same for
+    // everyone in the cell — so the catalog should be built once per city and
+    // read by everyone. While a client could buy the fan-out, cost scaled with
+    // app opens rather than with cities: a thin feed dropped the cooldown to 15
+    // minutes and `needsRefresh` was automatically true whenever the cell was
+    // unhealthy, so every refresh bought ~30-70 Haiku extractions. One user
+    // testing for a day cost dollars. Clients now read; the curator writes.
+    allowAi: input.requestedAi && input.isCurator,
   };
 }
 

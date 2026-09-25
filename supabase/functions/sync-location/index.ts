@@ -3,6 +3,9 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.103.0";
 import { generateTags } from "../_shared/tag-generator.ts";
 import { hasServiceRole } from "../_shared/service-auth.ts";
 import { nextVenuesSyncedAt, shouldDiscoverVenues, syncLogFilter, syncPolicy } from "../_shared/sync-log.ts";
+import { eventSignature } from "../_shared/page-signature.ts";
+import { resetUsage, usageSummary } from "../_shared/ai-usage.ts";
+import { type NeighborhoodInfo, resolveNeighborhood } from "../_shared/neighborhood-cache.ts";
 import { writeVerifiedEvents } from "../_shared/event-writes.ts";
 import {
   mapTMCategory,
@@ -34,7 +37,7 @@ import {
 import { fetchPickleheadsEvents } from "../_shared/pickleheads.ts";
 import { fetchUniversityEvents } from "../_shared/university-events.ts";
 import { fetchHighSchoolSports } from "../_shared/highschool-sports.ts";
-import { callClaudeJson, callClaudeList, FAST_MODEL } from "../_shared/anthropic.ts";
+import { callClaudeJson, callClaudeList, EXTRACT_DESCRIPTION_MAX, FAST_MODEL } from "../_shared/anthropic.ts";
 
 // ─── Extraction prompts ──────────────────────────────────────
 // These are deliberately free of per-request values so they sit above the
@@ -72,7 +75,7 @@ const VENUE_EVENT_SCHEMA = {
   type: "object",
   properties: {
     title: { type: "string" },
-    description: { type: "string" },
+    description: { type: "string", maxLength: EXTRACT_DESCRIPTION_MAX },
     category: {
       type: "string",
       enum: ["nightlife", "music", "sports", "food", "arts", "community", "fitness", "outdoors", "movies"],
@@ -119,7 +122,7 @@ const REDDIT_EVENT_SCHEMA = {
   type: "object",
   properties: {
     title: { type: "string" },
-    description: { type: "string" },
+    description: { type: "string", maxLength: EXTRACT_DESCRIPTION_MAX },
     category: {
       type: "string",
       enum: ["music", "sports", "food", "nightlife", "arts", "community", "fitness", "outdoors", "movies"],
@@ -1364,7 +1367,13 @@ async function scanVenues(
           }
 
           const pageText = stripPageText(html);
-          pageHash = await sha1Text(pageText);
+          // Hash the event signature, not the raw text. Hashing raw text meant a
+          // rolling date banner or a cache-busting asset URL looked like a new
+          // page, so the unchanged-skip below almost never fired and every
+          // productive venue paid for a fresh extraction every 6 hours. One
+          // extra extraction per venue happens the first time this ships, as
+          // stored raw hashes will not match the new signature hashes.
+          pageHash = await sha1Text(eventSignature(pageText));
           sourcePageImage = extractPageImage(html, sourceUrl);
           if (previousHealth?.last_page_hash && previousHealth.last_page_hash === pageHash) {
             skippedUnchanged++;
@@ -1740,7 +1749,7 @@ async function fetchGoogleEventsRows(
 async function fetchNeighborhood(
   lat: number,
   lng: number,
-): Promise<{ neighborhood: string | null; nearby: string[] } | null> {
+): Promise<NeighborhoodInfo | null> {
   if (!ANTHROPIC_API_KEY) return null;
 
   const { data: parsed, error } = await callClaudeJson<{
@@ -1777,6 +1786,10 @@ async function fetchNeighborhood(
   }
   return {
     neighborhood: parsed.neighborhood || parsed.city || null,
+    // The model is already asked for `city` and the answer was being thrown
+    // away; the cache keeps it so a coarser label is available without a
+    // second call.
+    city: parsed.city || null,
     nearby: Array.isArray(parsed.nearby) ? parsed.nearby.slice(0, 3) : [],
   };
 }
@@ -1829,6 +1842,9 @@ serve(async (req: Request) => {
     // Edge instances are reused between requests, so a stale error from the
     // previous caller would otherwise be reported as this one's.
     for (const key of Object.keys(sourceErrors)) delete sourceErrors[key];
+    // Same reason: a reused isolate would otherwise bill the previous
+    // location's LLM spend to this one.
+    resetUsage();
 
     const body = await req.json();
     const lat = body.lat;
@@ -1985,7 +2001,36 @@ serve(async (req: Request) => {
     // Resolved first, not in parallel: it names the city, and both Reddit and
     // Meetup need that to search anywhere outside the handful of US metros
     // that used to be hardcoded. One small model call.
-    const neighborhoodInfo = allowAi ? await fetchNeighborhood(lat, lng) : null;
+    // Read-through cache. A coordinate's neighborhood is permanent, so the
+    // paid lookup runs once per cell instead of on every curator run — and a
+    // client, which may no longer spend on the LLM at all, still gets the name
+    // for free when the curator has already resolved it.
+    const neighborhoodKey = geohashEncode(lat, lng, 6);
+    const neighborhoodInfo = await resolveNeighborhood({
+      key: neighborhoodKey,
+      load: async (key) => {
+        const { data, error } = await supabase
+          .from("neighborhood_cache")
+          .select("neighborhood, city, nearby")
+          .eq("geohash", key)
+          .maybeSingle();
+        if (error) throw new Error(error.message);
+        return data
+          ? { neighborhood: data.neighborhood, city: data.city, nearby: data.nearby ?? [] }
+          : null;
+      },
+      store: async (key, value) => {
+        const { error } = await supabase.from("neighborhood_cache").upsert({
+          geohash: key,
+          neighborhood: value.neighborhood,
+          city: value.city,
+          nearby: value.nearby,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: "geohash" });
+        if (error) throw new Error(error.message);
+      },
+      fetch: () => (allowAi ? fetchNeighborhood(lat, lng) : Promise.resolve(null)),
+    });
     const cityName = neighborhoodInfo?.neighborhood || null;
 
     const [
@@ -2355,6 +2400,37 @@ serve(async (req: Request) => {
       }),
     }, { onConflict: "grid_key" });
     if (logWriteError) throw new Error(`sync log write failed: ${logWriteError.message}`);
+
+    // What this run spent on the LLM, per source.
+    //
+    // Never fatal: a spend record is worth having, but losing one must not
+    // fail a sync that already wrote its events. The console line is the
+    // fallback channel when the insert fails.
+    const spend = usageSummary();
+    console.log(
+      `[ai-spend] ${spend.calls} calls, ${spend.failures} failed, ` +
+      `$${spend.cost_usd.toFixed(4)} — ` +
+      (Object.entries(spend.by_label)
+        .sort((a, b) => b[1].cost_usd - a[1].cost_usd)
+        .map(([label, t]) => `${label}:${t.calls}/$${t.cost_usd.toFixed(4)}`)
+        .join(" ") || "no calls"),
+    );
+    if (spend.calls > 0) {
+      const { error: spendWriteError } = await supabase.from("ai_usage_log").insert({
+        grid_key: gridKey,
+        lat: gridLat,
+        lng: gridLng,
+        trigger_source: isCurator ? "curator" : "client",
+        calls: spend.calls,
+        failures: spend.failures,
+        input_tokens: spend.input_tokens,
+        output_tokens: spend.output_tokens,
+        cached_input_tokens: spend.cached_input_tokens,
+        cost_usd: spend.cost_usd,
+        by_label: spend.by_label,
+      });
+      if (spendWriteError) console.error(`[ai-spend] write failed: ${spendWriteError.message}`);
+    }
 
     return new Response(
       JSON.stringify({

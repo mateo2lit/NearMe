@@ -16,7 +16,7 @@
  *     (e.g. district hub) — single-hop fetch won't follow far.
  */
 
-import { callClaudeList, FAST_MODEL } from "./anthropic.ts";
+import { callClaudeList, EXTRACT_DESCRIPTION_MAX, FAST_MODEL } from "./anthropic.ts";
 
 const HS_SYSTEM = [
   "You extract upcoming high-school games and meets from an athletics website's text.",
@@ -35,7 +35,7 @@ const HS_EVENT_SCHEMA = {
   type: "object",
   properties: {
     title: { type: "string" },
-    description: { type: "string" },
+    description: { type: "string", maxLength: EXTRACT_DESCRIPTION_MAX },
     subcategory: {
       type: "string",
       enum: [

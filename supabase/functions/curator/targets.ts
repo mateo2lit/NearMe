@@ -108,20 +108,20 @@ export function pickCuratorTargets(
     });
   }
 
-  // Then every cell a client has ever caused a sync in.
-  for (const [key, row] of health) {
-    if (targets.has(key)) continue;
-    const { priority, reason } = classify(key);
-    targets.set(key, {
-      lat: row.lat!,
-      lng: row.lng!,
-      radiusMiles: safeRadius(defaultRadius),
-      // A cell nobody has a profile in is worth less than one somebody lives
-      // in, so it sorts after profile cells of the same health.
-      priority: priority + 0.5,
-      reason,
-    });
-  }
+  // Cells with no profile in them are deliberately not curated.
+  //
+  // Curation is a per-city cost that does not shrink with a city's user count,
+  // so every cell in this list is a standing monthly bill. Adding every cell a
+  // client had ever synced made that list grow without bound and never shrink:
+  // a city someone opened once while travelling kept being refreshed months
+  // later, at full price, for nobody. `sync_log` is still read above — it is
+  // what classifies a profile cell as starved, stale or healthy — it just no
+  // longer creates targets of its own.
+  //
+  // A profile's default location is the best demand signal in Postgres today.
+  // Gating on an active subscription would be better and is not yet possible:
+  // entitlement state lives in RevenueCat and in AsyncStorage on the device,
+  // and nothing writes it to the database.
 
   const attemptedAt = (target: CuratorTarget) => {
     const raw = health.get(gridKey(target.lat, target.lng))?.curator_attempted_at;

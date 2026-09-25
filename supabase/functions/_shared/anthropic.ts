@@ -48,6 +48,7 @@ export function calcCostUsd(model: Model, usage: UsageBreakdown): number {
 // Static import: Supabase Edge Runtime resolves URLs at deploy time (no
 // dynamic imports).
 import Anthropic from "https://esm.sh/@anthropic-ai/sdk@0.120.0";
+import { noteUsage } from "./ai-usage.ts";
 export const ANTHROPIC_SDK_URL = "https://esm.sh/@anthropic-ai/sdk@0.120.0";
 
 export async function loadAnthropic() {
@@ -109,6 +110,14 @@ export interface ClaudeJsonOptions {
    * Cache the system block. Only pass true when the system text is byte-stable
    * across calls — anything interpolated per-request (timestamps, a venue name,
    * a neighborhood) belongs in `prompt`, below the breakpoint.
+   *
+   * NOTE: on FAST_MODEL this currently does nothing, and making it work would
+   * cost money. Haiku 4.5's minimum cacheable prefix is 4,096 tokens; every
+   * system prompt here is 240–2,380, so no entry is ever written and no error
+   * is raised. Padding a prompt up to the minimum loses: 40 calls x 400 tokens
+   * is 16,000 tokens, against one 1.25x write (5,120) plus 39 0.1x reads
+   * (~15,974) once padded. Leave the flags alone unless the extra content is
+   * something the extraction wants anyway — see docs/llm-cost.md.
    */
   cacheSystem?: boolean;
 }
@@ -135,13 +144,31 @@ export async function callClaudeJson<T>(
   opts: ClaudeJsonOptions,
 ): Promise<ClaudeJsonResult<T>> {
   const empty = { input_tokens: 0, output_tokens: 0, cached_input_tokens: 0 };
-  const client = sharedClient();
-  if (!client) {
-    return { data: null, error: "ANTHROPIC_API_KEY not set", usage: empty, costUsd: 0 };
-  }
-
   const model = opts.model ?? FAST_MODEL;
   const tier: Model = model.includes("haiku") ? "haiku" : "sonnet";
+
+  /**
+   * The one exit point, so every outcome reaches the ledger.
+   *
+   * Recording here rather than at the six call sites is deliberate: each call
+   * site independently discarded `costUsd`, which is why the entire catalog
+   * build had no cost record and a surprise bill could not be attributed.
+   */
+  const finish = (result: ClaudeJsonResult<T>): ClaudeJsonResult<T> => {
+    noteUsage({
+      label: opts.label,
+      model,
+      usage: result.usage,
+      costUsd: result.costUsd,
+      error: result.error,
+    });
+    return result;
+  };
+
+  const client = sharedClient();
+  if (!client) {
+    return finish({ data: null, error: "ANTHROPIC_API_KEY not set", usage: empty, costUsd: 0 });
+  }
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
@@ -179,32 +206,74 @@ export async function callClaudeJson<T>(
 
     const text = resp.content?.find((c: any) => c.type === "text")?.text ?? "";
     if (!text) {
-      return { data: null, error: `${opts.label}: empty response`, usage, costUsd };
+      return finish({ data: null, error: `${opts.label}: empty response`, usage, costUsd });
     }
 
     try {
-      return { data: JSON.parse(text) as T, error: null, usage, costUsd };
+      return finish({ data: JSON.parse(text) as T, error: null, usage, costUsd });
     } catch (err) {
       // With a schema attached this should be unreachable; if it ever fires we
       // want it in the ledger rather than silently coerced to an empty list.
-      return {
+      return finish({
         data: null,
         error: `${opts.label}: unparseable JSON (${(err as Error).message})`,
         usage,
         costUsd,
-      };
+      });
     }
   } catch (err) {
     const aborted = (err as Error)?.name === "AbortError";
-    return {
+    return finish({
       data: null,
       error: `${opts.label}: ${aborted ? "timeout" : (err as Error).message}`,
       usage: empty,
       costUsd: 0,
-    };
+    });
   } finally {
     clearTimeout(timer);
   }
+}
+
+// ─── Output caps ─────────────────────────────────────────────
+// Output is billed at 5x input on Haiku, which makes it the dominant cost of
+// every extraction call.
+
+/**
+ * Longest `description` worth generating.
+ *
+ * `cleanText` in sync-location truncates descriptions to 500 characters before
+ * they reach the database, so anything past this was paid for at output rates
+ * and then deleted. Keep the two in step.
+ */
+export const EXTRACT_DESCRIPTION_MAX = 500;
+
+/**
+ * Ceiling on items in one extraction.
+ *
+ * A runaway guard, not a savings lever: a listings page that degenerates into
+ * hundreds of rows should stop, but a venue with a special every night plus a
+ * few one-offs must still fit, or this silently drops real events.
+ */
+export const EXTRACT_LIST_MAX_ITEMS = 25;
+
+/**
+ * The `{ [key]: [...] }` wrapper structured outputs require at the root.
+ *
+ * Exported and pure so the cap is testable — the schemas themselves live inside
+ * sync-location, which binds a port at import time and cannot be loaded from a
+ * test.
+ */
+export function listSchema(
+  itemSchema: Record<string, unknown>,
+  key: string,
+  maxItems: number = EXTRACT_LIST_MAX_ITEMS,
+): Record<string, unknown> {
+  return {
+    type: "object",
+    properties: { [key]: { type: "array", items: itemSchema, maxItems } },
+    required: [key],
+    additionalProperties: false,
+  };
 }
 
 /**
@@ -216,17 +285,14 @@ export async function callClaudeList<T>(
   opts: Omit<ClaudeJsonOptions, "schema"> & {
     itemSchema: Record<string, unknown>;
     key?: string;
+    /** Tighter than EXTRACT_LIST_MAX_ITEMS where a source warrants it. */
+    maxItems?: number;
   },
 ): Promise<ClaudeJsonResult<T[]>> {
   const key = opts.key ?? "items";
   const result = await callClaudeJson<Record<string, T[]>>({
     ...opts,
-    schema: {
-      type: "object",
-      properties: { [key]: { type: "array", items: opts.itemSchema } },
-      required: [key],
-      additionalProperties: false,
-    },
+    schema: listSchema(opts.itemSchema, key, opts.maxItems),
   });
   const list = result.data?.[key];
   return { ...result, data: Array.isArray(list) ? list : result.error ? null : [] };

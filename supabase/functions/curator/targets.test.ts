@@ -35,20 +35,6 @@ Deno.test("starved and stale cells outrank healthy ones", () => {
   assertEquals(targets.map((t) => t.reason), ["starved", "stale", "healthy"]);
 });
 
-Deno.test("one cell is never queued twice, and profile cells beat log-only cells", () => {
-  const targets = pickCuratorTargets(
-    [{ default_lat: 26.3683, default_lng: -80.0831 }],
-    [
-      // Same 0.1 cell as the profile above — must not produce a second target.
-      { lat: 26.37, lng: -80.08, synced_at: hoursAgo(30), event_count: 50 },
-      { lat: 25.77, lng: -80.19, synced_at: hoursAgo(30), event_count: 50 },
-    ],
-    { now: NOW },
-  );
-  assertEquals(targets.length, 2);
-  assertEquals(gridKey(targets[0].lat, targets[0].lng), "26.4,-80.1");
-});
-
 Deno.test("missing and Null Island coordinates are dropped", () => {
   const targets = pickCuratorTargets(
     [
@@ -81,7 +67,10 @@ Deno.test("curation radius never shrinks below what a user asked for", () => {
 });
 
 Deno.test("a recent failed or empty curator attempt rotates out for four hours", () => {
-  const targets = pickCuratorTargets([], [
+  const targets = pickCuratorTargets([
+    { default_lat: 26.4, default_lng: -80.1 },
+    { default_lat: 25.8, default_lng: -80.2 },
+  ], [
     { lat: 26.4, lng: -80.1, synced_at: hoursAgo(30), event_count: 0, curator_attempted_at: hoursAgo(1) },
     { lat: 25.8, lng: -80.2, synced_at: hoursAgo(1), event_count: 120 },
   ], { now: NOW });
@@ -89,7 +78,10 @@ Deno.test("a recent failed or empty curator attempt rotates out for four hours",
 });
 
 Deno.test("the oldest curator attempt wins so every market eventually gets a turn", () => {
-  const targets = pickCuratorTargets([], [
+  const targets = pickCuratorTargets([
+    { default_lat: 26.4, default_lng: -80.1 },
+    { default_lat: 25.8, default_lng: -80.2 },
+  ], [
     { lat: 26.4, lng: -80.1, synced_at: hoursAgo(5), event_count: 0, curator_attempted_at: hoursAgo(5) },
     { lat: 25.8, lng: -80.2, synced_at: hoursAgo(1), event_count: 120, curator_attempted_at: hoursAgo(48) },
   ], { now: NOW, limit: 1 });
@@ -111,4 +103,53 @@ Deno.test("invalid radii cannot send an unusable request to the sync function", 
     ], [], { now: NOW });
     assertEquals(Number.isFinite(target.radiusMiles) && target.radiusMiles >= 1 && target.radiusMiles <= 100, true);
   }
+});
+
+// ─── Curation is bounded by where users actually are ─────────
+// Curation cost is per city per day and is entirely independent of how many
+// users a city has, so every cell in the run list is a standing monthly bill.
+// The list used to also include every cell any client had ever caused a sync
+// in, which only grows: a city someone opened once while travelling was still
+// being curated months later, at full price, for nobody.
+//
+// A profile's default location is the honest demand signal available in
+// Postgres today. True subscriber-gating is not possible yet — entitlement
+// state lives in RevenueCat and AsyncStorage on the device and is never
+// written to the database.
+
+Deno.test("a cell nobody has a profile in is not curated", () => {
+  const targets = pickCuratorTargets(
+    [{ default_lat: 26.3683, default_lng: -80.0831 }],
+    [
+      // Same cell as the profile — one target, not two.
+      { lat: 26.37, lng: -80.08, synced_at: hoursAgo(30), event_count: 50 },
+      // A cell a client synced once, with no profile in it. Not our bill.
+      { lat: 25.77, lng: -80.19, synced_at: hoursAgo(30), event_count: 50 },
+    ],
+    { now: NOW },
+  );
+  assertEquals(targets.length, 1);
+  assertEquals(gridKey(targets[0].lat, targets[0].lng), "26.4,-80.1");
+});
+
+Deno.test("with no profiles at all there is nothing to curate", () => {
+  const targets = pickCuratorTargets(
+    [],
+    [
+      { lat: 25.77, lng: -80.19, synced_at: hoursAgo(2), event_count: 3 },
+      { lat: 40.71, lng: -74.01, synced_at: hoursAgo(9), event_count: 0 },
+    ],
+    { now: NOW },
+  );
+  assertEquals(targets.length, 0);
+});
+
+Deno.test("sync health still classifies the profile cells it covers", () => {
+  const targets = pickCuratorTargets(
+    [{ default_lat: 26.4, default_lng: -80.1 }],
+    [{ lat: 26.4, lng: -80.1, synced_at: hoursAgo(1), event_count: 3 }],
+    { now: NOW },
+  );
+  assertEquals(targets.length, 1);
+  assertEquals(targets[0].reason, "starved");
 });

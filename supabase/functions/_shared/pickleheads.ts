@@ -12,7 +12,7 @@
  * signal pickleball-specific source we have.
  */
 
-import { callClaudeList, FAST_MODEL } from "./anthropic.ts";
+import { callClaudeList, EXTRACT_DESCRIPTION_MAX, FAST_MODEL } from "./anthropic.ts";
 
 const PICKLE_SYSTEM = [
   "You extract pickleball events from Pickleheads city page text.",
@@ -29,7 +29,7 @@ const PICKLE_EVENT_SCHEMA = {
   type: "object",
   properties: {
     title: { type: "string" },
-    description: { type: "string" },
+    description: { type: "string", maxLength: EXTRACT_DESCRIPTION_MAX },
     venue_name: { type: ["string", "null"] },
     address_hint: { type: ["string", "null"] },
     start_time: { type: ["string", "null"], description: "ISO 8601 next occurrence, else null" },

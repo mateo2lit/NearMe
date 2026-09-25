@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.103.0";
-import { calcCostUsd, FAST_MODEL, makeAnthropicClient } from "../_shared/anthropic.ts";
+import { calcCostUsd, FAST_MODEL, makeAnthropicClient, supportsEffort } from "../_shared/anthropic.ts";
 
 interface RankRequest {
   body: { user_id?: string; event_ids?: string[] };
@@ -126,8 +126,13 @@ export async function handleRankRequest(req: RankRequest): Promise<Response> {
       ],
       // Ranking is a fast, high-volume path — low effort keeps it cheap, and
       // the schema guarantees the shape regardless.
+      //
+      // `effort` only ships to models that accept it. FAST_MODEL is Haiku 4.5,
+      // which 400s on the parameter; this call site bypassed `callClaudeJson`
+      // and so bypassed its guard, and the catch below logged the 400 as an
+      // "error" status and returned an empty ranking on every single request.
       output_config: {
-        effort: "low",
+        ...(supportsEffort(FAST_MODEL) ? { effort: "low" as const } : {}),
         format: { type: "json_schema", schema: RANK_SCHEMA },
       },
       messages: [{ role: "user", content: prompt }],

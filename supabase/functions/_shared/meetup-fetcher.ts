@@ -18,7 +18,7 @@
  *   - singles / social mixers
  */
 
-import { callClaudeList, FAST_MODEL } from "./anthropic.ts";
+import { callClaudeList, EXTRACT_DESCRIPTION_MAX, FAST_MODEL } from "./anthropic.ts";
 
 interface MeetupExtract {
   title: string;
@@ -199,7 +199,7 @@ const MEETUP_EVENT_SCHEMA = {
   type: "object",
   properties: {
     title: { type: "string" },
-    description: { type: "string" },
+    description: { type: "string", maxLength: EXTRACT_DESCRIPTION_MAX },
     category: {
       type: "string",
       enum: ["sports", "fitness", "community", "outdoors", "music", "nightlife", "food", "arts"],
