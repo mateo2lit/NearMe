@@ -1913,6 +1913,16 @@ serve(async (req: Request) => {
     // Curator runs are scheduled, not user-triggered, so the cooldown that
     // protects against per-open client cost does not apply to them.
     if (inCooldown) {
+      // A client asking for this cell is demand whether or not we do any work,
+      // so the curator's signal is refreshed before the early return. Writing
+      // it only on a completed sync would let a cell whose catalog is healthy
+      // — and therefore always in cooldown — look abandoned and age out.
+      if (!isCurator) {
+        const { error: demandError } = await supabase.from("sync_log")
+          .update({ last_client_sync_at: new Date().toISOString() })
+          .eq("grid_key", gridKey);
+        if (demandError) console.error(`[demand] write failed: ${demandError.message}`);
+      }
       return new Response(
         JSON.stringify({
           synced: false,
