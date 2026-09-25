@@ -192,8 +192,10 @@ export async function fetchNearbyEvents(
     events = mergeUnique(events, refetched);
   } else {
     // Background ping also asks for the AI half. The server decides whether to
-    // spend: a healthy cell is on a 2-hour cooldown, so this costs nothing
-    // most of the time, and keeps scraped listings from aging out otherwise.
+    // spend: a healthy cell is on a 6-hour cooldown, so this costs nothing most
+    // of the time, and keeps scraped listings from aging out otherwise. Since
+    // migration 032 unscheduled the curator, this is the only thing that
+    // refreshes them at all.
     triggerLocationSync(lat, lng, Math.max(radiusMiles, 15), false, { allowAi: true });
   }
 
