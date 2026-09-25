@@ -153,3 +153,63 @@ Deno.test("sync health still classifies the profile cells it covers", () => {
   assertEquals(targets.length, 1);
   assertEquals(targets[0].reason, "starved");
 });
+
+// ─── Recent client demand is the signal that actually exists ─
+// Gating purely on profile cells shipped broken: `user_profiles.default_lat`
+// is written only by `savePreferences`, and in production not one row has it,
+// so the curator selected zero targets. With clients also barred from LLM
+// spend, nothing was left to build the catalog at all.
+//
+// A recent *client* sync is the demand signal with real data behind it. It
+// keeps the cost bound that motivated the change — a city nobody has opened in
+// a week stops being curated, so the Seattle and Austin cells age out — while
+// guaranteeing the curator has targets wherever the app is actually used.
+
+Deno.test("a cell a client opened recently is curated even with no profile", () => {
+  const targets = pickCuratorTargets([], [
+    { lat: 26.4, lng: -80.1, synced_at: hoursAgo(2), event_count: 5, last_client_sync_at: hoursAgo(2) },
+  ], { now: NOW });
+  assertEquals(targets.length, 1);
+  assertEquals(gridKey(targets[0].lat, targets[0].lng), "26.4,-80.1");
+});
+
+Deno.test("a cell nobody has opened in a week ages out", () => {
+  const targets = pickCuratorTargets([], [
+    { lat: 47.6, lng: -122.3, synced_at: hoursAgo(24), event_count: 120, last_client_sync_at: hoursAgo(24 * 8) },
+  ], { now: NOW });
+  assertEquals(targets.length, 0);
+});
+
+Deno.test("a cell only the curator has ever touched is not a target", () => {
+  // synced_at is written by curator runs too, so it cannot stand in for demand.
+  const targets = pickCuratorTargets([], [
+    { lat: 30.3, lng: -97.7, synced_at: hoursAgo(1), event_count: 140, last_client_sync_at: null },
+  ], { now: NOW });
+  assertEquals(targets.length, 0);
+});
+
+Deno.test("a profile cell is still curated without any client sync", () => {
+  const targets = pickCuratorTargets(
+    [{ default_lat: 26.4, default_lng: -80.1 }],
+    [],
+    { now: NOW },
+  );
+  assertEquals(targets.length, 1);
+});
+
+Deno.test("a profile cell and a client sync in the same cell make one target", () => {
+  const targets = pickCuratorTargets(
+    [{ default_lat: 26.4, default_lng: -80.1 }],
+    [{ lat: 26.4, lng: -80.1, synced_at: hoursAgo(1), event_count: 5, last_client_sync_at: hoursAgo(1) }],
+    { now: NOW },
+  );
+  assertEquals(targets.length, 1);
+  assertEquals(targets[0].reason, "starved");
+});
+
+Deno.test("an unparseable client sync timestamp does not resurrect a cell", () => {
+  const targets = pickCuratorTargets([], [
+    { lat: 30.3, lng: -97.7, synced_at: hoursAgo(1), event_count: 140, last_client_sync_at: "not a date" },
+  ], { now: NOW });
+  assertEquals(targets.length, 0);
+});

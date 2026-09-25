@@ -2398,6 +2398,11 @@ serve(async (req: Request) => {
         venueCount,
         prior: priorVenuesSyncedAt,
       }),
+      // Demand signal for the curator's run list. Only a real client sync
+      // counts: `synced_at` above is updated by curator runs too, so using it
+      // would let the job keep itself alive forever on cities nobody opens.
+      // Left untouched on a curator run so the existing value can age out.
+      ...(isCurator ? {} : { last_client_sync_at: new Date().toISOString() }),
     }, { onConflict: "grid_key" });
     if (logWriteError) throw new Error(`sync log write failed: ${logWriteError.message}`);
 

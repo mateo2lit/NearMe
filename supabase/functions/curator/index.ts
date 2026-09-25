@@ -141,7 +141,7 @@ if (import.meta.main) {
           const rows: SyncLogRow[] = [];
           for (let offset = 0; ; offset += 500) {
             const { data, error } = await supabase.from("sync_log")
-              .select("lat, lng, synced_at, event_count, curator_attempted_at")
+              .select("lat, lng, synced_at, event_count, curator_attempted_at, last_client_sync_at")
               .order("grid_key").range(offset, offset + 499);
             if (error) throw new Error(`sync log lookup failed: ${error.message}`);
             rows.push(...(data ?? []));

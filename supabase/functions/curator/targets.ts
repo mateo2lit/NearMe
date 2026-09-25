@@ -13,6 +13,11 @@ export interface SyncLogRow {
   synced_at: string | null;
   event_count: number | null;
   curator_attempted_at?: string | null;
+  /**
+   * When a *client* last synced this cell. Distinct from `synced_at`, which a
+   * curator run also updates and therefore cannot stand in for demand.
+   */
+  last_client_sync_at?: string | null;
 }
 
 export interface ProfileRow {
@@ -38,6 +43,12 @@ export function gridKey(lat: number, lng: number): string {
 const FEED_FLOOR = 20;
 const STALE_HOURS = 6;
 const CURATOR_COOLDOWN_MS = 4 * 3_600_000;
+
+/**
+ * How recently a client must have opened the app in a cell for it to stay on
+ * the run list. A city nobody has opened in this long stops costing money.
+ */
+const CLIENT_DEMAND_WINDOW_MS = 7 * 86_400_000;
 
 function valid(lat: unknown, lng: unknown): boolean {
   return (
@@ -108,20 +119,43 @@ export function pickCuratorTargets(
     });
   }
 
-  // Cells with no profile in them are deliberately not curated.
+  // Then every cell a client has opened recently.
   //
   // Curation is a per-city cost that does not shrink with a city's user count,
-  // so every cell in this list is a standing monthly bill. Adding every cell a
-  // client had ever synced made that list grow without bound and never shrink:
-  // a city someone opened once while travelling kept being refreshed months
-  // later, at full price, for nobody. `sync_log` is still read above — it is
-  // what classifies a profile cell as starved, stale or healthy — it just no
-  // longer creates targets of its own.
+  // so every cell here is a standing monthly bill. Taking every cell a client
+  // had *ever* synced made that list grow without bound and never shrink: nine
+  // cities were being refreshed every four hours, including Seattle and Austin,
+  // for nobody. Gating on profile cells alone replaced that with zero targets,
+  // because `user_profiles.default_lat` is written only by `savePreferences`
+  // and no production row has ever carried one.
   //
-  // A profile's default location is the best demand signal in Postgres today.
-  // Gating on an active subscription would be better and is not yet possible:
-  // entitlement state lives in RevenueCat and in AsyncStorage on the device,
-  // and nothing writes it to the database.
+  // A recent client sync is the signal with real data behind it. `synced_at`
+  // cannot be used — a curator run updates it too, so the job would keep itself
+  // alive forever. `last_client_sync_at` is written only when the caller is not
+  // the curator.
+  //
+  // Gating on an active subscription would be better still and is not yet
+  // possible: entitlement state lives in RevenueCat and in AsyncStorage on the
+  // device, and nothing writes it to the database.
+  const openedRecently = (row: SyncLogRow): boolean => {
+    const at = row.last_client_sync_at ? Date.parse(row.last_client_sync_at) : NaN;
+    return Number.isFinite(at) && now - at < CLIENT_DEMAND_WINDOW_MS;
+  };
+
+  for (const [key, row] of health) {
+    if (targets.has(key)) continue;
+    if (!openedRecently(row)) continue;
+    const { priority, reason } = classify(key);
+    targets.set(key, {
+      lat: row.lat!,
+      lng: row.lng!,
+      radiusMiles: safeRadius(defaultRadius),
+      // A cell nobody has a profile in is worth less than one somebody lives
+      // in, so it sorts after profile cells of the same health.
+      priority: priority + 0.5,
+      reason,
+    });
+  }
 
   const attemptedAt = (target: CuratorTarget) => {
     const raw = health.get(gridKey(target.lat, target.lng))?.curator_attempted_at;
