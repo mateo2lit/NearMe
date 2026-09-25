@@ -21,7 +21,7 @@ which no subscription price survives.
 | 1 | Ranking no longer sends `effort` to Haiku 4.5, which rejects it | `claude-rank/index.ts` |
 | 2 | Only a service-role curator run may spend on the LLM | `_shared/sync-log.ts` |
 | 3 | Unchanged-page skip hashes an event *signature*, not raw text | `_shared/page-signature.ts` |
-| 4 | Curation bounded to cells where a profile actually lives | `curator/targets.ts` |
+| 4 | Curation bounded to cells a client opened in the last 7 days | `curator/targets.ts`, migration 031 |
 | 5 | Every LLM call is recorded per source | `_shared/ai-usage.ts`, migration 029 |
 | 6 | `description` capped at what the database actually keeps | `_shared/anthropic.ts` |
 | 7 | Neighborhood name resolved once per cell, not per run | `_shared/neighborhood-cache.ts`, migration 030 |
@@ -126,10 +126,10 @@ prerequisite for all of them.
 
 **Subscription state never reaches Postgres.** `src/services/subscription.ts`
 caches entitlement in AsyncStorage and RevenueCat is the source of truth, so
-curation cannot be gated on *paying* demand — only on a profile existing. A
-RevenueCat webhook writing entitlement state to `user_profiles` would let
-`pickCuratorTargets` gate properly and scale refresh frequency with subscriber
-count.
+curation cannot be gated on *paying* demand — only on recent client activity,
+which counts a trial user and a lapsed one alike. A RevenueCat webhook writing
+entitlement state to Postgres would let `pickCuratorTargets` gate on paying
+users and scale refresh frequency with subscriber count.
 
 ## Config worth checking
 
