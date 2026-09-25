@@ -17,18 +17,6 @@ const policy = (overrides: Partial<Parameters<typeof syncPolicy>[0]> = {}) => sy
   lastCount: 0, lookupFailed: false, isCurator: false, requestedAi: true, now, ...overrides,
 });
 
-// The cooldown still gates the free catalog read — it just no longer unlocks
-// paid AI work for a client. See "a client can never authorize AI spend" below.
-Deno.test("empty completed syncs still have a 15-minute cooldown", () => {
-  assertEquals(policy({ lastSync: new Date(now - 60_000).toISOString() }).inCooldown, true);
-  assertEquals(policy({ lastSync: new Date(now - 15 * 60_000).toISOString() }).inCooldown, false);
-});
-
-Deno.test("a healthy area holds its catalog for two hours", () => {
-  assertEquals(policy({ lastCount: 348, lastSync: new Date(now - 4 * 3_600_000).toISOString() }).inCooldown, false);
-  assertEquals(policy({ lastCount: 348, lastSync: new Date(now - 3_600_000).toISOString() }).inCooldown, true);
-});
-
 Deno.test("unreadable health or invalid timestamps cannot authorize public AI spend", () => {
   assertEquals(policy({ lookupFailed: true }).allowAi, false);
   assertEquals(policy({ lastSync: "invalid" }).allowAi, false);
@@ -39,26 +27,48 @@ Deno.test("a service-role curator may refresh inside the client cooldown", () =>
   assertEquals(policy({ isCurator: true, lastSync: new Date(now).toISOString() }), { inCooldown: false, allowAi: true });
 });
 
-// ─── Only the curator may spend on the LLM ───────────────────
-// Event data is not user-specific: a venue's calendar is identical for every
-// user in the cell. While a client could buy the AI fan-out, cost scaled with
-// app opens instead of with cities — a single developer refreshing a thin feed
-// every 15 minutes paid for ~30-70 Haiku extractions each time. Clients now
-// read the catalog the curator builds; only a service-role run writes it.
+// ─── The cooldown is the whole cost control ──────────────────
+// Collection is on-demand: a user opening the app and refreshing is the only
+// thing that spends on the LLM. The scheduled curator was unscheduled in 032
+// because it amortizes a city's catalog across its users, and with one user it
+// amortized across nobody while still billing on days the app was never opened.
+//
+// That makes this cooldown the only thing standing between a refresh button and
+// the bill. The old 15-minute window for a thin cell was set when a scheduled
+// job was believed to be doing the real work; it is far too tight now.
 
-Deno.test("a client can never authorize AI spend, however thin or stale the cell", () => {
-  // Each of these used to return allowAi: true.
-  assertEquals(policy({ lastSync: new Date(now - 15 * 60_000).toISOString() }).allowAi, false);
-  assertEquals(policy({ lastSync: new Date(now - 4 * 3_600_000).toISOString(), lastCount: 348 }).allowAi, false);
-  assertEquals(policy({ lastSync: null }).allowAi, false);
-  assertEquals(policy({ lastCount: 0 }).allowAi, false);
+Deno.test("a user refresh may spend once the cell is out of cooldown", () => {
+  assertEquals(policy({ lastCount: 50, lastSync: new Date(now - 7 * 3_600_000).toISOString() }).allowAi, true);
 });
 
-Deno.test("the curator still refreshes regardless of cell health", () => {
-  assertEquals(policy({ isCurator: true, lastCount: 0 }).allowAi, true);
-  assertEquals(policy({ isCurator: true, lastCount: 348, lastSync: new Date(now).toISOString() }).allowAi, true);
-  // A curator run that did not ask for AI still does not get it.
-  assertEquals(policy({ isCurator: true, requestedAi: false }).allowAi, false);
+Deno.test("a healthy cell holds for six hours", () => {
+  assertEquals(policy({ lastCount: 50, lastSync: new Date(now - 5 * 3_600_000).toISOString() }).allowAi, false);
+  assertEquals(policy({ lastCount: 50, lastSync: new Date(now - 6 * 3_600_000).toISOString() }).allowAi, true);
+});
+
+Deno.test("a thin cell retries sooner, but not every fifteen minutes", () => {
+  assertEquals(policy({ lastCount: 3, lastSync: new Date(now - 15 * 60_000).toISOString() }).allowAi, false);
+  assertEquals(policy({ lastCount: 3, lastSync: new Date(now - 1 * 3_600_000).toISOString() }).allowAi, false);
+  assertEquals(policy({ lastCount: 3, lastSync: new Date(now - 2 * 3_600_000).toISOString() }).allowAi, true);
+});
+
+Deno.test("a cell that has never synced may spend immediately", () => {
+  assertEquals(policy({ lastSync: null }).allowAi, true);
+});
+
+Deno.test("a client that did not ask for AI never gets it", () => {
+  assertEquals(policy({ requestedAi: false, lastSync: null }).allowAi, false);
+});
+
+Deno.test("unreadable health or an invalid timestamp cannot authorize spend", () => {
+  // This guard matters again now that a client can spend: an unreadable
+  // sync_log must not read as "never synced, go ahead".
+  assertEquals(policy({ lookupFailed: true, lastSync: null }).allowAi, false);
+  assertEquals(policy({ lastSync: "invalid" }).allowAi, false);
+});
+
+Deno.test("a curator run still bypasses the cooldown if it is ever rescheduled", () => {
+  assertEquals(policy({ isCurator: true, lastSync: new Date(now).toISOString() }), { inCooldown: false, allowAi: true });
 });
 
 // ─── Venue discovery TTL ─────────────────────────────────────

@@ -33,9 +33,10 @@ export async function triggerLocationSync(
   // re-verified in 60 days. The curator job was supposed to cover this and is
   // a no-op without its Vault secrets, so nothing was refreshing them at all.
   //
-  // Cost is still bounded server-side: syncPolicy enforces a 2-hour cooldown
-  // for healthy cells, 15 minutes for thin ones, and only spends when the cell
-  // actually needs a refresh.
+  // Cost is bounded server-side and nowhere else: scheduled curation was
+  // unscheduled in migration 032, so this call is the only thing that spends on
+  // the LLM. syncPolicy enforces a 6-hour cooldown for healthy cells and 2
+  // hours for thin ones — those two numbers are the whole cost control.
   const allowAi = opts?.allowAi ?? waitForCompletion;
   const request = fetch(`${SUPABASE_URL}/functions/v1/sync-location`, {
     method: "POST",

@@ -12,6 +12,18 @@ export function syncLogFilter(geohash: string, gridKey: string): string {
 }
 
 /** Server-owned cooldown and paid-source eligibility; client counts are hints. */
+/** Below this many events a cell is "thin" and retries sooner. */
+const HEALTHY_EVENT_FLOOR = 20;
+
+/**
+ * How long a cell rests between paid refreshes. These two numbers are the
+ * entire cost control for on-demand collection — one user refreshing all day
+ * can spend at most (24 / hours) fan-outs. The thin window was 15 minutes when
+ * a scheduled curator was believed to be doing the real work.
+ */
+const HEALTHY_COOLDOWN_MS = 6 * 3_600_000;
+const THIN_COOLDOWN_MS = 2 * 3_600_000;
+
 export function syncPolicy(input: {
   lastSync?: string | null;
   lastCount: number;
@@ -28,24 +40,29 @@ export function syncPolicy(input: {
 }) {
   const ageMs = input.lastSync ? (input.now ?? Date.now()) - Date.parse(input.lastSync) : Infinity;
   const ageKnown = !input.lastSync || Number.isFinite(ageMs);
-  const healthy = input.lastCount >= 20;
-  const cooldownMs = healthy ? 2 * 3_600_000 : 15 * 60_000;
+  const healthy = input.lastCount >= HEALTHY_EVENT_FLOOR;
+  const cooldownMs = healthy ? HEALTHY_COOLDOWN_MS : THIN_COOLDOWN_MS;
   // An empty completed sync still consumed upstream quota and must cool down.
   const inCooldown = !!input.lastSync && ageKnown && ageMs < cooldownMs;
+
   return {
     inCooldown: !input.isCurator && inCooldown,
-    // Only a service-role curator run may spend on the LLM.
+    // Collection is on-demand: opening the app and refreshing is the only thing
+    // that spends on the LLM. The scheduled curator was unscheduled in 032 — it
+    // exists to amortize a city's catalog across its users, and with one user it
+    // amortized across nobody while still billing on days the app was never
+    // opened. The `isCurator` branch stays so rescheduling it is a one-line
+    // change once a city has the user density to justify it.
     //
-    // Event data is not user-specific — a venue's calendar is the same for
-    // everyone in the cell — so the catalog should be built once per city and
-    // read by everyone. While a client could buy the fan-out, cost scaled with
-    // app opens rather than with cities: a thin feed dropped the cooldown to 15
-    // minutes and `needsRefresh` was automatically true whenever the cell was
-    // unhealthy, so every refresh bought ~30-70 Haiku extractions. One user
-    // testing for a day cost dollars. Clients now read; the curator writes.
-    allowAi: input.requestedAi && input.isCurator,
+    // That makes the cooldown above the only thing between the refresh button
+    // and the bill. `lookupFailed` is load-bearing again for the same reason: an
+    // unreadable sync_log must not read as "never synced, go ahead".
+    allowAi: input.requestedAi && (input.isCurator || (
+      !input.lookupFailed && ageKnown && !inCooldown
+    )),
   };
 }
+
 
 /**
  * Whether this crawl should pay Google Places to re-discover venues.
