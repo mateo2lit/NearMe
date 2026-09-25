@@ -64,8 +64,8 @@ mapping lives on the stack. Batching means persisting it, plus moving the
 policy for `expired` — a case that does not exist today.
 
 **The economics do not justify it yet.** The complexity is fixed; the saving
-scales with cities. At one city the whole curator load is roughly $1.20/day, of
-which only the venue half is safely batchable.
+scales with cities. At one curated cell the whole curator load is at most 6 runs
+a day, of which only the venue half is safely batchable.
 
 ### What would make it worth revisiting
 
@@ -88,6 +88,33 @@ Padding a prompt to qualify loses:
 
 It only pays if the added content is something we want anyway — few-shot
 examples that measurably improve extraction — and that needs an eval first.
+
+## What production was actually doing (measured 2026-09-25)
+
+`sync_log` held **20 cells**. Under the old `pickCuratorTargets` every one of
+them was a permanent target: Miami, Fort Lauderdale, Palm Beach, Boca, Detroit,
+Rochester MN, Phoenix, Utah, Austin, Seattle, the Bay Area and more. Nineteen
+had no user behind them.
+
+With 20 cells, a 4-hour per-cell cooldown and a 20-minute cron, there was always
+an eligible target, so the curator ran at its full ceiling — `cron.job_run_details`
+and `sync_log.curator_attempted_at` both show a different city in every
+consecutive 20-minute slot. That is **72 real runs a day**, roughly 2,900 Haiku
+calls, not the ~6 a single-city reading of the cooldown suggests.
+
+After the demand gate: 1 cell, 6 runs a day maximum. The other 19 keep their
+events and simply stop being refreshed; any of them rejoins on the first client
+sync there.
+
+Two corrections worth keeping, because both were reasoned from the code and both
+were wrong until the data was checked:
+
+- The 4-hour cooldown does *not* imply ~6 runs/day. It implies that only below
+  12 cells; at or above 12 the cron saturates.
+- `user_profiles.default_lat` looked like the demand signal and is written by
+  `savePreferences`, but **no production row has ever carried one**. Gating on it
+  produced zero targets and would have frozen the catalog. Check a column has
+  data before gating spend on it.
 
 ## The real blockers
 
