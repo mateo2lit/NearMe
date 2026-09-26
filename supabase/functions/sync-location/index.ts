@@ -1781,7 +1781,7 @@ async function loadGateSnapshot(lat: number, lng: number): Promise<GatePlan | nu
 async function discoverCivicSources(lat: number, lng: number, radiusMeters: number): Promise<number> {
   const found = await discoverOsmCivic({
     lat, lng, radiusMeters,
-    fetcher: (url, init) => timeoutFetch(url, { ...init, timeoutMs: 20000 }),
+    fetcher: (url, init) => timeoutFetch(url, { ...init, timeoutMs: 30000 }),
   });
   if (found.length === 0) return 0;
   const { error } = await supabase.from("civic_sources").upsert(

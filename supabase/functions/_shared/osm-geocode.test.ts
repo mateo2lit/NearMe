@@ -52,3 +52,9 @@ Deno.test("geocode — a refused Nominatim falls back to Photon and reports why"
   assertEquals(place?.stateCode, "FL");
   assertEquals(errors, ["nominatim HTTP 403"]);
 });
+
+Deno.test("photon — a city-layer feature is named by `name`, ahead of the county", () => {
+  assertEquals(parsePhoton({ features: [{ properties: {
+    name: "Phoenix", type: "city", osm_value: "city", county: "Maricopa County", state: "Arizona", countrycode: "US",
+  } }] }), { city: "Phoenix", state: "Arizona", stateCode: "AZ" });
+});

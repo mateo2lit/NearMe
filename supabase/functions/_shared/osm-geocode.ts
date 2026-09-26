@@ -51,7 +51,9 @@ const US_STATES: Record<string, string> = {
 export function parsePhoton(body: any): Place | null {
   const p = body?.features?.[0]?.properties;
   if (!p) return null;
-  const city = p.city ?? p.town ?? p.village ?? p.district ?? p.county ?? null;
+  // With layer=city the feature itself is the city, named in `name`.
+  const cityFeature = p.type === "city" || p.osm_value === "city" || p.osm_value === "town" ? p.name : null;
+  const city = p.city ?? cityFeature ?? p.town ?? p.village ?? p.district ?? p.county ?? null;
   const state = p.state ?? null;
   if (!city || !state) return null;
   const us = String(p.countrycode ?? "").toUpperCase() === "US";
@@ -79,6 +81,8 @@ export async function reverseGeocodeOsm(
     url.searchParams.set("lat", String(lat));
     url.searchParams.set("lon", String(lng));
     url.searchParams.set("lang", "en");
+    // Nearest *city* feature, not the nearest building or county.
+    url.searchParams.set("layer", "city");
     const res = await fetcher(url.toString(), {
       headers: { "User-Agent": NOMINATIM_USER_AGENT, "Accept": "application/json" },
       signal: AbortSignal.timeout(10_000),
@@ -107,7 +111,10 @@ async function nominatim(
     url.searchParams.set("format", "jsonv2");
     url.searchParams.set("lat", String(lat));
     url.searchParams.set("lon", String(lng));
-    url.searchParams.set("zoom", "10");
+    // 14 (suburb) rather than 10: at 10 Nominatim can answer with the county
+    // boundary, which named downtown Phoenix "Maricopa". The finer result
+    // still carries the city in its address.
+    url.searchParams.set("zoom", "14");
     url.searchParams.set("addressdetails", "1");
     url.searchParams.set("accept-language", "en");
     const res = await fetcher(url.toString(), {

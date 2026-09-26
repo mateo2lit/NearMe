@@ -32,6 +32,7 @@ export const OVERPASS_URLS = [
   "https://overpass-api.de/api/interpreter",
   "https://overpass.private.coffee/api/interpreter",
   "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+  "https://overpass.kumi.systems/api/interpreter",
 ];
 
 export const OVERPASS_USER_AGENT = "NearMe-events/1.0 (local events app; finds public library calendars)";
