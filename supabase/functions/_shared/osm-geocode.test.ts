@@ -32,3 +32,23 @@ Deno.test("osm geocode — identifies itself and never throws", async () => {
   assertEquals(await reverseGeocodeOsm(0, 0, async () => { throw new Error("offline"); }), null);
   assertEquals(await reverseGeocodeOsm(0, 0, async () => new Response("", { status: 429 })), null);
 });
+
+import { parsePhoton } from "./osm-geocode.ts";
+
+Deno.test("photon — a US city gets its state code from the name", () => {
+  assertEquals(parsePhoton({ features: [{ properties: { city: "Boca Raton", state: "Florida", countrycode: "US" } }] }),
+    { city: "Boca Raton", state: "Florida", stateCode: "FL" });
+  assertEquals(parsePhoton({ features: [{ properties: { town: "Kitchener", state: "Ontario", countrycode: "CA" } }] })?.stateCode,
+    null);
+  assertEquals(parsePhoton({ features: [] }), null);
+});
+
+Deno.test("geocode — a refused Nominatim falls back to Photon and reports why", async () => {
+  const errors: string[] = [];
+  const place = await reverseGeocodeOsm(26.37, -80.08, async (url) => {
+    if (url.includes("nominatim")) return new Response("blocked", { status: 403 });
+    return Response.json({ features: [{ properties: { city: "Boca Raton", state: "Florida", countrycode: "US" } }] });
+  }, (d) => errors.push(d));
+  assertEquals(place?.stateCode, "FL");
+  assertEquals(errors, ["nominatim HTTP 403"]);
+});

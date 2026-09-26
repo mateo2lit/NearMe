@@ -1893,9 +1893,10 @@ async function fetchNeighborhood(
   lat: number,
   lng: number,
 ): Promise<NeighborhoodInfo | null> {
-  const place = await reverseGeocodeOsm(lat, lng);
+  const failures: string[] = [];
+  const place = await reverseGeocodeOsm(lat, lng, fetch, (d) => failures.push(d));
   if (!place) {
-    noteSourceError("neighborhood", "OpenStreetMap reverse geocode returned nothing");
+    noteSourceError("neighborhood", failures.join("; ") || "no place found");
     return null;
   }
   // `neighborhood` is what the city-keyed sources search, so it is the city,

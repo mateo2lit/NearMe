@@ -31,10 +31,76 @@ export function parseNominatim(body: any): Place | null {
   return { city: String(city), state: String(state), stateCode };
 }
 
+/** Photon (Komoot): a second free OpenStreetMap geocoder, used when Nominatim refuses. */
+export const PHOTON_URL = "https://photon.komoot.io/reverse";
+
+const US_STATES: Record<string, string> = {
+  alabama: "AL", alaska: "AK", arizona: "AZ", arkansas: "AR", california: "CA",
+  colorado: "CO", connecticut: "CT", delaware: "DE", "district of columbia": "DC",
+  florida: "FL", georgia: "GA", hawaii: "HI", idaho: "ID", illinois: "IL",
+  indiana: "IN", iowa: "IA", kansas: "KS", kentucky: "KY", louisiana: "LA",
+  maine: "ME", maryland: "MD", massachusetts: "MA", michigan: "MI", minnesota: "MN",
+  mississippi: "MS", missouri: "MO", montana: "MT", nebraska: "NE", nevada: "NV",
+  "new hampshire": "NH", "new jersey": "NJ", "new mexico": "NM", "new york": "NY",
+  "north carolina": "NC", "north dakota": "ND", ohio: "OH", oklahoma: "OK",
+  oregon: "OR", pennsylvania: "PA", "rhode island": "RI", "south carolina": "SC",
+  "south dakota": "SD", tennessee: "TN", texas: "TX", utah: "UT", vermont: "VT",
+  virginia: "VA", washington: "WA", "west virginia": "WV", wisconsin: "WI", wyoming: "WY",
+};
+
+export function parsePhoton(body: any): Place | null {
+  const p = body?.features?.[0]?.properties;
+  if (!p) return null;
+  const city = p.city ?? p.town ?? p.village ?? p.district ?? p.county ?? null;
+  const state = p.state ?? null;
+  if (!city || !state) return null;
+  const us = String(p.countrycode ?? "").toUpperCase() === "US";
+  return {
+    city: String(city),
+    state: String(state),
+    stateCode: us ? US_STATES[String(state).toLowerCase()] ?? null : null,
+  };
+}
+
+/**
+ * Nominatim first, Photon second. `onError` receives why each one failed,
+ * because a silent null here leaves every city-keyed source searching nothing.
+ */
 export async function reverseGeocodeOsm(
   lat: number,
   lng: number,
   fetcher: (url: string, init: RequestInit) => Promise<Response> = fetch,
+  onError?: (detail: string) => void,
+): Promise<Place | null> {
+  const fromNominatim = await nominatim(lat, lng, fetcher, onError);
+  if (fromNominatim) return fromNominatim;
+  try {
+    const url = new URL(PHOTON_URL);
+    url.searchParams.set("lat", String(lat));
+    url.searchParams.set("lon", String(lng));
+    url.searchParams.set("lang", "en");
+    const res = await fetcher(url.toString(), {
+      headers: { "User-Agent": NOMINATIM_USER_AGENT, "Accept": "application/json" },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) {
+      onError?.(`photon HTTP ${res.status}`);
+      return null;
+    }
+    const place = parsePhoton(await res.json());
+    if (!place) onError?.("photon: no city/state");
+    return place;
+  } catch (err) {
+    onError?.(`photon ${(err as Error).message}`);
+    return null;
+  }
+}
+
+async function nominatim(
+  lat: number,
+  lng: number,
+  fetcher: (url: string, init: RequestInit) => Promise<Response>,
+  onError?: (detail: string) => void,
 ): Promise<Place | null> {
   try {
     const url = new URL(NOMINATIM_URL);
@@ -48,9 +114,15 @@ export async function reverseGeocodeOsm(
       headers: { "User-Agent": NOMINATIM_USER_AGENT, "Accept": "application/json" },
       signal: AbortSignal.timeout(10_000),
     });
-    if (!res.ok) return null;
-    return parseNominatim(await res.json());
-  } catch {
+    if (!res.ok) {
+      onError?.(`nominatim HTTP ${res.status}`);
+      return null;
+    }
+    const place = parseNominatim(await res.json());
+    if (!place) onError?.("nominatim: no city/state");
+    return place;
+  } catch (err) {
+    onError?.(`nominatim ${(err as Error).message}`);
     return null;
   }
 }
