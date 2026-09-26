@@ -19,6 +19,8 @@
  */
 
 import { callClaudeList, EXTRACT_DESCRIPTION_MAX, FAST_MODEL } from "./anthropic.ts";
+import { cacheDay, cachedExtraction, type ExtractionCacheIO } from "./extraction-cache.ts";
+import { eventSignature } from "./page-signature.ts";
 
 interface MeetupExtract {
   title: string;
@@ -37,6 +39,12 @@ interface MeetupOpts {
   lng: number;
   cityName?: string;
   anthropicKey: string;
+  /**
+   * Skips the model when a bucket's listing has not moved since the last
+   * extraction. 12 buckets re-extracted on every refresh was the largest
+   * remaining block of spend in a warm city.
+   */
+  cache?: ExtractionCacheIO;
   /**
    * Optional Meetup GraphQL API bearer token. When set, the fetcher uses
    * the official API instead of HTML scraping — bypasses Cloudflare and
@@ -373,10 +381,26 @@ export async function fetchMeetupEvents(opts: MeetupOpts): Promise<MeetupExtract
       console.log(`[meetup:${bucket.label}] no html (blocked or empty)`);
       continue;
     }
-    const events = await extractWithClaude(html, bucket.q, opts.cityName, {
-      category: bucket.category,
-      subcategory: bucket.subcategory,
-    });
+    const fallback = { category: bucket.category, subcategory: bucket.subcategory };
+    const run = () => extractWithClaude(html, bucket.q, opts.cityName, fallback)
+      .then((data) => ({ data, error: null }));
+    let events: MeetupExtract[];
+    if (opts.cache) {
+      // Meetup emits dated `start_time`, so the day stamp gives the entry a
+      // natural expiry and caps this source at one extraction per bucket
+      // per day however often the app is refreshed.
+      const cached = await cachedExtraction<MeetupExtract[]>({
+        key: `meetup:${bucket.label}:${opts.cityName ?? `${opts.lat},${opts.lng}`}:${cacheDay()}`,
+        signature: eventSignature(html),
+        load: opts.cache.load as never,
+        store: opts.cache.store as never,
+        extract: run,
+      });
+      events = cached.data ?? [];
+      if (cached.cached) console.log(`[meetup:${bucket.label}] served from cache`);
+    } else {
+      events = (await run()).data;
+    }
     console.log(`[meetup:${bucket.label}] ${events.length} events`);
     all.push(...events);
   }

@@ -1,5 +1,5 @@
 import { assertEquals } from "https://deno.land/std@0.177.0/testing/asserts.ts";
-import { handleRankRequest } from "./index.ts";
+import { handleRankRequest, MAX_EVENT_IDS } from "./index.ts";
 import { makeFakeSupabase } from "../_shared/test-fakes.ts";
 import { supportsEffort } from "../_shared/anthropic.ts";
 
@@ -127,4 +127,34 @@ Deno.test("rank — records an ok status when ranking succeeds", async () => {
   assertEquals(rows.length, 1);
   assertEquals(rows[0].status, "ok");
   assertEquals(rows[0].error_message, null);
+});
+
+// ─── Ranking is the one cost that scales per user ────────────
+// It runs on every feed load with no cooldown, so it is billed per refresh per
+// person rather than per city. 60 events at ~40 output tokens each saturated
+// the 2,000-token cap, and the feed only ever renders about 20.
+
+Deno.test("ranking asks for no more events than the feed can show", async () => {
+  let sent: any = null;
+  const capturing = {
+    messages: {
+      create: async (opts: any) => {
+        sent = opts;
+        return {
+          content: [{ type: "text", text: JSON.stringify({ rankings: [] }) }],
+          usage: { input_tokens: 10, output_tokens: 10, cache_read_input_tokens: 0 },
+          model: opts.model,
+        };
+      },
+    },
+  };
+  const manyIds = Array.from({ length: 60 }, (_, i) => `e${i}`);
+  await handleRankRequest({
+    body: { user_id: "u1", event_ids: manyIds },
+    deps: { supabase: fakeSupabase as any, anthropic: capturing as any, runWriter: async () => {} },
+  });
+
+  assertEquals(MAX_EVENT_IDS, 30);
+  // max_tokens sized to the cap: ~40 output tokens per ranked event plus slack.
+  assertEquals(sent.max_tokens, 1500);
 });

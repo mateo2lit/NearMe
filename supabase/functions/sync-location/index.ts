@@ -6,6 +6,7 @@ import { nextVenuesSyncedAt, shouldDiscoverVenues, syncLogFilter, syncPolicy } f
 import { eventSignature } from "../_shared/page-signature.ts";
 import { resetUsage, usageSummary } from "../_shared/ai-usage.ts";
 import { type NeighborhoodInfo, resolveNeighborhood } from "../_shared/neighborhood-cache.ts";
+import { supabaseExtractionCache } from "../_shared/extraction-cache.ts";
 import { writeVerifiedEvents } from "../_shared/event-writes.ts";
 import {
   mapTMCategory,
@@ -2015,6 +2016,7 @@ serve(async (req: Request) => {
     // paid lookup runs once per cell instead of on every curator run — and a
     // client, which may no longer spend on the LLM at all, still gets the name
     // for free when the curator has already resolved it.
+    const extractionCache = supabaseExtractionCache(supabase);
     const neighborhoodKey = geohashEncode(lat, lng, 6);
     const neighborhoodInfo = await resolveNeighborhood({
       key: neighborhoodKey,
@@ -2070,6 +2072,7 @@ serve(async (req: Request) => {
             cityName: cityName || undefined,
             anthropicKey: ANTHROPIC_API_KEY,
             meetupToken: MEETUP_API_TOKEN || undefined,
+            cache: extractionCache,
           })
         : Promise.resolve([]),
       fetchCollegeSports({
@@ -2097,6 +2100,7 @@ serve(async (req: Request) => {
             radiusMeters,
             googleApiKey: GOOGLE_API_KEY,
             anthropicKey: ANTHROPIC_API_KEY,
+            cache: extractionCache,
           })
         : Promise.resolve([]),
     ]);

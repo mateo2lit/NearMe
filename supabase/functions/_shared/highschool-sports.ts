@@ -17,6 +17,8 @@
  */
 
 import { callClaudeList, EXTRACT_DESCRIPTION_MAX, FAST_MODEL } from "./anthropic.ts";
+import { cacheDay, cachedExtraction, type ExtractionCacheIO } from "./extraction-cache.ts";
+import { eventSignature } from "./page-signature.ts";
 
 const HS_SYSTEM = [
   "You extract upcoming high-school games and meets from an athletics website's text.",
@@ -260,6 +262,8 @@ export interface HSOpts {
   radiusMeters: number;
   googleApiKey: string;
   anthropicKey: string;
+  /** Skips the model when a school's fixture list has not moved. */
+  cache?: ExtractionCacheIO;
 }
 
 export async function fetchHighSchoolSports(opts: HSOpts): Promise<HSExtract[]> {
@@ -314,12 +318,25 @@ export async function fetchHighSchoolSports(opts: HSOpts): Promise<HSExtract[]> 
       athleticsUrl = school.website;
     }
 
-    const events = await extractWithClaude(
-      athleticsHtml,
-      school.name,
-      school.address,
-      athleticsUrl || school.website,
-    );
+    const sourceUrl = athleticsUrl || school.website;
+    const run = () => extractWithClaude(athleticsHtml, school.name, school.address, sourceUrl)
+      .then((data) => ({ data, error: null }));
+    let events: HSExtract[];
+    if (opts.cache) {
+      // Fixtures carry dated `start_time`, so the day stamp expires the entry
+      // and caps this at one extraction per school per day.
+      const cached = await cachedExtraction<HSExtract[]>({
+        key: `hs:${school.name}:${cacheDay()}`,
+        signature: eventSignature(athleticsHtml),
+        load: opts.cache.load as never,
+        store: opts.cache.store as never,
+        extract: run,
+      });
+      events = cached.data ?? [];
+      if (cached.cached) console.log(`[hs] ${school.name} served from cache`);
+    } else {
+      events = (await run()).data;
+    }
     if (events.length > 0) {
       console.log(`[hs] ${events.length} from ${school.name}`);
     }

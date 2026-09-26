@@ -72,7 +72,17 @@ function buildRankPrompt(profile: ProfileRow, events: EventLite[]): string {
   ].join("\n");
 }
 
-const MAX_EVENT_IDS = 60;
+/**
+ * How many events one ranking call considers.
+ *
+ * Exported because it is a cost constant, not an implementation detail:
+ * ranking runs on every feed load with no cooldown, so it is the one line item
+ * billed per user per refresh rather than per city. At 60 events the response
+ * saturated the 2,000-token cap at roughly 40 output tokens each, and the feed
+ * renders about 20 — so more than half of what was generated was never shown.
+ * 30 keeps headroom for filtering without paying for a ranking nobody reads.
+ */
+export const MAX_EVENT_IDS = 30;
 
 export async function handleRankRequest(req: RankRequest): Promise<Response> {
   const { body, deps } = req;
@@ -120,7 +130,8 @@ export async function handleRankRequest(req: RankRequest): Promise<Response> {
   try {
     const resp = await deps.anthropic.messages.create({
       model: FAST_MODEL,
-      max_tokens: 2000,
+      // Sized to MAX_EVENT_IDS at ~40 output tokens per ranked event, plus slack.
+      max_tokens: 1500,
       system: [
         { type: "text", text: RANK_SYSTEM, cache_control: { type: "ephemeral" } },
       ],
