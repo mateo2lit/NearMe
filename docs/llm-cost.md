@@ -1,30 +1,59 @@
-# LLM cost: what we changed, and what we deliberately did not
+# LLM cost vs. event quality
 
-Written 2026-09-25, after a day that billed about $5 on one user.
+Written 2026-09-25, after a day that billed about $5 on a single user.
 
-## The shape of the problem
+**The goal both halves matter equally:** drive LLM cost per city down while
+holding or improving the quality of the events found nearby. A cheaper feed that
+is thinner is a failure. So is a rich feed that costs more per user than the
+subscription earns.
 
-Cost here is **per location refresh**, not per user. One refresh of a cell runs the
-whole fan-out in `sync-location` — neighborhood, Reddit, venue scans, Meetup
-buckets, pickleball, high school sports — which is ~30–70 Haiku 4.5 calls
-whether the app has one user or a thousand. Event data is not user-specific: a
-venue's calendar is the same for everyone in the cell.
+## The cost model
 
-So the catalog must be built **once per city** and read by everyone. Anything
-that lets a per-user action trigger LLM work makes cost scale with sessions,
-which no subscription price survives.
+Spend is **per grid cell, not per user**. One refresh runs the whole fan-out in
+`sync-location` — venue scans, Meetup, Reddit, pickleball, high-school sports,
+neighborhood — the same ~30-70 Haiku 4.5 calls whether the cell has one user or
+a thousand. A venue's calendar is identical for everyone there.
+
+So the first user in a city carries the entire catalog cost and everyone after
+them is nearly free. Estimated per user per month:
+
+| Users in the city | Catalog | Ranking | Total |
+|---|---|---|---|
+| 1 | $6-12 | ~$0.95 | **$8-14** |
+| 10 | $0.60-1.20 | ~$0.95 | **~$2-3** |
+| 100 | ~$0.10 | ~$0.95 | **~$2** |
+
+Growth has to be geographically dense for this to work. Scattered growth — one
+user in each of many cities — is the expensive case, and is the reason the gap
+gate below is the next thing to build.
+
+`claude-rank` is the one line item billed **per user** rather than per cell: it
+runs on every feed load with no cooldown.
+
+## Collection is on demand
+
+Nothing is collected on a schedule. The pg_cron curator was unscheduled in
+migration 032 (see `supabase/migrations/032_stop_scheduled_curation.sql` for
+what it was actually doing — 20 cells, ~72 fan-outs a day, mostly cities that
+were acceptance-test runs rather than users).
+
+Opening the app and refreshing is the only thing that spends, which makes the
+cooldown in `_shared/sync-log.ts` the **entire** cost control: 6 hours for a
+healthy cell, 2 hours for a thin one.
 
 ## Applied
 
 | # | Change | Where |
 |---|---|---|
 | 1 | Ranking no longer sends `effort` to Haiku 4.5, which rejects it | `claude-rank/index.ts` |
-| 2 | Only a service-role curator run may spend on the LLM | `_shared/sync-log.ts` |
+| 2 | Every LLM call recorded per source | `_shared/ai-usage.ts`, migration 029 |
 | 3 | Unchanged-page skip hashes an event *signature*, not raw text | `_shared/page-signature.ts` |
-| 4 | Curation bounded to cells a client opened in the last 7 days | `curator/targets.ts`, migration 031 |
-| 5 | Every LLM call is recorded per source | `_shared/ai-usage.ts`, migration 029 |
-| 6 | `description` capped at what the database actually keeps | `_shared/anthropic.ts` |
-| 7 | Neighborhood name resolved once per cell, not per run | `_shared/neighborhood-cache.ts`, migration 030 |
+| 4 | `description` capped at what the database actually keeps | `_shared/anthropic.ts` |
+| 5 | Neighborhood resolved once per geohash, not per run | `_shared/neighborhood-cache.ts`, migration 030 |
+| 6 | Real client demand recorded, distinct from `synced_at` | migration 031 |
+| 7 | Scheduled curation stopped; cooldowns retuned to 6h/2h | migration 032, `_shared/sync-log.ts` |
+| 8 | Meetup + high-school extractions cached by signature, day-stamped | `_shared/extraction-cache.ts`, migration 033 |
+| 9 | Ranking cut from 60 events to 30 | `claude-rank/index.ts` |
 
 On (1): three separate 400s in this codebase were swallowed as warnings — the
 `effort` parameter, an `array`-type field combined with `enum`, and the ranking
@@ -34,6 +63,35 @@ Treat a silent warning on an API call as a bug.
 On (3): the skip mechanism already existed and almost never fired, because a
 rolling date banner or a `?v=8891` asset URL made an unchanged page look new.
 The fix was a stable hash, not new machinery.
+
+## Next: the gap gate
+
+`assessCatalog` runs at `sync-location/index.ts:2391` — **after** the whole
+fan-out. It is a report card, not a gate. Moving it in front of the spending is
+the highest-leverage change left:
+
+1. Run the free/structured sources (Ticketmaster, Big Events, civic iCal, ESPN,
+   Google Events, university). $0.
+2. Assess the cell.
+3. `readyToCharge` with no gaps -> spend nothing.
+4. Gaps -> run only the LLM sources that close those named gaps. Missing
+   nightlife -> scan bars. Missing fitness -> two Meetup buckets, not twelve.
+
+Evidence: a live Boca sync on 2026-09-25 returned 61 upcoming, 10 tonight, 97%
+confirmed times, 8 categories, `readyToCharge: true`, `gaps: []` from the free
+sources alone — and would still have paid ~$0.20 for a fan-out it did not need.
+
+This turns the catalog from a fixed per-city cost into one proportional to what
+is missing, so it gets *better* with scattered growth. Estimated ~$1/user/month
+in well-covered cities.
+
+**Risk:** it makes `readyToCharge` load-bearing for money, not just for the
+scorecard. Too lenient and feeds go thin; too strict and it always spends. Tune
+against Boca plus one deliberately thin city, using measured numbers.
+
+Supporting move: more free structured feeds. Every event from a feed is one you
+never pay to extract, and feeds generalize across geography. Bandsintown,
+Songkick, library and parks iCal, city open-data portals.
 
 ## Deferred: batching the catalog build
 
