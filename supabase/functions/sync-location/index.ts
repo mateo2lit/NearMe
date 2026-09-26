@@ -1004,10 +1004,15 @@ function varietyHintBlock(hint?: { wellCovered: string[]; underRepresented: stri
 // here" (surfaced 2026-09-18 by the new per-source error reporting). Read-only
 // app-only OAuth still works and is free: create a "script" app at
 // https://www.reddit.com/prefs/apps and set REDDIT_CLIENT_ID and
-// REDDIT_CLIENT_SECRET. Without them this source skips itself and says why,
-// rather than pretending the city is quiet.
+// REDDIT_CLIENT_SECRET. NearMe is a paid app, and Reddit's Data API terms
+// treat commercial use separately, so confirm access covers it first.
+//
+// Without credentials the source is off: no worker is started and nothing is
+// logged per refresh. It used to log an error on every refresh, which read
+// as a fault rather than a source that was never switched on.
 const REDDIT_CLIENT_ID = Deno.env.get("REDDIT_CLIENT_ID");
 const REDDIT_CLIENT_SECRET = Deno.env.get("REDDIT_CLIENT_SECRET");
+const REDDIT_ENABLED = !!(REDDIT_CLIENT_ID && REDDIT_CLIENT_SECRET);
 
 let redditToken: { value: string; expiresAt: number } | null = null;
 
@@ -1054,14 +1059,10 @@ async function fetchRedditEvents(
   const subs = subredditsForLocation(lat, lng, opts?.cityName);
   if (!subs.length || !ANTHROPIC_API_KEY) return [];
 
+  if (!REDDIT_ENABLED) return [];
+  // A failed token exchange has already been reported by getRedditToken.
   const token = await getRedditToken();
-  if (!token) {
-    noteSourceError(
-      "reddit",
-      "no REDDIT_CLIENT_ID/SECRET set — Reddit blocks unauthenticated cloud requests with 403",
-    );
-    return [];
-  }
+  if (!token) return [];
 
   const events: any[] = [];
   for (const sub of subs.slice(0, 3)) {
@@ -2440,7 +2441,7 @@ serve(async (req: Request) => {
       uniRaw,
       hsRaw,
     ] = await Promise.all([
-      paidDue("reddit") ? pacedFan("reddit", cityScope) : Promise.resolve([]),
+      paidDue("reddit") && REDDIT_ENABLED ? pacedFan("reddit", cityScope) : Promise.resolve([]),
       paidDue("venues")
         ? fanOut(workerContext, "venues").then((r) => {
             if (!r.complete) workersComplete = false;
