@@ -27,6 +27,7 @@ import { planPaidSources, type GatePlan } from "../_shared/gap-gate.ts";
 import { isSourceDue, onCadence, type SourceRunStore } from "../_shared/source-cadence.ts";
 import { aiSpentLast24h, globalDailyUsd, globalDecision } from "../_shared/global-budget.ts";
 import { discoverOsmCivic } from "../_shared/osm-civic.ts";
+import { reverseGeocodeOsm } from "../_shared/osm-geocode.ts";
 import {
   nextLocalOccurrence,
   parseWallClock,
@@ -708,9 +709,12 @@ async function syncVenues(
         if (!firstError) firstError = String(detail).slice(0, 300);
         noteSourceError("google_places", detail);
         console.error(`[venues] ${type} rejected: ${response.status} ${JSON.stringify(data?.error ?? data).slice(0, 300)}`);
-        // The quota is per project per day: the other 13 types would fail
-        // the same way, so stop asking.
-        if (response.status === 429 || data?.error?.status === "RESOURCE_EXHAUSTED") {
+        // Quota, a deleted or invalid key, disabled billing: all
+        // project-wide, so the other 13 types would fail the same way. Stop
+        // asking, and back off (below) instead of retrying every refresh.
+        if ([400, 401, 403, 429].includes(response.status) ||
+            ["RESOURCE_EXHAUSTED", "PERMISSION_DENIED", "INVALID_ARGUMENT", "UNAUTHENTICATED"]
+              .includes(data?.error?.status)) {
           quotaExhausted = true;
           break;
         }
@@ -1876,62 +1880,29 @@ async function fetchGoogleEventsRows(
 }
 
 // ─── Neighborhood Discovery (B3) ─────────────────────────────
-// Quick Claude lookup for the neighborhood name. Returned to the client so
-// the loading UX can localize copy ("Reading Wynwood's mood…") and surface
-// the AI-robot-personal-agent voice that justifies the subscription.
+// The place name for a coordinate: shown to the client ("Reading Boca
+// Raton's mood…") and, more importantly, the city that Google Events, Reddit
+// and Meetup search.
+//
+// This used to be a Haiku call asking the model to name the area from bare
+// coordinates. On 2026-09-26 it named a Delray Beach cell "Fort Lauderdale",
+// 25 miles south, and every city-keyed source then searched the wrong city.
+// OpenStreetMap answers from map data, for free, with no key.
 
 async function fetchNeighborhood(
   lat: number,
   lng: number,
 ): Promise<NeighborhoodInfo | null> {
-  if (!ANTHROPIC_API_KEY) return null;
-
-  const { data: parsed, error } = await callClaudeJson<{
-    neighborhood: string | null;
-    city: string | null;
-    nearby: string[];
-  }>({
-    label: "neighborhood",
-    model: FAST_MODEL,
-    maxTokens: 400,
-    effort: "low",
-    timeoutMs: 15_000,
-    cacheSystem: true,
-    system:
-      "You name the neighborhood for a coordinate pair. If you don't know the " +
-      "specific neighborhood, use the most specific area name you do know; if " +
-      "only the city is known, use the city name as the neighborhood.",
-    schema: {
-      type: "object",
-      properties: {
-        neighborhood: { type: ["string", "null"] },
-        city: { type: ["string", "null"] },
-        nearby: { type: "array", items: { type: "string" } },
-      },
-      required: ["neighborhood", "city", "nearby"],
-      additionalProperties: false,
-    },
-    prompt: `Coordinates: ${lat}, ${lng}`,
-  });
-
-  if (error || !parsed) {
-    if (error) {
-      console.warn("[neighborhood]", error);
-      // Without a name, Google Events, Reddit and Meetup cannot search the
-      // city, so this failure has to be visible in the response.
-      noteSourceError("neighborhood", error);
-    }
+  const place = await reverseGeocodeOsm(lat, lng);
+  if (!place) {
+    noteSourceError("neighborhood", "OpenStreetMap reverse geocode returned nothing");
     return null;
   }
-  return {
-    neighborhood: parsed.neighborhood || parsed.city || null,
-    // The model is already asked for `city` and the answer was being thrown
-    // away; the cache keeps it so a coarser label is available without a
-    // second call.
-    city: parsed.city || null,
-    nearby: Array.isArray(parsed.nearby) ? parsed.nearby.slice(0, 3) : [],
-  };
+  // `neighborhood` is what the city-keyed sources search, so it is the city,
+  // not a suburb name nobody writes event listings under.
+  return { neighborhood: place.city, city: place.city, nearby: [] };
 }
+
 
 // ─── Rate Limiting ───────────────────────────────────────────
 
@@ -2269,7 +2240,9 @@ serve(async (req: Request) => {
         }, { onConflict: "geohash" });
         if (error) throw new Error(error.message);
       },
-      fetch: () => (allowAi ? fetchNeighborhood(lat, lng) : Promise.resolve(null)),
+      // Free now (OpenStreetMap), so even a free-only refresh like the
+      // onboarding preview gets a city name for Google Events.
+      fetch: () => fetchNeighborhood(lat, lng),
     });
     const cityName = neighborhoodInfo?.neighborhood || null;
 

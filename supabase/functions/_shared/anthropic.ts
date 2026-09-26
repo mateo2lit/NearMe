@@ -189,7 +189,7 @@ export async function callClaudeJson<T>(
         ...(system ? { system } : {}),
         messages: [{ role: "user", content: opts.prompt }],
         output_config: {
-          format: { type: "json_schema", schema: opts.schema },
+          format: { type: "json_schema", schema: toApiSchema(opts.schema) },
           // Only send effort where the model accepts it — see supportsEffort.
           ...(opts.effort && supportsEffort(model) ? { effort: opts.effort } : {}),
         },
@@ -232,6 +232,36 @@ export async function callClaudeJson<T>(
   } finally {
     clearTimeout(timer);
   }
+}
+
+// ─── Schema boundary ─────────────────────────────────────────
+
+/**
+ * Keywords structured outputs rejects with a 400. The docs list numerical
+ * constraints (minimum, maximum, multipleOf), string constraints (minLength,
+ * maxLength) and array maxItems as unsupported, and minItems only as 0 or 1.
+ *
+ * `maxItems` in listSchema made every venue and Meetup extraction fail from
+ * the day it shipped; the 400 was logged as a warning and read as "no events"
+ * (production logs, 2026-09-26). The item schemas still carry these keywords
+ * as documentation of intent; this strips them at the one place a schema
+ * leaves the process, and callers enforce the limits after parsing.
+ */
+const UNSUPPORTED_SCHEMA_KEYS = new Set([
+  "maxItems", "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum",
+  "multipleOf", "minLength", "maxLength",
+]);
+
+export function toApiSchema<T>(schema: T): T {
+  if (Array.isArray(schema)) return schema.map((s) => toApiSchema(s)) as unknown as T;
+  if (!schema || typeof schema !== "object") return schema;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(schema as Record<string, unknown>)) {
+    if (UNSUPPORTED_SCHEMA_KEYS.has(key)) continue;
+    if (key === "minItems" && typeof value === "number" && value > 1) continue;
+    out[key] = toApiSchema(value);
+  }
+  return out as T;
 }
 
 // ─── Output caps ─────────────────────────────────────────────
@@ -295,5 +325,7 @@ export async function callClaudeList<T>(
     schema: listSchema(opts.itemSchema, key, opts.maxItems),
   });
   const list = result.data?.[key];
-  return { ...result, data: Array.isArray(list) ? list : result.error ? null : [] };
+  // The API cannot enforce maxItems (see toApiSchema), so the cap is applied here.
+  const cap = opts.maxItems ?? EXTRACT_LIST_MAX_ITEMS;
+  return { ...result, data: Array.isArray(list) ? list.slice(0, cap) : result.error ? null : [] };
 }

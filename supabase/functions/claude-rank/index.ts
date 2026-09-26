@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.103.0";
-import { calcCostUsd, FAST_MODEL, makeAnthropicClient, supportsEffort } from "../_shared/anthropic.ts";
+import { calcCostUsd, FAST_MODEL, makeAnthropicClient, supportsEffort, toApiSchema } from "../_shared/anthropic.ts";
 import {
   aiSpentLast24h,
   globalDailyUsd,
@@ -273,7 +273,9 @@ export async function handleRankRequest(req: RankRequest): Promise<Response> {
       // "error" status and returned an empty ranking on every single request.
       output_config: {
         ...(supportsEffort(FAST_MODEL) ? { effort: "low" as const } : {}),
-        format: { type: "json_schema", schema: RANK_SCHEMA },
+        // Stripped of minimum/maximum/maxLength, which structured outputs
+        // rejects; the parse below clamps the score and trims the blurb.
+        format: { type: "json_schema", schema: toApiSchema(RANK_SCHEMA) },
       },
       messages: [{ role: "user", content: prompt }],
     });
@@ -289,7 +291,7 @@ export async function handleRankRequest(req: RankRequest): Promise<Response> {
       .filter((p) => typeof p?.event_id === "string" && typeof p?.rank_score === "number" && sent.has(p.event_id))
       .map((p) => ({
         event_id: p.event_id,
-        rank_score: p.rank_score,
+        rank_score: Math.min(100, Math.max(0, p.rank_score)),
         blurb: typeof p.blurb === "string" ? p.blurb.slice(0, 80) : "",
       }));
 

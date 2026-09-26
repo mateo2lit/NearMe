@@ -126,3 +126,51 @@ Deno.test("the item cap is generous enough not to truncate a real venue", () => 
   // still fit, or this stops being a free win and starts dropping events.
   assertEquals(EXTRACT_LIST_MAX_ITEMS >= 20, true);
 });
+
+// ─── The schema boundary ─────────────────────────────────────
+// Structured outputs 400s on maxItems, numeric and string-length constraints.
+// listSchema's maxItems made every venue and Meetup extraction fail in
+// production until 2026-09-26.
+import { toApiSchema } from "./anthropic.ts";
+
+const UNSUPPORTED = ["maxItems", "minimum", "maximum", "minLength", "maxLength", "multipleOf"];
+function findUnsupported(schema: unknown, path = "$"): string[] {
+  if (!schema || typeof schema !== "object") return [];
+  const hits: string[] = [];
+  for (const [k, v] of Object.entries(schema as Record<string, unknown>)) {
+    if (UNSUPPORTED.includes(k)) hits.push(`${path}.${k}`);
+    if (k === "minItems" && typeof v === "number" && v > 1) hits.push(`${path}.minItems`);
+    hits.push(...findUnsupported(v, `${path}.${k}`));
+  }
+  return hits;
+}
+
+Deno.test("toApiSchema strips every keyword the API rejects, at any depth", () => {
+  const schema = listSchema({
+    type: "object",
+    properties: {
+      title: { type: "string", maxLength: 140, minLength: 1 },
+      score: { type: "number", minimum: 0, maximum: 100 },
+      tags: { type: "array", items: { type: "string" }, minItems: 3, maxItems: 9 },
+      name: { type: ["string", "null"] },
+    },
+    required: ["title"],
+    additionalProperties: false,
+  }, "events");
+  assertEquals(findUnsupported(schema).length > 0, true);
+  const clean = toApiSchema(schema);
+  assertEquals(findUnsupported(clean), []);
+  // Everything the API does accept survives untouched.
+  const item = (clean as any).properties.events.items;
+  assertEquals(item.properties.name.type, ["string", "null"]);
+  assertEquals(item.required, ["title"]);
+  assertEquals(item.additionalProperties, false);
+  assertEquals((clean as any).properties.events.type, "array");
+});
+
+Deno.test("toApiSchema keeps minItems 0 or 1 and does not mutate its input", () => {
+  const input = { type: "array", items: { type: "string" }, minItems: 1, maxItems: 5 };
+  const clean: unknown = toApiSchema(input);
+  assertEquals(clean, { type: "array", items: { type: "string" }, minItems: 1 });
+  assertEquals(input.maxItems, 5);
+});

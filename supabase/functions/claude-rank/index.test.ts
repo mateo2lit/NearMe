@@ -315,3 +315,32 @@ Deno.test("rank limits — the service-wide daily cap stops ranking too", async 
   });
   assertEquals(a.calls.length, 0);
 });
+
+// The real API rejects minimum/maximum/maxLength with a 400. This fake does too.
+Deno.test("rank — sends a schema structured outputs accepts, and clamps the score itself", async () => {
+  const strictSchema = {
+    messages: {
+      create: async (opts: any) => {
+        const text = JSON.stringify(opts.output_config.format.schema);
+        for (const bad of ["maximum", "minimum", "maxLength", "maxItems"]) {
+          if (text.includes(`"${bad}"`)) throw new Error(`400 schema: '${bad}' is not supported`);
+        }
+        return {
+          content: [{ type: "text", text: JSON.stringify({ rankings: [
+            { event_id: "e1", rank_score: 140, blurb: "x".repeat(200) },
+          ] }) }],
+          usage: { input_tokens: 10, output_tokens: 10, cache_read_input_tokens: 0 },
+          model: opts.model,
+        };
+      },
+    },
+  };
+  const res = await handleRankRequest({
+    body: { user_id: "u1", event_ids: ["e1"] },
+    deps: { supabase: fakeSupabase as any, anthropic: strictSchema as any, runWriter: async () => {} },
+  });
+  const json = await res.json();
+  assertEquals(json.length, 1);
+  assertEquals(json[0].rank_score, 100);
+  assertEquals(json[0].blurb.length, 80);
+});
