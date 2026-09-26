@@ -2451,10 +2451,17 @@ serve(async (req: Request) => {
       // cannot afford. Libraries are found through OpenStreetMap once a month
       // per cell, then read like any other civic calendar.
       (async () => {
-        await paced("osm_civic_discovery", async () => {
-          await discoverCivicSources(lat, lng, radiusMeters);
-          return [] as any[];
-        }, gridKey);
+        if (isSourceDue({ source: "osm_civic_retry", lastRanAt: runsFor(gridKey).osm_civic_retry })) {
+          await paced("osm_civic_discovery", async () => {
+            try {
+              await discoverCivicSources(lat, lng, radiusMeters);
+            } catch (err) {
+              await sourceRunStore.mark(gridKey, "osm_civic_retry").catch(() => {});
+              throw err;
+            }
+            return [] as any[];
+          }, gridKey);
+        }
         return pacedFan("civic", gridKey);
       })(),
       paced("google_events", () => fetchGoogleEventsRows(lat, lng, cityName)),

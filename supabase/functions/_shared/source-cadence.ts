@@ -21,6 +21,9 @@ export const SOURCE_EVERY_MS: Record<string, number> = {
   civic: 1 * 86_400_000,
   // Discovering the libraries themselves; their calendars are read under `civic`.
   osm_civic_discovery: 30 * 86_400_000,
+  // After every Overpass server fails, wait a day rather than stalling each
+  // refresh for up to two minutes on servers that are refusing or overloaded.
+  osm_civic_retry: 1 * 86_400_000,
   // Both start with a Google call (a Places search for campuses, a reverse
   // geocode for the state) that used to run on every refresh.
   university: 3 * 86_400_000,
