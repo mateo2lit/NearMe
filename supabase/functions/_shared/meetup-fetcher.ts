@@ -20,6 +20,7 @@
 
 import { callClaudeList, EXTRACT_DESCRIPTION_MAX, FAST_MODEL } from "./anthropic.ts";
 import { cacheDay, cachedExtraction, type ExtractionCacheIO } from "./extraction-cache.ts";
+import { type Part, takePart } from "./work-split.ts";
 import { eventSignature } from "./page-signature.ts";
 
 interface MeetupExtract {
@@ -38,6 +39,8 @@ interface MeetupOpts {
   lat: number;
   lng: number;
   cityName?: string;
+  /** This invocation's share of the keyword buckets. */
+  part?: Part;
   anthropicKey: string;
   /**
    * Skips the model when a bucket's listing has not moved since the last
@@ -375,7 +378,9 @@ export async function fetchMeetupEvents(opts: MeetupOpts): Promise<MeetupExtract
 
   // Process buckets sequentially — parallel hammers Meetup's rate limit.
   // Pickleball goes first since it's the user's specific ask.
-  for (const bucket of bucketsForRun()) {
+  // With `part`, this invocation takes only its share of the buckets; the
+  // others run in parallel invocations (see work-split.ts).
+  for (const bucket of takePart(bucketsForRun(), opts.part)) {
     const html = await fetchMeetupHtml(bucket.q, opts.lat, opts.lng, timeoutMs);
     if (!html) {
       console.log(`[meetup:${bucket.label}] no html (blocked or empty)`);

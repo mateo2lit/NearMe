@@ -28,6 +28,7 @@ import { isSourceDue, onCadence, type SourceRunStore } from "../_shared/source-c
 import { aiSpentLast24h, globalDailyUsd, globalDecision } from "../_shared/global-budget.ts";
 import { discoverOsmCivic } from "../_shared/osm-civic.ts";
 import { reverseGeocodeOsm } from "../_shared/osm-geocode.ts";
+import { isValidPart, type Part, PARTS, takePart } from "../_shared/work-split.ts";
 import {
   nextLocalOccurrence,
   parseWallClock,
@@ -1289,6 +1290,8 @@ async function scanVenues(
     categoryHint?: { wellCovered: string[]; underRepresented: string[] };
     fastEventCount?: number;
     thinPriorSync?: boolean;
+    /** This invocation's share of the venues due for a scan. */
+    part?: Part;
   },
 ) {
   const { data: venues } = await supabase
@@ -1327,7 +1330,7 @@ async function scanVenues(
       : fastEventCount >= 20
         ? 28
         : 40;
-  const toScan = due.slice(0, scanBudget);
+  const toScan = takePart(due.slice(0, scanBudget), opts?.part);
   console.log(`[scanner] ${toScan.length}/${nearby.length} venues (${due.length} due, budget=${scanBudget}, fast=${fastEventCount})`);
   const all: any[] = [];
   let claudeCalls = 0;
@@ -1583,6 +1586,7 @@ async function fetchCivicEvents(
   lat: number,
   lng: number,
   radiusMeters: number,
+  part?: Part,
 ): Promise<any[]> {
   const { data: venues, error } = await supabase
     .from("venues")
@@ -1631,14 +1635,15 @@ async function fetchCivicEvents(
     seenSites.add(host);
     return true;
   }).slice(0, 16);
+  const mine = takePart(candidates, part);
 
-  if (candidates.length === 0) return [];
-  console.log(`[civic] probing ${candidates.length} civic venues`);
+  if (mine.length === 0) return [];
+  console.log(`[civic] probing ${mine.length} of ${candidates.length} civic venues`);
 
   const out: any[] = [];
   let withFeeds = 0;
 
-  for (const venue of candidates) {
+  for (const venue of mine) {
     try {
       const events = await fetchCivicSource(
         { name: venue.name, website: venue.website, lat: venue.lat, lng: venue.lng },
@@ -1905,6 +1910,104 @@ async function fetchNeighborhood(
 }
 
 
+// ─── Workers ─────────────────────────────────────────────────
+// The heavy sources run in separate invocations of this same function, each
+// with its own 2-second CPU allowance. See _shared/work-split.ts.
+
+type WorkerName = "meetup" | "venues" | "civic" | "highschool" | "reddit";
+
+interface WorkerContext {
+  lat: number;
+  lng: number;
+  radiusMeters: number;
+  gridKey: string;
+  gridLat: number;
+  gridLng: number;
+  cityName: string | null;
+  categoryHint: { wellCovered: string[]; underRepresented: string[] };
+  fastEventCount: number;
+  thinPriorSync: boolean;
+}
+
+/** Longer than any one part should take, shorter than the orchestrator's own limit. */
+const WORKER_TIMEOUT_MS = 120_000;
+
+async function runWorker(worker: WorkerName, part: Part, c: WorkerContext): Promise<any[]> {
+  switch (worker) {
+    case "venues":
+      return scanVenues(c.lat, c.lng, c.radiusMeters, {
+        categoryHint: c.categoryHint,
+        fastEventCount: c.fastEventCount,
+        thinPriorSync: c.thinPriorSync,
+        part,
+      });
+    case "civic":
+      return fetchCivicEvents(c.lat, c.lng, c.radiusMeters, part);
+    case "meetup":
+      return ANTHROPIC_API_KEY
+        ? fetchMeetupEvents({
+            lat: c.lat, lng: c.lng,
+            cityName: c.cityName || undefined,
+            anthropicKey: ANTHROPIC_API_KEY,
+            meetupToken: MEETUP_API_TOKEN || undefined,
+            cache: supabaseExtractionCache(supabase),
+            part,
+          })
+        : [];
+    case "highschool":
+      return GOOGLE_API_KEY && ANTHROPIC_API_KEY
+        ? fetchHighSchoolSports({
+            lat: c.lat, lng: c.lng,
+            radiusMeters: c.radiusMeters,
+            googleApiKey: GOOGLE_API_KEY,
+            anthropicKey: ANTHROPIC_API_KEY,
+            cache: supabaseExtractionCache(supabase),
+          })
+        : [];
+    case "reddit":
+      return fetchRedditEvents(c.lat, c.lng, { categoryHint: c.categoryHint, cityName: c.cityName });
+  }
+}
+
+async function callWorker(c: WorkerContext, worker: WorkerName, part: Part): Promise<any[]> {
+  const res = await timeoutFetch(`${SUPABASE_URL}/functions/v1/sync-location`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ ...c, worker, part }),
+    timeoutMs: WORKER_TIMEOUT_MS,
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !Array.isArray(data?.rows)) {
+    const why = data?.message ?? data?.error ?? `HTTP ${res.status}`;
+    throw new Error(`${worker} part ${part.index + 1}/${part.of}: ${why}`);
+  }
+  for (const [source, detail] of Object.entries(data.source_errors ?? {})) {
+    noteSourceError(source, String(detail));
+  }
+  return data.rows;
+}
+
+/**
+ * Every part of one source, in parallel. Rows from parts that finished are
+ * kept when another part fails; `complete` says whether all of them did.
+ */
+async function fanOut(c: WorkerContext, worker: WorkerName): Promise<{ rows: any[]; complete: boolean }> {
+  const of = PARTS[worker] ?? 1;
+  const settled = await Promise.allSettled(
+    Array.from({ length: of }, (_, index) => callWorker(c, worker, { index, of })),
+  );
+  const rows: any[] = [];
+  let complete = true;
+  for (const r of settled) {
+    if (r.status === "fulfilled") rows.push(...r.value);
+    else {
+      complete = false;
+      noteSourceError(worker, (r.reason as Error)?.message ?? String(r.reason));
+    }
+  }
+  return { rows, complete };
+}
+
 // ─── Rate Limiting ───────────────────────────────────────────
 
 const RATE_LIMIT_MAX = 10; // max 10 sync requests
@@ -1958,6 +2061,39 @@ serve(async (req: Request) => {
     resetUsage();
 
     const body = await req.json();
+
+    // A worker invocation: one share of one heavy source, for an orchestrating
+    // refresh that already did the claim, budget and gap checks.
+    if (body.worker) {
+      if (!hasServiceRole(req)) {
+        return new Response(JSON.stringify({ error: "worker_auth_required" }), { status: 403 });
+      }
+      if (!isValidPart(body.part)) {
+        return new Response(JSON.stringify({ error: "invalid part" }), { status: 400 });
+      }
+      const rows = await runWorker(body.worker as WorkerName, body.part, body as WorkerContext);
+      const workerSpend = usageSummary();
+      if (workerSpend.calls > 0) {
+        const { error: spendError } = await supabase.from("ai_usage_log").insert({
+          grid_key: body.gridKey,
+          lat: body.gridLat,
+          lng: body.gridLng,
+          trigger_source: `worker:${body.worker}`,
+          calls: workerSpend.calls,
+          failures: workerSpend.failures,
+          input_tokens: workerSpend.input_tokens,
+          output_tokens: workerSpend.output_tokens,
+          cached_input_tokens: workerSpend.cached_input_tokens,
+          cost_usd: workerSpend.cost_usd,
+          by_label: workerSpend.by_label,
+        });
+        if (spendError) console.error(`[worker] spend write failed: ${spendError.message}`);
+      }
+      return new Response(JSON.stringify({ rows, source_errors: sourceErrors }), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      });
+    }
+
     const lat = body.lat;
     const lng = body.lng;
     const radiusMiles = body.radius_miles ?? 15;
@@ -2247,15 +2383,47 @@ serve(async (req: Request) => {
     });
     const cityName = neighborhoodInfo?.neighborhood || null;
 
-    // Per-source schedule, shared by every cell in the same city.
-    const cadenceScope = cityName ?? gridKey;
-    const lastRuns = await loadSourceRuns(cadenceScope);
-    const paced = <T,>(source: string, run: () => Promise<T[]>): Promise<T[]> =>
-      onCadence({ scope: cadenceScope, source, store: sourceRunStore, lastRuns, run })
+    // Per-source schedules. Searches that are city-wide by nature (Meetup,
+    // Reddit, Google Events, Pickleheads, ESPN's state) are shared by every
+    // cell in the city. Anything found by distance from the user (libraries,
+    // civic calendars, schools, campuses) is scheduled per ~7-mile grid cell,
+    // so a second user across a large metro is not skipped because someone
+    // twenty miles away already refreshed.
+    const cityScope = cityName ?? gridKey;
+    const [cityRuns, cellRuns] = await Promise.all([
+      loadSourceRuns(cityScope),
+      cityScope === gridKey ? Promise.resolve(null) : loadSourceRuns(gridKey),
+    ]);
+    const runsFor = (scope: string) => (scope === gridKey ? cellRuns ?? cityRuns : cityRuns);
+    const paced = <T,>(source: string, run: () => Promise<T[]>, scope = cityScope): Promise<T[]> =>
+      onCadence({ scope, source, store: sourceRunStore, lastRuns: runsFor(scope), run })
         .catch((err) => {
           noteSourceError(source, (err as Error).message);
           return [] as T[];
         });
+
+    const workerContext: WorkerContext = {
+      lat, lng, radiusMeters, gridKey, gridLat, gridLng, cityName,
+      categoryHint, fastEventCount: tm.length, thinPriorSync,
+    };
+    // A failed worker may have spent before failing, and its spend record
+    // died with it; the reservation is then kept rather than settled down.
+    let workersComplete = true;
+    const pacedFan = async (worker: WorkerName, scope: string): Promise<any[]> => {
+      const lastRan = runsFor(scope)[worker];
+      if (!isSourceDue({ source: worker, lastRanAt: lastRan })) {
+        console.log(`[cadence] ${worker} skipped for ${scope} (ran ${lastRan})`);
+        return [];
+      }
+      const { rows, complete } = await fanOut(workerContext, worker);
+      if (complete) {
+        await sourceRunStore.mark(scope, worker)
+          .catch((err) => console.error(`[cadence] mark ${worker} failed: ${(err as Error).message}`));
+      } else {
+        workersComplete = false;
+      }
+      return rows;
+    };
 
     const [
       reddit,
@@ -2268,33 +2436,25 @@ serve(async (req: Request) => {
       uniRaw,
       hsRaw,
     ] = await Promise.all([
-      paidDue("reddit")
-        ? paced("reddit", () => fetchRedditEvents(lat, lng, { categoryHint, cityName }))
+      paidDue("reddit") ? pacedFan("reddit", cityScope) : Promise.resolve([]),
+      paidDue("venues")
+        ? fanOut(workerContext, "venues").then((r) => {
+            if (!r.complete) workersComplete = false;
+            return r.rows;
+          })
         : Promise.resolve([]),
-      paidDue("venues") ? scanVenues(lat, lng, radiusMeters, {
-        categoryHint,
-        fastEventCount: tm.length,
-        thinPriorSync,
-      }) : Promise.resolve([]),
-      // Cheap: structured calendars, no tokens. Libraries are found through
-      // OpenStreetMap once a month, then read like any other civic calendar.
+      // No tokens, but parsing sixteen calendars is CPU the orchestrator
+      // cannot afford. Libraries are found through OpenStreetMap once a month
+      // per cell, then read like any other civic calendar.
       (async () => {
         await paced("osm_civic_discovery", async () => {
           await discoverCivicSources(lat, lng, radiusMeters);
           return [] as any[];
-        });
-        return paced("civic", () => fetchCivicEvents(lat, lng, radiusMeters));
+        }, gridKey);
+        return pacedFan("civic", gridKey);
       })(),
       paced("google_events", () => fetchGoogleEventsRows(lat, lng, cityName)),
-      paidDue("meetup") && ANTHROPIC_API_KEY
-        ? paced("meetup", () => fetchMeetupEvents({
-            lat, lng,
-            cityName: cityName || undefined,
-            anthropicKey: ANTHROPIC_API_KEY,
-            meetupToken: MEETUP_API_TOKEN || undefined,
-            cache: extractionCache,
-          }))
-        : Promise.resolve([]),
+      paidDue("meetup") && ANTHROPIC_API_KEY ? pacedFan("meetup", cityScope) : Promise.resolve([]),
       paced("espn", () => fetchCollegeSports({ lat, lng, daysForward: 14 })),
       paidDue("pickleheads") && ANTHROPIC_API_KEY
         ? paced("pickleheads", () => fetchPickleheadsEvents({
@@ -2307,16 +2467,10 @@ serve(async (req: Request) => {
             lat, lng,
             radiusMeters,
             googleApiKey: GOOGLE_API_KEY,
-          }))
+          }), gridKey)
         : Promise.resolve([]),
       paidDue("highschool") && placesOk && GOOGLE_API_KEY && ANTHROPIC_API_KEY
-        ? paced("highschool", () => fetchHighSchoolSports({
-            lat, lng,
-            radiusMeters,
-            googleApiKey: GOOGLE_API_KEY,
-            anthropicKey: ANTHROPIC_API_KEY,
-            cache: extractionCache,
-          }))
+        ? pacedFan("highschool", gridKey)
         : Promise.resolve([]),
     ]);
 
@@ -2659,9 +2813,14 @@ serve(async (req: Request) => {
       by_label: spend.by_label,
     };
     if (reserveId != null) {
-      // Settle the reservation made at the start to what was really spent.
+      // Settle the reservation made at the start to what this invocation
+      // really spent (workers record their own). If a worker failed, its
+      // spend may be unrecorded, so the reservation stands as the estimate.
+      const settled = workersComplete
+        ? spendRow
+        : { ...spendRow, cost_usd: Math.max(spendRow.cost_usd, REFRESH_RESERVE_USD) };
       const { error: settleError } = await supabase.from("ai_usage_log")
-        .update(spendRow).eq("id", reserveId);
+        .update(settled).eq("id", reserveId);
       if (settleError) console.error(`[ai-spend] settle failed: ${settleError.message}`);
     } else if (spend.calls > 0) {
       const { error: spendWriteError } = await supabase.from("ai_usage_log").insert({
