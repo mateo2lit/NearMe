@@ -24,7 +24,8 @@ import { assessCatalog } from "../_shared/catalog-quality.ts";
 import { fetchGoogleEvents, SEARCH_RESERVE, serpApiSearchesLeft } from "../_shared/google-events.ts";
 import { budgetDecision, monthlyBudgetUsd, REFRESH_RESERVE_USD } from "../_shared/city-budget.ts";
 import { planPaidSources, type GatePlan } from "../_shared/gap-gate.ts";
-import { onCadence, type SourceRunStore } from "../_shared/source-cadence.ts";
+import { isSourceDue, onCadence, type SourceRunStore } from "../_shared/source-cadence.ts";
+import { aiSpentLast24h, globalDailyUsd, globalDecision } from "../_shared/global-budget.ts";
 import { discoverOsmCivic } from "../_shared/osm-civic.ts";
 import {
   nextLocalOccurrence,
@@ -622,7 +623,8 @@ async function enrichNewVenues(
         {
           headers: {
             "X-Goog-Api-Key": GOOGLE_API_KEY,
-            "X-Goog-FieldMask": "websiteUri,nationalPhoneNumber,rating,priceLevel,photos",
+            // No `photos`: see photo_url below; asking for it only costs.
+            "X-Goog-FieldMask": "websiteUri,nationalPhoneNumber,rating,priceLevel",
           },
         },
       );
@@ -635,9 +637,11 @@ async function enrichNewVenues(
       venue.phone = details.nationalPhoneNumber || null;
       venue.rating = details.rating || null;
       venue.price_level = mapPriceLevel(details.priceLevel);
-      venue.photo_url = details.photos?.[0]
-        ? `https://places.googleapis.com/v1/${details.photos[0].name}/media?maxHeightPx=600&key=${GOOGLE_API_KEY}`
-        : null;
+      // Never a Places photo URL. Those carry the API key in the query string,
+      // were stored in publicly readable tables, and every time the app drew
+      // one the phone made a billed Place Photo request with no cap on our
+      // side. Venue cards fall back to category imagery (src/constants/images.ts).
+      venue.photo_url = null;
       enrichedCount++;
     } catch (err) {
       console.log(`[venues] details error for ${venue.name}:`, err);
@@ -654,13 +658,14 @@ async function syncVenues(
   lat: number,
   lng: number,
   radiusMeters: number,
-): Promise<{ count: number; error: string | null }> {
+): Promise<{ count: number; error: string | null; quotaExhausted?: boolean }> {
   if (!GOOGLE_API_KEY) {
     console.error("[venues] GOOGLE_PLACES_API_KEY is not set");
     return { count: 0, error: "GOOGLE_PLACES_API_KEY not set" };
   }
   const allVenues: any[] = [];
   let firstError: string | null = null;
+  let quotaExhausted = false;
 
   for (const type of VENUE_TYPES) {
     try {
@@ -703,6 +708,12 @@ async function syncVenues(
         if (!firstError) firstError = String(detail).slice(0, 300);
         noteSourceError("google_places", detail);
         console.error(`[venues] ${type} rejected: ${response.status} ${JSON.stringify(data?.error ?? data).slice(0, 300)}`);
+        // The quota is per project per day: the other 13 types would fail
+        // the same way, so stop asking.
+        if (response.status === 429 || data?.error?.status === "RESOURCE_EXHAUSTED") {
+          quotaExhausted = true;
+          break;
+        }
         continue;
       }
       if (data.places) {
@@ -751,7 +762,7 @@ async function syncVenues(
   } else {
     console.log(`[venues] ${unique.length} unique`);
   }
-  return { count: unique.length, error: firstError };
+  return { count: unique.length, error: firstError, quotaExhausted };
 }
 
 // ─── Ticketmaster ────────────────────────────────────────────
@@ -1694,6 +1705,8 @@ async function fetchCivicEvents(
 
 /** Monthly AI budget per city in USD. CITY_AI_BUDGET_USD=0 turns AI collection off. */
 const CITY_AI_BUDGET = monthlyBudgetUsd(Deno.env.get("CITY_AI_BUDGET_USD"));
+/** All AI spend across the service in 24h, in USD. GLOBAL_AI_DAILY_USD. */
+const GLOBAL_AI_DAILY = globalDailyUsd(Deno.env.get("GLOBAL_AI_DAILY_USD"));
 
 const sourceRunStore: SourceRunStore = {
   async load(scope) {
@@ -2058,6 +2071,14 @@ serve(async (req: Request) => {
         console.log(`[budget] ${gridKey} AI skipped: ${budget.reason}`);
       }
     }
+    if (allowAi) {
+      const global = globalDecision(await aiSpentLast24h(supabase), GLOBAL_AI_DAILY);
+      if (!global.ok) {
+        allowAi = false;
+        budgetNote = global.reason;
+        console.log(`[budget] global cap: ${global.reason}`);
+      }
+    }
     const inCooldown = freePolicy.inCooldown && !allowAi;
 
     // Curator runs are scheduled, not user-triggered, so the cooldown that
@@ -2176,13 +2197,24 @@ serve(async (req: Request) => {
     // cannot make a healthy cell look venue-less.
     const priorVenueCount = syncLog?.[0]?.venue_count ?? 0;
     const priorVenuesSyncedAt = syncLog?.[0]?.venues_synced_at ?? null;
-    const discoverVenues = shouldDiscoverVenues({
+    // Project-wide backoff after Google says the daily quota is gone.
+    const globalRuns = await loadSourceRuns("global");
+    const placesOk = isSourceDue({
+      source: "google_places_backoff",
+      lastRanAt: globalRuns.google_places_backoff,
+    });
+    if (!placesOk) console.log(`[venues] Places backed off since ${globalRuns.google_places_backoff}`);
+    const discoverVenues = placesOk && shouldDiscoverVenues({
       venuesSyncedAt: priorVenuesSyncedAt,
       allowAi,
     });
-    const venueResult = discoverVenues
+    const venueResult: { count: number; error: string | null; quotaExhausted?: boolean } = discoverVenues
       ? await syncVenues(lat, lng, radiusMiles * 1609.34)
-      : { count: 0, error: null as string | null };
+      : { count: 0, error: null };
+    if (venueResult.quotaExhausted) {
+      await sourceRunStore.mark("global", "google_places_backoff")
+        .catch((err) => console.error(`[venues] backoff write failed: ${(err as Error).message}`));
+    }
     const venueCount = venueResult.count;
     if (!discoverVenues) {
       console.log(`[venues] skip discovery (last ${priorVenuesSyncedAt ?? "never"}, allowAi=${allowAi})`);
@@ -2289,11 +2321,11 @@ serve(async (req: Request) => {
             cache: extractionCache,
           }))
         : Promise.resolve([]),
-      fetchCollegeSports({
+      paced("espn", () => fetchCollegeSports({
         lat, lng,
         googleApiKey: GOOGLE_API_KEY || undefined,
         daysForward: 14,
-      }),
+      })),
       paidDue("pickleheads") && GOOGLE_API_KEY && ANTHROPIC_API_KEY
         ? paced("pickleheads", () => fetchPickleheadsEvents({
             lat, lng,
@@ -2301,14 +2333,14 @@ serve(async (req: Request) => {
             anthropicKey: ANTHROPIC_API_KEY,
           }))
         : Promise.resolve([]),
-      allowAi && GOOGLE_API_KEY
-        ? fetchUniversityEvents({
+      allowAi && placesOk && GOOGLE_API_KEY
+        ? paced("university", () => fetchUniversityEvents({
             lat, lng,
             radiusMeters,
             googleApiKey: GOOGLE_API_KEY,
-          })
+          }))
         : Promise.resolve([]),
-      paidDue("highschool") && GOOGLE_API_KEY && ANTHROPIC_API_KEY
+      paidDue("highschool") && placesOk && GOOGLE_API_KEY && ANTHROPIC_API_KEY
         ? paced("highschool", () => fetchHighSchoolSports({
             lat, lng,
             radiusMeters,

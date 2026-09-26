@@ -31,6 +31,7 @@ function makeQuery(rows: unknown[], single: unknown, record?: (op: any) => void)
     in: () => q,
     limit: () => q,
     order: () => q,
+    gt: () => q,
     gte: () => q,
     lte: () => q,
     not: () => q,

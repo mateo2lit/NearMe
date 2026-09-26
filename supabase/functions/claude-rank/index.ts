@@ -1,6 +1,12 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.103.0";
 import { calcCostUsd, FAST_MODEL, makeAnthropicClient, supportsEffort } from "../_shared/anthropic.ts";
+import {
+  aiSpentLast24h,
+  globalDailyUsd,
+  globalDecision,
+  RANK_CALLS_PER_USER_DAY,
+} from "../_shared/global-budget.ts";
 
 interface RankRequest {
   body: { user_id?: string; event_ids?: string[] };
@@ -94,6 +100,32 @@ interface Ranked { event_id: string; rank_score: number; blurb: string }
  */
 export const RANK_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * Why this user may not start a fresh ranking right now, or null. Ranking had
+ * no limit of its own: any client could loop it with changing event ids and
+ * miss the cache every time.
+ */
+async function rankCapReason(supabase: any, userId: string): Promise<string | null> {
+  const since = new Date(Date.now() - 86_400_000).toISOString();
+  const { data, error } = await supabase
+    .from("claude_runs")
+    .select("cost_usd")
+    .eq("phase", "rank")
+    .eq("user_id", userId)
+    .gte("started_at", since)
+    .gt("cost_usd", 0)
+    .limit(RANK_CALLS_PER_USER_DAY + 1);
+  if (error) return "usage unreadable";
+  if ((data ?? []).length >= RANK_CALLS_PER_USER_DAY) {
+    return `${RANK_CALLS_PER_USER_DAY} rankings in 24h`;
+  }
+  const global = globalDecision(
+    await aiSpentLast24h(supabase),
+    globalDailyUsd(Deno.env.get("GLOBAL_AI_DAILY_USD")),
+  );
+  return global.ok ? null : global.reason;
+}
+
 function byScore(rows: Ranked[]): Ranked[] {
   return [...rows].sort((a, b) => b.rank_score - a.rank_score);
 }
@@ -175,8 +207,13 @@ export async function handleRankRequest(req: RankRequest): Promise<Response> {
   const cachedIds = new Set(cached.map((r) => r.event_id));
   const missing = eventIds.filter((id) => !cachedIds.has(id));
 
+  // Limits. Beyond them the user gets whatever is cached and an unranked
+  // remainder, which the client already handles, rather than a new bill.
+  const capped = missing.length > 0 ? await rankCapReason(deps.supabase, body.user_id) : null;
+  if (capped) console.log(`[claude-rank] ${body.user_id} capped: ${capped}`);
+
   let events: EventLite[] = [];
-  if (missing.length > 0) {
+  if (missing.length > 0 && !capped) {
     const { data, error: eErr } = await deps.supabase
       .from("events").select("id,title,category,tags,is_free,price_min")
       .in("id", missing)
@@ -203,7 +240,7 @@ export async function handleRankRequest(req: RankRequest): Promise<Response> {
       cached_input_tokens: 0,
       web_searches: null,
       cost_usd: 0,
-      error_message: `cache_hit:${cached.length}`,
+      error_message: capped ? `capped:${capped}` : `cache_hit:${cached.length}`,
     });
     return new Response(JSON.stringify(byScore(cached)), {
       status: 200,

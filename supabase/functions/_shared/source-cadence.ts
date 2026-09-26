@@ -21,6 +21,14 @@ export const SOURCE_EVERY_MS: Record<string, number> = {
   civic: 1 * 86_400_000,
   // Discovering the libraries themselves; their calendars are read under `civic`.
   osm_civic_discovery: 30 * 86_400_000,
+  // Both start with a Google call (a Places search for campuses, a reverse
+  // geocode for the state) that used to run on every refresh.
+  university: 3 * 86_400_000,
+  espn: 1 * 86_400_000,
+  // Not a source: after Google answers "quota exceeded", every Places call
+  // waits this long (scope "global"). Retrying on every refresh is how 15
+  // cells re-hit the daily cap each time it reset.
+  google_places_backoff: 1 * 86_400_000,
 };
 
 export function isSourceDue(input: {

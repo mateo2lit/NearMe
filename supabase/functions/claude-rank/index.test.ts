@@ -279,3 +279,39 @@ Deno.test("rank cache — an event id the model made up is neither returned nor 
   const write = supabase.writes.find((w: any) => w.table === "rank_cache");
   assertEquals((write!.rows as any[]).map((r) => r.event_id), ["e1"]);
 });
+
+// ─── Limits ──────────────────────────────────────────────────
+
+Deno.test("rank limits — a user at the daily cap gets cached scores, not a new call", async () => {
+  const supabase = makeFakeSupabase({
+    tables: {
+      events: fakeEvents,
+      rank_cache: [{ event_id: "e1", rank_score: 90, blurb: "cached", profile_version: PROFILE_V, created_at: fresh() }],
+      claude_runs: Array.from({ length: 40 }, () => ({ cost_usd: 0.01 })),
+    },
+    singles: { user_profiles: versionedProfile, claude_circuit: { enabled: true } },
+  });
+  const a = countingAnthropic([{ event_id: "e2", rank_score: 50, blurb: "new" }]);
+  const rows: any[] = [];
+  const res = await handleRankRequest({
+    body: { user_id: "u1", event_ids: ["e1", "e2"] },
+    deps: { supabase, anthropic: a.client, runWriter: async (r) => { rows.push(r); } },
+  });
+  const json = await res.json();
+  assertEquals(a.calls.length, 0);
+  assertEquals(json.map((r: any) => r.event_id), ["e1"]);
+  assertEquals(rows[0].error_message.startsWith("capped:"), true);
+});
+
+Deno.test("rank limits — the service-wide daily cap stops ranking too", async () => {
+  const supabase = makeFakeSupabase({
+    tables: { events: fakeEvents, rank_cache: [], ai_usage_log: [{ cost_usd: 99 }] },
+    singles: { user_profiles: versionedProfile, claude_circuit: { enabled: true } },
+  });
+  const a = countingAnthropic([{ event_id: "e1", rank_score: 50, blurb: "new" }]);
+  await handleRankRequest({
+    body: { user_id: "u1", event_ids: ["e1"] },
+    deps: { supabase, anthropic: a.client, runWriter: async () => {} },
+  });
+  assertEquals(a.calls.length, 0);
+});
