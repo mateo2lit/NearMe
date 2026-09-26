@@ -51,6 +51,29 @@ function parseWhen(when: any): { iso: string | null; confirmed: boolean } {
   return { iso: null, confirmed: false };
 }
 
+/** Searches kept back each month so a runaway loop cannot drain the plan to zero. */
+export const SEARCH_RESERVE = 20;
+
+/**
+ * Searches left on the SerpApi plan. The account endpoint does not count as a
+ * search. Null when it cannot be read, which callers treat as "don't search":
+ * a quota we cannot see is a quota we might be overrunning.
+ */
+export async function serpApiSearchesLeft(
+  apiKey: string,
+  fetchJson: GoogleEventsOpts["fetchJson"],
+): Promise<number | null> {
+  try {
+    const res = await fetchJson(`https://serpapi.com/account.json?api_key=${encodeURIComponent(apiKey)}`);
+    if (!res.ok) return null;
+    const body = await res.json();
+    const left = Number(body?.total_searches_left ?? body?.plan_searches_left);
+    return Number.isFinite(left) ? left : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchGoogleEvents(
   opts: GoogleEventsOpts,
 ): Promise<GoogleEventExtract[]> {

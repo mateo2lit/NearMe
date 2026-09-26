@@ -21,7 +21,11 @@ import { fetchCollegeSports } from "../_shared/espn-sports.ts";
 import { fetchTheEventsCalendar, parseJsonLdEvents } from "../_shared/venue-feeds.ts";
 import { categorizeCivic, fetchCivicSource } from "../_shared/civic-events.ts";
 import { assessCatalog } from "../_shared/catalog-quality.ts";
-import { fetchGoogleEvents } from "../_shared/google-events.ts";
+import { fetchGoogleEvents, SEARCH_RESERVE, serpApiSearchesLeft } from "../_shared/google-events.ts";
+import { budgetDecision, monthlyBudgetUsd, REFRESH_RESERVE_USD } from "../_shared/city-budget.ts";
+import { planPaidSources, type GatePlan } from "../_shared/gap-gate.ts";
+import { onCadence, type SourceRunStore } from "../_shared/source-cadence.ts";
+import { discoverOsmCivic } from "../_shared/osm-civic.ts";
 import {
   nextLocalOccurrence,
   parseWallClock,
@@ -1587,9 +1591,31 @@ async function fetchCivicEvents(
   // Institutions worth asking. Name matching is crude but effective: Places
   // categorizes a public library as "other" or "venue", not as a library.
   const CIVIC_NAME = /librar|park|recreation|museum|botanic|community cent|civic|city of |town of |cultural/i;
-  const candidates = nearby
+  const fromVenues = nearby
     .filter((v: any) => CIVIC_NAME.test(v.name || "") || v.category === "park")
-    .slice(0, 12);
+    .map((v: any) => ({ ...v, key: v.id, venue_id: v.id }));
+
+  // OpenStreetMap-discovered institutions (see discoverCivicSources). Listed
+  // first because they are libraries-first and were found for this purpose.
+  const { data: osmRows, error: osmError } = await supabase
+    .from("civic_sources")
+    .select("id, name, website, lat, lng, kind")
+    .gte("lat", lat - degPerMile * radiusMiles).lte("lat", lat + degPerMile * radiusMiles)
+    .gte("lng", lng - degPerMile * radiusMiles).lte("lng", lng + degPerMile * radiusMiles)
+    .limit(40);
+  if (osmError) noteSourceError("civic", `civic_sources: ${osmError.message}`);
+  const fromOsm = (osmRows ?? []).map((r: any) => ({
+    ...r, key: r.id, venue_id: null, address: r.name, category: r.kind,
+  }));
+
+  const seenSites = new Set<string>();
+  const candidates = [...fromOsm, ...fromVenues].filter((v: any) => {
+    let host = String(v.website);
+    try { host = new URL(v.website).host.replace(/^www\./, ""); } catch { /* keep raw */ }
+    if (seenSites.has(host)) return false;
+    seenSites.add(host);
+    return true;
+  }).slice(0, 16);
 
   if (candidates.length === 0) return [];
   console.log(`[civic] probing ${candidates.length} civic venues`);
@@ -1634,9 +1660,9 @@ async function fetchCivicEvents(
         if (!e.time_confirmed) tags.push(TIME_TBA_TAG);
 
         out.push({
-          venue_id: venue.id,
+          venue_id: venue.venue_id,
           source: "municipal",
-          source_id: `civic-${venue.id}-${e.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 60)}`,
+          source_id: `civic-${venue.key}-${e.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 60)}`,
           title: e.title,
           description: e.description || null,
           category, subcategory,
@@ -1664,6 +1690,87 @@ async function fetchCivicEvents(
 }
 
 
+// ─── Paced collection ────────────────────────────────────────
+
+/** Monthly AI budget per city in USD. CITY_AI_BUDGET_USD=0 turns AI collection off. */
+const CITY_AI_BUDGET = monthlyBudgetUsd(Deno.env.get("CITY_AI_BUDGET_USD"));
+
+const sourceRunStore: SourceRunStore = {
+  async load(scope) {
+    const { data, error } = await supabase.from("source_runs").select("source, ran_at").eq("scope", scope);
+    if (error) throw new Error(error.message);
+    return Object.fromEntries((data ?? []).map((r: any) => [r.source, r.ran_at]));
+  },
+  async mark(scope, source) {
+    const { error } = await supabase.from("source_runs")
+      .upsert({ scope, source, ran_at: new Date().toISOString() }, { onConflict: "scope,source" });
+    if (error) throw new Error(error.message);
+  },
+};
+
+async function loadSourceRuns(scope: string): Promise<Record<string, string>> {
+  try {
+    return await sourceRunStore.load(scope);
+  } catch (err) {
+    // Unreadable reads as "everything due"; the city budget bounds the cost.
+    console.error(`[cadence] load failed for ${scope}: ${(err as Error).message}`);
+    return {};
+  }
+}
+
+/** Spend rows for one cell over the budget window. Null when unreadable. */
+async function loadCitySpend(gridKey: string) {
+  const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
+  const { data, error } = await supabase.from("ai_usage_log")
+    .select("cost_usd, created_at")
+    .eq("grid_key", gridKey)
+    .gte("created_at", since);
+  if (error) {
+    console.error(`[budget] spend lookup failed: ${error.message}`);
+    return null;
+  }
+  return data ?? [];
+}
+
+/** What a user here sees this week, for the gap gate. */
+async function loadGateSnapshot(lat: number, lng: number): Promise<GatePlan | null> {
+  const now = new Date();
+  const weekEnd = new Date(now.getTime() + 7 * 86_400_000).toISOString();
+  const { data, error } = await supabase.from("events")
+    .select("category, start_time, is_recurring, last_verified_at, source")
+    .gte("lat", lat - 0.25).lte("lat", lat + 0.25)
+    .gte("lng", lng - 0.25).lte("lng", lng + 0.25)
+    .or(`is_recurring.eq.true,and(start_time.gte."${now.toISOString()}",start_time.lte."${weekEnd}")`)
+    .limit(2000);
+  if (error) {
+    // Fail open: without a snapshot the gate cannot know what is covered, and
+    // the city budget still caps what running everything can cost.
+    console.error(`[gap-gate] snapshot failed: ${error.message}`);
+    return null;
+  }
+  return planPaidSources(data ?? [], now);
+}
+
+/**
+ * Find a city's libraries, community centres, arts centres and museums on
+ * OpenStreetMap and remember them in civic_sources. Free, keyless, and run
+ * once a month per city by the cadence gate.
+ */
+async function discoverCivicSources(lat: number, lng: number, radiusMeters: number): Promise<number> {
+  const found = await discoverOsmCivic({
+    lat, lng, radiusMeters,
+    fetcher: (url, init) => timeoutFetch(url, { ...init, timeoutMs: 20000 }),
+  });
+  if (found.length === 0) return 0;
+  const { error } = await supabase.from("civic_sources").upsert(
+    found.map((f) => ({ ...f, discovered_at: new Date().toISOString() })),
+    { onConflict: "id" },
+  );
+  if (error) throw new Error(`civic_sources write failed: ${error.message}`);
+  console.log(`[osm-civic] ${found.length} institutions with websites`);
+  return found.length;
+}
+
 /**
  * Google Events rows, mapped to catalog rows.
  *
@@ -1677,6 +1784,14 @@ async function fetchGoogleEventsRows(
   cityName: string | null,
 ): Promise<any[]> {
   if (!SERPAPI_KEY || !cityName) return [];
+
+  // The free plan is 250 searches a month shared by every city. The account
+  // lookup is not itself a search.
+  const left = await serpApiSearchesLeft(SERPAPI_KEY, (url) => timeoutFetch(url, { timeoutMs: 8000 }) as any);
+  if (left == null || left <= SEARCH_RESERVE) {
+    noteSourceError("google_events", left == null ? "quota unreadable; skipped" : `only ${left} searches left; skipped`);
+    return [];
+  }
 
   const raw = await fetchGoogleEvents({
     cityName,
@@ -1890,7 +2005,7 @@ serve(async (req: Request) => {
     // Check both geohash and legacy grid_key for existing sync
     const { data: syncLog, error: syncLogError } = await supabase
       .from("sync_log")
-      .select("synced_at, event_count, geohash, venues_synced_at, venue_count")
+      .select("synced_at, ai_synced_at, event_count, geohash, venues_synced_at, venue_count")
       .or(syncLogFilter(geohash, gridKey))
       .order("synced_at", { ascending: false })
       .limit(1);
@@ -1906,10 +2021,34 @@ serve(async (req: Request) => {
     const hoursSince = lastSync
       ? (Date.now() - new Date(lastSync).getTime()) / 3600000
       : Infinity;
-    const { inCooldown, allowAi } = syncPolicy({
+    // Two clocks. `synced_at` paces the free sources; `ai_synced_at` paces the
+    // paid ones. A free-only refresh (the onboarding preview) must not start
+    // the AI cooldown and hold back a new subscriber's first real refresh.
+    const freePolicy = syncPolicy({
       lastSync, lastCount, lookupFailed: !!syncLogError,
+      isCurator, requestedAi: false,
+    });
+    const aiPolicy = syncPolicy({
+      lastSync: syncLog?.[0]?.ai_synced_at ?? null, lastCount, lookupFailed: !!syncLogError,
       isCurator, requestedAi: body.allow_ai === true,
     });
+    let allowAi = aiPolicy.allowAi;
+
+    // The city's monthly AI budget, paced across the month. Checked before
+    // anything is spent; unreadable spend counts as "no budget".
+    let budgetNote: string | null = null;
+    if (allowAi) {
+      const spendRows = await loadCitySpend(gridKey);
+      const budget = spendRows == null
+        ? { ok: false, reason: "spend history unreadable" }
+        : budgetDecision({ rows: spendRows, monthlyUsd: CITY_AI_BUDGET });
+      if (!budget.ok) {
+        allowAi = false;
+        budgetNote = budget.reason;
+        console.log(`[budget] ${gridKey} AI skipped: ${budget.reason}`);
+      }
+    }
+    const inCooldown = freePolicy.inCooldown && !allowAi;
 
     // Curator runs are scheduled, not user-triggered, so the cooldown that
     // protects against per-open client cost does not apply to them.
@@ -1933,6 +2072,41 @@ serve(async (req: Request) => {
         }),
         { status: 200, headers: { "Content-Type": "application/json" } }
       );
+    }
+
+    // Record the refresh before doing any of it. A refresh that crashed (the
+    // worker hit its compute limit on 2026-09-26) used to leave no trace, so the
+    // next app open re-ran and re-paid the whole fan-out. The completed-run
+    // write at the end replaces these values.
+    const claimedAt = new Date().toISOString();
+    const { error: claimError } = await supabase.from("sync_log").upsert({
+      grid_key: gridKey,
+      geohash,
+      lat: gridLat,
+      lng: gridLng,
+      synced_at: claimedAt,
+      event_count: lastCount,
+      ...(allowAi ? { ai_synced_at: claimedAt } : {}),
+      ...(isCurator ? {} : { last_client_sync_at: claimedAt }),
+    }, { onConflict: "grid_key" });
+    if (claimError) throw new Error(`sync claim failed: ${claimError.message}`);
+
+    // Reserve budget for the same reason: a crashed run never reports its
+    // spend. Settled to the real figure at the end.
+    let reserveId: number | string | null = null;
+    if (allowAi) {
+      const { data: reserve, error: reserveError } = await supabase.from("ai_usage_log").insert({
+        grid_key: gridKey,
+        lat: gridLat,
+        lng: gridLng,
+        trigger_source: isCurator ? "curator" : "client",
+        calls: 0, failures: 0,
+        input_tokens: 0, output_tokens: 0, cached_input_tokens: 0,
+        cost_usd: REFRESH_RESERVE_USD,
+        by_label: { reserve: { calls: 0, failures: 0, input_tokens: 0, output_tokens: 0, cached_input_tokens: 0, cost_usd: REFRESH_RESERVE_USD } },
+      }).select("id").single();
+      if (reserveError) throw new Error(`budget reserve failed: ${reserveError.message}`);
+      reserveId = reserve?.id ?? null;
     }
 
     // Track whether the prior sync was thin so fetchers can widen date ranges (A5)
@@ -1972,6 +2146,18 @@ serve(async (req: Request) => {
     const catalog = mergeBigEvents([...tm], big).filter((event) => event.start_time);
     for (const event of catalog) event.description = cleanText(event.description);
     await writeVerifiedEvents(supabase, catalog);
+
+    // Gap gate: with the free sources written, what is this city still
+    // missing this week? Paid sources run only for real gaps.
+    const gate = allowAi ? await loadGateSnapshot(lat, lng) : null;
+    const paidDue = (source: keyof GatePlan["run"]) => allowAi && (gate == null || gate.run[source]);
+    if (gate) {
+      console.log(
+        `[gap-gate] week=${gate.weekTotal} thin=${gate.thin} short=[${gate.short.join(",")}] ` +
+        `unverified=${Math.round(gate.unverifiedShare * 100)}% run=` +
+        Object.entries(gate.run).filter(([, r]) => r).map(([k]) => k).join(","),
+      );
+    }
 
     // 2. Refresh venue inventory for the slower sources below. Venue
     // discovery is the most expensive upstream call we make, so it runs on a
@@ -2045,6 +2231,16 @@ serve(async (req: Request) => {
     });
     const cityName = neighborhoodInfo?.neighborhood || null;
 
+    // Per-source schedule, shared by every cell in the same city.
+    const cadenceScope = cityName ?? gridKey;
+    const lastRuns = await loadSourceRuns(cadenceScope);
+    const paced = <T,>(source: string, run: () => Promise<T[]>): Promise<T[]> =>
+      onCadence({ scope: cadenceScope, source, store: sourceRunStore, lastRuns, run })
+        .catch((err) => {
+          noteSourceError(source, (err as Error).message);
+          return [] as T[];
+        });
+
     const [
       reddit,
       scraped,
@@ -2056,36 +2252,44 @@ serve(async (req: Request) => {
       uniRaw,
       hsRaw,
     ] = await Promise.all([
-      allowAi ? fetchRedditEvents(lat, lng, { categoryHint, cityName }) : Promise.resolve([]),
-      allowAi ? scanVenues(lat, lng, radiusMeters, {
+      paidDue("reddit")
+        ? paced("reddit", () => fetchRedditEvents(lat, lng, { categoryHint, cityName }))
+        : Promise.resolve([]),
+      paidDue("venues") ? scanVenues(lat, lng, radiusMeters, {
         categoryHint,
         fastEventCount: tm.length,
         thinPriorSync,
       }) : Promise.resolve([]),
-      // Cheap: reads venues we already have, and most of these publish iCal,
-      // so it costs HTTP and no tokens.
-      fetchCivicEvents(lat, lng, radiusMeters),
-      fetchGoogleEventsRows(lat, lng, cityName),
-      allowAi && ANTHROPIC_API_KEY
-        ? fetchMeetupEvents({
+      // Cheap: structured calendars, no tokens. Libraries are found through
+      // OpenStreetMap once a month, then read like any other civic calendar.
+      (async () => {
+        await paced("osm_civic_discovery", async () => {
+          await discoverCivicSources(lat, lng, radiusMeters);
+          return [] as any[];
+        });
+        return paced("civic", () => fetchCivicEvents(lat, lng, radiusMeters));
+      })(),
+      paced("google_events", () => fetchGoogleEventsRows(lat, lng, cityName)),
+      paidDue("meetup") && ANTHROPIC_API_KEY
+        ? paced("meetup", () => fetchMeetupEvents({
             lat, lng,
             cityName: cityName || undefined,
             anthropicKey: ANTHROPIC_API_KEY,
             meetupToken: MEETUP_API_TOKEN || undefined,
             cache: extractionCache,
-          })
+          }))
         : Promise.resolve([]),
       fetchCollegeSports({
         lat, lng,
         googleApiKey: GOOGLE_API_KEY || undefined,
         daysForward: 14,
       }),
-      allowAi && GOOGLE_API_KEY && ANTHROPIC_API_KEY
-        ? fetchPickleheadsEvents({
+      paidDue("pickleheads") && GOOGLE_API_KEY && ANTHROPIC_API_KEY
+        ? paced("pickleheads", () => fetchPickleheadsEvents({
             lat, lng,
             googleApiKey: GOOGLE_API_KEY,
             anthropicKey: ANTHROPIC_API_KEY,
-          })
+          }))
         : Promise.resolve([]),
       allowAi && GOOGLE_API_KEY
         ? fetchUniversityEvents({
@@ -2094,14 +2298,14 @@ serve(async (req: Request) => {
             googleApiKey: GOOGLE_API_KEY,
           })
         : Promise.resolve([]),
-      allowAi && GOOGLE_API_KEY && ANTHROPIC_API_KEY
-        ? fetchHighSchoolSports({
+      paidDue("highschool") && GOOGLE_API_KEY && ANTHROPIC_API_KEY
+        ? paced("highschool", () => fetchHighSchoolSports({
             lat, lng,
             radiusMeters,
             googleApiKey: GOOGLE_API_KEY,
             anthropicKey: ANTHROPIC_API_KEY,
             cache: extractionCache,
-          })
+          }))
         : Promise.resolve([]),
     ]);
 
@@ -2401,7 +2605,7 @@ serve(async (req: Request) => {
       geohash,
       lat: gridLat,
       lng: gridLng,
-      synced_at: new Date().toISOString(),
+      synced_at: claimedAt,
       event_count: unique.length,
       // A discovery that found nothing keeps the prior count and the prior
       // timestamp, so a Places failure retries on the next crawl instead of
@@ -2434,19 +2638,27 @@ serve(async (req: Request) => {
         .map(([label, t]) => `${label}:${t.calls}/$${t.cost_usd.toFixed(4)}`)
         .join(" ") || "no calls"),
     );
-    if (spend.calls > 0) {
+    const spendRow = {
+      calls: spend.calls,
+      failures: spend.failures,
+      input_tokens: spend.input_tokens,
+      output_tokens: spend.output_tokens,
+      cached_input_tokens: spend.cached_input_tokens,
+      cost_usd: spend.cost_usd,
+      by_label: spend.by_label,
+    };
+    if (reserveId != null) {
+      // Settle the reservation made at the start to what was really spent.
+      const { error: settleError } = await supabase.from("ai_usage_log")
+        .update(spendRow).eq("id", reserveId);
+      if (settleError) console.error(`[ai-spend] settle failed: ${settleError.message}`);
+    } else if (spend.calls > 0) {
       const { error: spendWriteError } = await supabase.from("ai_usage_log").insert({
         grid_key: gridKey,
         lat: gridLat,
         lng: gridLng,
         trigger_source: isCurator ? "curator" : "client",
-        calls: spend.calls,
-        failures: spend.failures,
-        input_tokens: spend.input_tokens,
-        output_tokens: spend.output_tokens,
-        cached_input_tokens: spend.cached_input_tokens,
-        cost_usd: spend.cost_usd,
-        by_label: spend.by_label,
+        ...spendRow,
       });
       if (spendWriteError) console.error(`[ai-spend] write failed: ${spendWriteError.message}`);
     }
@@ -2455,6 +2667,9 @@ serve(async (req: Request) => {
       JSON.stringify({
         synced: true,
         lat, lng, geohash,
+        ai: allowAi,
+        ai_skipped_reason: budgetNote,
+        gap_gate: gate,
         venues_error: venueResult.error,
         // Empty object means every source that ran, ran clean.
         source_errors: sourceErrors,
