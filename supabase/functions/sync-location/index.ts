@@ -1793,8 +1793,10 @@ async function fetchGoogleEventsRows(
     return [];
   }
 
+  const timezone = timezoneForCoords(lat, lng);
   const raw = await fetchGoogleEvents({
     cityName,
+    timezone,
     apiKey: SERPAPI_KEY,
     fetchJson: (url) => timeoutFetch(url, { timeoutMs: 15000 }) as any,
     onError: (detail) => noteSourceError("google_events", detail),
@@ -1818,15 +1820,18 @@ async function fetchGoogleEventsRows(
     });
     if (adultSignal.hard) continue;
 
+    // Google's results span every kind of event; filing them all under
+    // "community" hid them from the category counts the gap gate reads.
+    const { category, subcategory } = categorizeCivic(e.title, e.description);
     const tags = generateTags({
-      category: "community",
-      subcategory: "event",
+      category,
+      subcategory,
       title: e.title,
       description: e.description,
       is_free: false,
       start_time: e.start_time,
       ticket_url: e.source_url,
-      timezone: timezoneForCoords(lat, lng),
+      timezone,
     });
     if (!e.time_confirmed) tags.push(TIME_TBA_TAG);
 
@@ -1835,8 +1840,8 @@ async function fetchGoogleEventsRows(
       source_id: `ge-${e.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 60)}-${e.start_time.slice(0, 10)}`,
       title: e.title,
       description: e.description || null,
-      category: "community",
-      subcategory: "event",
+      category,
+      subcategory,
       // Google gives an address, not coordinates. Anchor to the search centre
       // so the row is geofenced sanely; the address is what users read.
       lat, lng,
@@ -1897,7 +1902,12 @@ async function fetchNeighborhood(
   });
 
   if (error || !parsed) {
-    if (error) console.warn("[neighborhood]", error);
+    if (error) {
+      console.warn("[neighborhood]", error);
+      // Without a name, Google Events, Reddit and Meetup cannot search the
+      // city, so this failure has to be visible in the response.
+      noteSourceError("neighborhood", error);
+    }
     return null;
   }
   return {

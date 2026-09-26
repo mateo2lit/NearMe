@@ -22,7 +22,19 @@ export interface OsmCivicSource {
   kind: string;
 }
 
-export const OVERPASS_URL = "https://overpass-api.de/api/interpreter";
+/**
+ * Public Overpass instances, tried in order. Since 2026 the main instance
+ * answers 406 to clients that do not identify themselves (a generic or
+ * missing User-Agent), and it bans heavily under load, so a mirror is the
+ * normal fallback rather than an exotic one.
+ */
+export const OVERPASS_URLS = [
+  "https://overpass-api.de/api/interpreter",
+  "https://overpass.private.coffee/api/interpreter",
+  "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+];
+
+export const OVERPASS_USER_AGENT = "NearMe-events/1.0 (local events app; finds public library calendars)";
 
 const SELECTORS = [
   `["amenity"~"^(library|community_centre|arts_centre)$"]`,
@@ -87,15 +99,29 @@ export async function discoverOsmCivic(opts: {
   radiusMeters: number;
   fetcher: (url: string, init: RequestInit) => Promise<Response>;
 }): Promise<OsmCivicSource[]> {
-  const res = await opts.fetcher(OVERPASS_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      // Overpass asks clients to identify themselves.
-      "User-Agent": "NearMe/1.0 (local events app)",
-    },
-    body: new URLSearchParams({ data: buildOverpassQuery(opts.lat, opts.lng, opts.radiusMeters) }).toString(),
-  });
-  if (!res.ok) throw new Error(`overpass HTTP ${res.status}`);
-  return parseOverpass(await res.json());
+  const body = new URLSearchParams({ data: buildOverpassQuery(opts.lat, opts.lng, opts.radiusMeters) }).toString();
+  const failures: string[] = [];
+  for (const url of OVERPASS_URLS) {
+    try {
+      const res = await opts.fetcher(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          // Overpass's usage policy: identify the client, and do not ask for
+          // text/html only. A generic agent gets 406.
+          "User-Agent": OVERPASS_USER_AGENT,
+          "Accept": "application/json, */*",
+        },
+        body,
+      });
+      if (!res.ok) {
+        failures.push(`${new URL(url).host} HTTP ${res.status}`);
+        continue;
+      }
+      return parseOverpass(await res.json());
+    } catch (err) {
+      failures.push(`${new URL(url).host} ${(err as Error).message}`);
+    }
+  }
+  throw new Error(`overpass: ${failures.join("; ")}`);
 }

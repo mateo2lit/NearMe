@@ -14,6 +14,8 @@
  * for something nobody has paid for yet.
  */
 
+import { DEFAULT_EVENT_HOUR, zonedTimeToUtc } from "./local-time.ts";
+
 export interface GoogleEventExtract {
   title: string;
   description: string;
@@ -29,26 +31,94 @@ export interface GoogleEventsOpts {
   cityName: string;
   apiKey: string | undefined;
   fetchJson: (url: string) => Promise<{ ok: boolean; status: number; json: () => Promise<any> }>;
+  /** IANA zone the city is in; SerpApi's times are local wall clock. */
+  timezone?: string;
+  now?: Date;
   /** Defaults to one general query; more queries cost more searches. */
   queries?: string[];
   onError?: (detail: string) => void;
 }
 
+const MONTHS: Record<string, number> = {
+  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+  jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+};
+
+/** "Sep 27" or "27 Sep", anywhere in the text. */
+function findMonthDay(text: string): { month: number; day: number; end: number } | null {
+  const m = /(?:\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?!\d))|(?:\b(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b)/i
+    .exec(text);
+  if (!m) return null;
+  const month = MONTHS[(m[1] ?? m[4]).slice(0, 3).toLowerCase()];
+  const day = parseInt(m[2] ?? m[3], 10);
+  if (!month || day < 1 || day > 31) return null;
+  return { month, day, end: m.index + m[0].length };
+}
+
 /**
- * SerpApi returns human dates ("Fri, Sep 19, 8 – 11 PM") plus a `start_date`
- * and, when Google knows it, an ISO `when`. Only the ISO form is a time we can
- * stand behind; the rest is prose and gets marked unconfirmed rather than
- * parsed optimistically.
+ * The start time in whatever follows the date: "8 – 11 PM", "8:30 PM",
+ * "21:00–23:00". A bare number counts only with minutes or a meridiem
+ * nearby, so the "28" in "Sep 27 – Sep 28" is not read as 28 o'clock.
  */
-function parseWhen(when: any): { iso: string | null; confirmed: boolean } {
-  const iso = when?.start_date_iso || when?.start_time;
-  if (typeof iso === "string") {
-    const parsed = new Date(iso);
-    if (!isNaN(parsed.getTime())) {
-      return { iso: parsed.toISOString(), confirmed: /\d{2}:\d{2}/.test(iso) };
-    }
+function findStartTime(text: string): { hour: number; minute: number } | null {
+  const m = /(\d{1,2})(?::(\d{2}))?\s*(am|pm)?(?:\s*[–-]\s*\d{1,2}(?::\d{2})?\s*(am|pm))?/i.exec(text);
+  if (!m || !(m[2] || m[3] || m[4])) return null;
+  let hour = parseInt(m[1], 10);
+  const minute = m[2] ? parseInt(m[2], 10) : 0;
+  const meridiem = (m[3] ?? m[4])?.toLowerCase();
+  if (meridiem === "pm" && hour < 12) hour += 12;
+  if (meridiem === "am" && hour === 12) hour = 0;
+  if (hour > 23 || minute > 59) return null;
+  return { hour, minute };
+}
+
+/**
+ * SerpApi's `date` is prose: `{ start_date: "Sep 27", when: "Sat, Sep 27,
+ * 8 – 11 PM" }`, or in some locales `"Sat, 03 Jan, 21:00–23:00 GMT-6"`. There
+ * is no ISO field, although this parser used to require one, so every Google
+ * event was dropped for having no start time. That went unnoticed because the
+ * source never had a key.
+ *
+ * The year is not given: the next occurrence of that date is assumed. A date
+ * with no readable time gets midday and `confirmed: false`, which tags the
+ * event "time TBA" rather than inventing an hour.
+ */
+export function parseSerpDate(
+  date: any,
+  timezone = "UTC",
+  now: Date = new Date(),
+): { iso: string | null; confirmed: boolean } {
+  const direct = date?.start_date_iso;
+  if (typeof direct === "string" && !isNaN(Date.parse(direct))) {
+    return { iso: new Date(direct).toISOString(), confirmed: /\d{2}:\d{2}/.test(direct) };
   }
-  return { iso: null, confirmed: false };
+
+  const when = typeof date?.when === "string" ? date.when : "";
+  const startDate = typeof date?.start_date === "string" ? date.start_date : "";
+  const fromWhen = findMonthDay(when);
+  const md = fromWhen ?? findMonthDay(startDate);
+  if (!md) return { iso: null, confirmed: false };
+
+  let year = now.getUTCFullYear();
+  // Two days of slack so an event that started yesterday evening is not
+  // pushed a year into the future.
+  if (Date.UTC(year, md.month - 1, md.day) < now.getTime() - 2 * 86_400_000) year += 1;
+
+  const time = fromWhen ? findStartTime(when.slice(fromWhen.end)) : null;
+  const hour = time?.hour ?? DEFAULT_EVENT_HOUR;
+  const minute = time?.minute ?? 0;
+
+  const offset = /GMT([+-])(\d{1,2})(?::?(\d{2}))?/.exec(when);
+  let at: Date;
+  if (offset) {
+    const sign = offset[1] === "-" ? -1 : 1;
+    const offsetMs = sign * (parseInt(offset[2], 10) * 60 + (offset[3] ? parseInt(offset[3], 10) : 0)) * 60_000;
+    at = new Date(Date.UTC(year, md.month - 1, md.day, hour, minute) - offsetMs);
+  } else {
+    at = zonedTimeToUtc(year, md.month, md.day, hour, minute, timezone);
+  }
+  if (isNaN(at.getTime())) return { iso: null, confirmed: false };
+  return { iso: at.toISOString(), confirmed: time != null };
 }
 
 /** Searches kept back each month so a runaway loop cannot drain the plan to zero. */
@@ -108,7 +178,7 @@ export async function fetchGoogleEvents(
         if (seen.has(key)) continue;
         seen.add(key);
 
-        const { iso, confirmed } = parseWhen(e.date);
+        const { iso, confirmed } = parseSerpDate(e.date, opts.timezone, opts.now);
         const addressParts = Array.isArray(e.address) ? e.address : [];
         out.push({
           title: String(e.title).slice(0, 140),

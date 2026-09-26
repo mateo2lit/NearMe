@@ -90,3 +90,40 @@ Deno.test("a throwing fetch never breaks the sync", async () => {
   assertEquals(out, []);
   assertEquals(reason, "network down");
 });
+
+// ─── SerpApi's prose dates ───────────────────────────────────
+import { parseSerpDate } from "./google-events.ts";
+
+const SEP26 = new Date("2026-09-26T12:00:00Z");
+const NY = "America/New_York";
+
+Deno.test("serp date — US range with the meridiem only at the end", () => {
+  const r = parseSerpDate({ start_date: "Sep 27", when: "Sat, Sep 27, 8 – 11 PM" }, NY, SEP26);
+  assertEquals(r, { iso: "2026-09-28T00:00:00.000Z", confirmed: true }); // 8 PM EDT
+});
+
+Deno.test("serp date — minutes and an explicit meridiem", () => {
+  const r = parseSerpDate({ start_date: "Oct 3", when: "Fri, Oct 3, 7:30 PM – 10:00 PM" }, NY, SEP26);
+  assertEquals(r.iso, "2026-10-03T23:30:00.000Z");
+});
+
+Deno.test("serp date — the documented day-first 24h form with a GMT offset", () => {
+  const r = parseSerpDate({ start_date: "Jan 3", when: "Sat, 03 Jan, 21:00–23:00 GMT-6" }, NY, SEP26);
+  // Jan 3 is behind Sep 26, so it is next year's; 21:00 at GMT-6 is 03:00Z.
+  assertEquals(r, { iso: "2027-01-04T03:00:00.000Z", confirmed: true });
+});
+
+Deno.test("serp date — a multi-day span is not read as 28 o'clock", () => {
+  const r = parseSerpDate({ start_date: "Sep 27", when: "Sep 27 – Sep 28" }, NY, SEP26);
+  assertEquals(r.confirmed, false);
+  assertEquals(r.iso, "2026-09-27T16:00:00.000Z"); // midday local, marked TBA
+});
+
+Deno.test("serp date — falls back to start_date, and nothing readable gives null", () => {
+  assertEquals(parseSerpDate({ start_date: "Nov 1" }, NY, SEP26).iso, "2026-11-01T17:00:00.000Z");
+  assertEquals(parseSerpDate({ when: "This weekend" }, NY, SEP26), { iso: null, confirmed: false });
+});
+
+Deno.test("serp date — yesterday evening stays this year", () => {
+  assertEquals(parseSerpDate({ when: "Fri, Sep 25, 9 PM" }, NY, SEP26).iso, "2026-09-26T01:00:00.000Z");
+});

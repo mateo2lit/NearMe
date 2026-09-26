@@ -38,6 +38,12 @@ export interface LabelTotals {
   output_tokens: number;
   cached_input_tokens: number;
   cost_usd: number;
+  /**
+   * The most recent failure's message, truncated. Present only when a call
+   * failed. Edge logs are not always reachable, and a failure count alone
+   * cannot tell a 400 from a timeout from an exhausted key.
+   */
+  last_error?: string;
 }
 
 export interface UsageSummary extends LabelTotals {
@@ -63,7 +69,10 @@ export function resetUsage(): void {
 
 function add(into: LabelTotals, rec: UsageRecord): void {
   into.calls += 1;
-  if (rec.error) into.failures += 1;
+  if (rec.error) {
+    into.failures += 1;
+    into.last_error = String(rec.error).slice(0, 300);
+  }
   into.input_tokens += rec.usage.input_tokens || 0;
   into.output_tokens += rec.usage.output_tokens || 0;
   into.cached_input_tokens += rec.usage.cached_input_tokens || 0;

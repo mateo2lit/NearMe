@@ -33,3 +33,31 @@ Deno.test("osm — an empty or malformed response yields nothing, not a throw", 
   assertEquals(parseOverpass(null), []);
   assertEquals(parseOverpass({ elements: [{ tags: { name: "x", website: "::::" } }] }), []);
 });
+
+Deno.test("osm — a refused primary falls through to a mirror, identifying the client", async () => {
+  const { discoverOsmCivic, OVERPASS_URLS, OVERPASS_USER_AGENT } = await import("./osm-civic.ts");
+  const seen: { url: string; ua: string | null }[] = [];
+  const found = await discoverOsmCivic({
+    lat: 26.37, lng: -80.08, radiusMeters: 20000,
+    fetcher: async (url, init) => {
+      seen.push({ url, ua: new Headers(init.headers).get("User-Agent") });
+      if (url === OVERPASS_URLS[0]) return new Response("Not Acceptable", { status: 406 });
+      return Response.json({ elements: [
+        { type: "node", id: 9, lat: 26.36, lon: -80.08, tags: { name: "Main Library", amenity: "library", website: "https://lib.example.gov" } },
+      ] });
+    },
+  });
+  assertEquals(found.map((f) => f.name), ["Main Library"]);
+  assertEquals(seen.map((s) => s.url), OVERPASS_URLS.slice(0, 2));
+  assertEquals(seen[0].ua, OVERPASS_USER_AGENT);
+});
+
+Deno.test("osm — every mirror failing throws one error naming each", async () => {
+  const { discoverOsmCivic } = await import("./osm-civic.ts");
+  let message = "";
+  try {
+    await discoverOsmCivic({ lat: 0, lng: 0, radiusMeters: 1000, fetcher: async () => new Response("", { status: 429 }) });
+  } catch (err) { message = (err as Error).message; }
+  assertEquals(message.includes("overpass-api.de HTTP 429"), true);
+  assertEquals(message.includes("maps.mail.ru HTTP 429"), true);
+});
