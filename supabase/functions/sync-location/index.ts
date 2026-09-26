@@ -2321,15 +2321,10 @@ serve(async (req: Request) => {
             cache: extractionCache,
           }))
         : Promise.resolve([]),
-      paced("espn", () => fetchCollegeSports({
-        lat, lng,
-        googleApiKey: GOOGLE_API_KEY || undefined,
-        daysForward: 14,
-      })),
-      paidDue("pickleheads") && GOOGLE_API_KEY && ANTHROPIC_API_KEY
+      paced("espn", () => fetchCollegeSports({ lat, lng, daysForward: 14 })),
+      paidDue("pickleheads") && ANTHROPIC_API_KEY
         ? paced("pickleheads", () => fetchPickleheadsEvents({
             lat, lng,
-            googleApiKey: GOOGLE_API_KEY,
             anthropicKey: ANTHROPIC_API_KEY,
           }))
         : Promise.resolve([]),

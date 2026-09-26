@@ -14,6 +14,8 @@
  * within ~200mi for regular-season college games.
  */
 
+import { reverseGeocodeOsm } from "./osm-geocode.ts";
+
 interface ESPNEvent {
   id: string;
   date: string;
@@ -121,30 +123,11 @@ async function timeoutFetch(url: string, timeoutMs: number): Promise<Response | 
 }
 
 /**
- * Reverse-geocode a lat/lng to a US state code using Google Geocoding API.
- * Used once per sync to find the user's state for ESPN venue filtering.
+ * The user's US state code, for ESPN venue filtering. OpenStreetMap, not
+ * Google Geocoding: see osm-geocode.ts.
  */
-export async function reverseGeocodeToState(
-  lat: number,
-  lng: number,
-  googleApiKey: string,
-): Promise<string | null> {
-  try {
-    const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${googleApiKey}&result_type=administrative_area_level_1`;
-    const res = await timeoutFetch(url, TIMEOUT_MS);
-    if (!res?.ok) return null;
-    const data = await res.json();
-    const result = data?.results?.[0];
-    if (!result) return null;
-    for (const comp of result.address_components || []) {
-      if ((comp.types || []).includes("administrative_area_level_1")) {
-        return (comp.short_name || comp.long_name || "").toUpperCase() || null;
-      }
-    }
-    return null;
-  } catch {
-    return null;
-  }
+export async function reverseGeocodeToState(lat: number, lng: number): Promise<string | null> {
+  return (await reverseGeocodeOsm(lat, lng))?.stateCode ?? null;
 }
 
 function yyyymmdd(d: Date): string {
@@ -240,7 +223,6 @@ function eventToExtract(
 export interface CollegeSportsOpts {
   lat: number;
   lng: number;
-  googleApiKey: string | undefined;
   daysForward?: number;
 }
 
@@ -249,8 +231,7 @@ export interface CollegeSportsOpts {
  * Returns up to ~daysForward days. Default 14.
  */
 export async function fetchCollegeSports(opts: CollegeSportsOpts): Promise<ESPNExtract[]> {
-  if (!opts.googleApiKey) return [];
-  const userState = await reverseGeocodeToState(opts.lat, opts.lng, opts.googleApiKey);
+  const userState = await reverseGeocodeToState(opts.lat, opts.lng);
   if (!userState) {
     console.log("[espn] no state for user lat/lng — skipping");
     return [];

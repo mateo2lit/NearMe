@@ -13,6 +13,7 @@
  */
 
 import { callClaudeList, EXTRACT_DESCRIPTION_MAX, FAST_MODEL } from "./anthropic.ts";
+import { reverseGeocodeOsm } from "./osm-geocode.ts";
 
 const PICKLE_SYSTEM = [
   "You extract pickleball events from Pickleheads city page text.",
@@ -83,29 +84,12 @@ async function timeoutFetch(url: string, ms: number, headers?: Record<string, st
 async function reverseGeocodeCity(
   lat: number,
   lng: number,
-  googleApiKey: string,
 ): Promise<{ city: string; state: string } | null> {
-  try {
-    const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${googleApiKey}`;
-    const res = await timeoutFetch(url, TIMEOUT_MS);
-    if (!res?.ok) return null;
-    const data = await res.json();
-    const result = data?.results?.[0];
-    if (!result) return null;
-    let city: string | null = null;
-    let state: string | null = null;
-    for (const comp of result.address_components || []) {
-      const types: string[] = comp.types || [];
-      if (types.includes("locality")) city = comp.long_name;
-      else if (!city && types.includes("postal_town")) city = comp.long_name;
-      else if (!city && types.includes("administrative_area_level_2")) city = comp.long_name;
-      if (types.includes("administrative_area_level_1")) state = comp.short_name;
-    }
-    if (!city || !state) return null;
-    return { city, state };
-  } catch {
-    return null;
-  }
+  // OpenStreetMap, not Google Geocoding: see osm-geocode.ts. Pickleheads'
+  // URLs use the state code ("fl"), which Google's short_name used to give.
+  const place = await reverseGeocodeOsm(lat, lng);
+  if (!place) return null;
+  return { city: place.city, state: place.stateCode ?? place.state };
 }
 
 function slugify(s: string): string {
@@ -171,12 +155,11 @@ async function extractWithClaude(
 export interface PickleheadsOpts {
   lat: number;
   lng: number;
-  googleApiKey: string;
   anthropicKey: string;
 }
 
 export async function fetchPickleheadsEvents(opts: PickleheadsOpts): Promise<PickleExtract[]> {
-  const geo = await reverseGeocodeCity(opts.lat, opts.lng, opts.googleApiKey);
+  const geo = await reverseGeocodeCity(opts.lat, opts.lng);
   if (!geo) {
     console.log("[pickleheads] no city — skipping");
     return [];
