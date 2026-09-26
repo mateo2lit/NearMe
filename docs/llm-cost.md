@@ -131,12 +131,30 @@ which counts a trial user and a lapsed one alike. A RevenueCat webhook writing
 entitlement state to Postgres would let `pickCuratorTargets` gate on paying
 users and scale refresh frequency with subscriber count.
 
-## Config worth checking
+## Meetup API: not the quick win it looks like
 
-`MEETUP_API_TOKEN` — `_shared/meetup-fetcher.ts` uses Meetup's GraphQL API when
-a token is set and falls back to 12 LLM extractions per run when it is not. If
-that token is unset in the Edge environment, setting it removes roughly 30% of
-the call count for no code change.
+`_shared/meetup-fetcher.ts` uses Meetup's GraphQL API when `MEETUP_API_TOKEN`
+is set and falls back to 12 LLM extractions when it is not, so setting that
+variable looks like free money. It is not, for two reasons, both checked against
+Meetup's own docs on 2026-09-25:
+
+- **Tokens expire after 3600 seconds** and refresh tokens are single use —
+  reusing one invalidates the session. A static env-var bearer works for one
+  hour and then fails silently back to the scrape path forever. Making this work
+  needs the JWT (server-to-server) flow plus token caching, not a setting.
+- **Creating an OAuth consumer appears to require a paid Meetup Pro
+  subscription.** Meetup's help docs say so; their authentication docs do not
+  mention it either way, so confirm before planning around it.
+
+Also: the code targets `https://api.meetup.com/gql`; the currently documented
+endpoint is `/gql-ext`.
+
+**Not worth doing at current scale.** Since migration 033 the extraction cache
+caps Meetup at one extraction per bucket per day rather than twelve per refresh,
+so the source costs roughly $2/month per city. A Pro subscription plus an OAuth
+implementation does not pay that back until many cities are live — and the gap
+gate below would skip Meetup entirely in cities where the free sources already
+fill the feed.
 
 ## Reading the ledger
 
