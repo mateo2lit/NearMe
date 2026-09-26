@@ -160,7 +160,12 @@ export async function fetchGoogleEvents(
   for (const q of queries) {
     try {
       const url = new URL("https://serpapi.com/search.json");
-      url.searchParams.set("engine", "google_events");
+      // Regular Google Search. SerpApi retired the dedicated `google_events`
+      // engine (it now answers "Unsupported `google_events` search engine")
+      // because Google's events page stopped returning results; the same
+      // listings arrive as `events_results` on an ordinary "events in <city>"
+      // search.
+      url.searchParams.set("engine", "google");
       url.searchParams.set("q", q);
       url.searchParams.set("hl", "en");
       url.searchParams.set("api_key", opts.apiKey);

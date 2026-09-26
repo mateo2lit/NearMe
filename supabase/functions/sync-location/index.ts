@@ -2065,7 +2065,11 @@ serve(async (req: Request) => {
     // A worker invocation: one share of one heavy source, for an orchestrating
     // refresh that already did the claim, budget and gap checks.
     if (body.worker) {
-      if (!hasServiceRole(req)) {
+      // The orchestrator authenticates with this function's own service key.
+      // Newer Supabase secret keys are not JWTs, so hasServiceRole (which
+      // reads a JWT's role claim) refused them; an exact match is the check.
+      const bearer = req.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
+      if (!(bearer && bearer === SUPABASE_SERVICE_KEY) && !hasServiceRole(req)) {
         return new Response(JSON.stringify({ error: "worker_auth_required" }), { status: 403 });
       }
       if (!isValidPart(body.part)) {
