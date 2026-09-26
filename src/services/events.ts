@@ -163,7 +163,7 @@ export async function fetchNearbyEvents(
   radiusMiles: number,
   categories?: EventCategory[],
   tags?: string[],
-  opts?: { cachedOnly?: boolean }
+  opts?: { cachedOnly?: boolean; allowAi?: boolean }
 ): Promise<Event[]> {
   if (!supabase) return [];
 
@@ -187,10 +187,12 @@ export async function fetchNearbyEvents(
   // If sparse, trigger a sync + re-fetch before trying wider/looser queries
   if (events.length < MIN_FEED_EVENTS) {
     const syncRadius = Math.max(radiusMiles, 25);
-    await triggerLocationSync(lat, lng, syncRadius, true);
+    // allowAi: false is the onboarding preview: it runs before the paywall,
+    // so it must not pay for an AI refresh for someone who may never subscribe.
+    await triggerLocationSync(lat, lng, syncRadius, true, { allowAi: opts?.allowAi ?? true });
     const refetched = await discover(lat, lng, radiusMiles, categories, tags);
     events = mergeUnique(events, refetched);
-  } else {
+  } else if (opts?.allowAi !== false) {
     // Background ping also asks for the AI half. The server decides whether to
     // spend: a healthy cell is on a 6-hour cooldown, so this costs nothing most
     // of the time, and keeps scraped listings from aging out otherwise. Since

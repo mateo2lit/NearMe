@@ -34,6 +34,9 @@ import { setFeedHandoff, getFeedHandoff } from "../src/services/eventCache";
 import { CelebrateStep } from "../src/components/CelebrateStep";
 import { getOrCreateUserId } from "../src/hooks/usePreferences";
 import { saveProfileToServer } from "../src/services/profileSync";
+import { fetchClaudeRanking } from "../src/services/claudeRank";
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from "../src/services/supabase";
+import { attachRanking, pickHero, selectRankCandidates } from "../src/lib/teaserPick";
 import { trialDaysFor } from "../src/lib/trialOffer";
 import { getEventImage } from "../src/constants/images";
 import {
@@ -246,8 +249,9 @@ export default function Onboarding() {
     await AsyncStorage.setItem("@nearme_preferences", JSON.stringify(nextPrefs));
 
     // Without a server-side profile claude-rank 404s and the feed is never
-    // personalized. Not awaited: the building step must not wait on it.
-    saveProfileToServer({
+    // personalized. Returned rather than awaited: the building step starts its
+    // sync immediately and only waits on this right before ranking.
+    return saveProfileToServer({
       ...nextPrefs,
       lat: existingPrefs.customLocation?.lat ?? existingPrefs.lat ?? null,
       lng: existingPrefs.customLocation?.lng ?? existingPrefs.lng ?? null,
@@ -967,7 +971,7 @@ function BuildingStep({
   lat: number;
   lng: number;
   onDone: (events: Event[], count: number) => void;
-  savePreferences: () => Promise<void>;
+  savePreferences: () => Promise<boolean>;
 }) {
   const [currentTask, setCurrentTask] = useState(0);
   const [progress, setProgress] = useState(0);
@@ -1001,7 +1005,7 @@ function BuildingStep({
   ];
 
   useEffect(() => {
-    savePreferences();
+    const profileReady = savePreferences();
 
     // Spinning ring
     Animated.loop(
@@ -1053,16 +1057,21 @@ function BuildingStep({
     // Run real sync using user's ACTUAL location (from useLocation hook)
     (async () => {
       try {
-        await triggerLocationSync(lat, lng, 15, true);
+        // Free sources only. This runs before the paywall, and an AI refresh
+        // here was ~$0.20 for every install in a cold city, subscriber or not.
+        // The Discover tab asks for the AI refresh once the trial has started.
+        await triggerLocationSync(lat, lng, 15, true, { allowAi: false });
 
         // Try within 15 miles first, fall back to wider radius if nothing
-        let events = await fetchNearbyEvents(lat, lng, 15);
+        const noAi = { allowAi: false };
+        let events: Event[] = await fetchNearbyEvents(lat, lng, 15, undefined, undefined, noAi);
         if (events.length === 0) {
-          events = await fetchNearbyEvents(lat, lng, 30);
+          events = await fetchNearbyEvents(lat, lng, 30, undefined, undefined, noAi);
         }
         if (events.length === 0) {
-          events = await fetchNearbyEvents(lat, lng, 50);
+          events = await fetchNearbyEvents(lat, lng, 50, undefined, undefined, noAi);
         }
+        events = await rankForPreview(events, goals, profileReady);
         fetchDone = true;
 
         const minTotal = taskElapsed + 1200;
@@ -1287,13 +1296,38 @@ function scoreEventForGoals(event: Event, selectedGoalIds: string[]): number {
 }
 
 function pickBestMatch(events: Event[], goals: string[]): Event | undefined {
-  if (!events.length) return undefined;
-  const scored = events
-    .map((e) => ({ event: e, score: scoreEventForGoals(e, goals) }))
-    .filter((s) => Number.isFinite(s.score) && s.score >= HERO_MIN_SCORE);
-  if (!scored.length) return undefined;
-  scored.sort((a, b) => b.score - a.score);
-  return scored[0].event;
+  return pickHero(events, (e) => scoreEventForGoals(e, goals), HERO_MIN_SCORE);
+}
+
+/** Longest the preview waits on claude-rank before falling back to goal scores. */
+const PREVIEW_RANK_TIMEOUT_MS = 8000;
+
+/**
+ * Let claude-rank choose the preview's hero from events that already pass the
+ * quality bar. One Haiku call (~$0.01) per install, a fraction of the AI
+ * refresh it replaces. Any failure (no profile yet, timeout, circuit open)
+ * returns the events unranked and the goal-keyword score picks instead.
+ */
+async function rankForPreview(
+  events: Event[], goals: string[], profileReady: Promise<boolean>,
+): Promise<Event[]> {
+  const candidates = selectRankCandidates(events, (e) => scoreEventForGoals(e, goals));
+  if (candidates.length < 2) return events;
+  try {
+    if (!(await profileReady)) return events;
+    const ranking = await Promise.race([
+      fetchClaudeRanking({
+        userId: await getOrCreateUserId(),
+        eventIds: candidates.map((e) => e.id),
+        supabaseUrl: SUPABASE_URL,
+        anonKey: SUPABASE_ANON_KEY,
+      }),
+      new Promise<[]>((resolve) => setTimeout(() => resolve([]), PREVIEW_RANK_TIMEOUT_MS)),
+    ]);
+    return attachRanking(events, ranking);
+  } catch {
+    return events;
+  }
 }
 
 // Map the user's selected goals into a single representative palette for
@@ -1549,6 +1583,13 @@ function TeaserCard({ event, palette, matchPct }: { event: Event; palette: GoalP
           </View>
         )}
       </View>
+      {/* claude-rank's reason, tied to something the user actually answered. */}
+      {!!event.blurb && (
+        <View style={styles.teaserWhy}>
+          <Ionicons name="sparkles" size={14} color={palette.solid} />
+          <Text style={styles.teaserWhyText} numberOfLines={2}>{event.blurb}</Text>
+        </View>
+      )}
     </View>
   );
 }
@@ -2492,6 +2533,19 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: COLORS.text,
     fontWeight: "600",
+  },
+  teaserWhy: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingBottom: 14,
+  },
+  teaserWhyText: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 18,
+    color: COLORS.text,
   },
   teaserFreeBadge: {
     backgroundColor: COLORS.success + "20",
