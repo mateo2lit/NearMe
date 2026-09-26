@@ -2,8 +2,8 @@ import { useState, useEffect, useCallback } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { EventCategory, UserPreferences } from "../types";
 import { DEFAULT_RADIUS_MILES } from "../constants/theme";
-import { supabase } from "../services/supabase";
 import { getUserId } from "../services/identity";
+import { saveProfileToServer } from "../services/profileSync";
 
 const PREFS_KEY = "@nearme_preferences";
 const ONBOARDED_KEY = "@nearme_onboarded";
@@ -56,26 +56,7 @@ export function usePreferences() {
     setPreferences(prefs);
     await AsyncStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
 
-    const userId = await getOrCreateUserId();
-    if (supabase) {
-      await supabase.from("user_profiles").upsert({
-        id: userId,
-        goals: prefs.onboarding?.goals ?? [],
-        vibe: prefs.onboarding?.vibe ?? null,
-        social: prefs.onboarding?.social ?? null,
-        schedule: prefs.onboarding?.schedule ?? null,
-        blocker: prefs.onboarding?.blocker ?? null,
-        budget: prefs.onboarding?.budget ?? null,
-        happy_hour: prefs.onboarding?.happyHour ?? true,
-        categories: prefs.categories ?? [],
-        tags: prefs.tags ?? [],
-        hidden_categories: prefs.hiddenCategories ?? [],
-        hidden_tags: prefs.hiddenTags ?? [],
-        default_lat: prefs.lat,
-        default_lng: prefs.lng,
-        updated_at: new Date().toISOString(),
-      });
-    }
+    await saveProfileToServer(prefs);
   }, []);
 
   const completeOnboarding = useCallback(async () => {

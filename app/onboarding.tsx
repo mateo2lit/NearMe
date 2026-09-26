@@ -33,6 +33,7 @@ import { fetchNearbyEvents, triggerLocationSync, effectiveStart } from "../src/s
 import { setFeedHandoff, getFeedHandoff } from "../src/services/eventCache";
 import { CelebrateStep } from "../src/components/CelebrateStep";
 import { getOrCreateUserId } from "../src/hooks/usePreferences";
+import { saveProfileToServer } from "../src/services/profileSync";
 import { trialDaysFor } from "../src/lib/trialOffer";
 import { getEventImage } from "../src/constants/images";
 import {
@@ -234,17 +235,23 @@ export default function Onboarding() {
     const existingPrefsStr = await AsyncStorage.getItem("@nearme_preferences");
     const existingPrefs = existingPrefsStr ? JSON.parse(existingPrefsStr) : {};
 
-    await AsyncStorage.setItem(
-      "@nearme_preferences",
-      JSON.stringify({
-        ...existingPrefs,
-        categories: Array.from(categorySet),
-        tags: Array.from(tagSet),
-        radius: 10,
-        happyHourEnabled: happyHour !== "hide",
-        onboarding: { goals, vibe, social, schedule, blocker, budget, happyHour },
-      })
-    );
+    const nextPrefs = {
+      ...existingPrefs,
+      categories: Array.from(categorySet),
+      tags: Array.from(tagSet),
+      radius: 10,
+      happyHourEnabled: happyHour !== "hide",
+      onboarding: { goals, vibe, social, schedule, blocker, budget, happyHour },
+    };
+    await AsyncStorage.setItem("@nearme_preferences", JSON.stringify(nextPrefs));
+
+    // Without a server-side profile claude-rank 404s and the feed is never
+    // personalized. Not awaited: the building step must not wait on it.
+    saveProfileToServer({
+      ...nextPrefs,
+      lat: existingPrefs.customLocation?.lat ?? existingPrefs.lat ?? null,
+      lng: existingPrefs.customLocation?.lng ?? existingPrefs.lng ?? null,
+    });
   };
 
   // Only called on successful subscription/trial start

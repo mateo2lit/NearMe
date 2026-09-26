@@ -54,6 +54,8 @@ healthy cell, 2 hours for a thin one.
 | 7 | Scheduled curation stopped; cooldowns retuned to 6h/2h | migration 032, `_shared/sync-log.ts` |
 | 8 | Meetup + high-school extractions cached by signature, day-stamped | `_shared/extraction-cache.ts`, migration 033 |
 | 9 | Ranking cut from 60 events to 30 | `claude-rank/index.ts` |
+| 10 | Onboarding writes `user_profiles`; one-time backfill for existing devices | `src/services/profileSync.ts`, `app/onboarding.tsx` |
+| 11 | Ranking reuses each user's score per event for 24h (per profile version) | `claude-rank/index.ts`, migration 034 |
 
 On (1): three separate 400s in this codebase were swallowed as warnings — the
 `effort` parameter, an `array`-type field combined with `enum`, and the ranking
@@ -63,6 +65,25 @@ Treat a silent warning on an API call as a bug.
 On (3): the skip mechanism already existed and almost never fired, because a
 rolling date banner or a `?v=8891` asset URL made an unchanged page look new.
 The fix was a stable hash, not new machinery.
+
+## Ranking had never run (found 2026-09-25)
+
+`claude_runs` held zero `rank` rows and `user_profiles` held zero rows, against
+five anonymous `auth.users`. The May onboarding restored on 2026-09-12 saved
+preferences to AsyncStorage only, so `claude-rank` returned 404
+`profile_not_found` on every load and the client showed an unranked feed with no
+error. "Picked for you", the thing the subscription is sold on, was off, and
+the ~$0.95/user/month in the table above was really $0.
+
+Fix 10 turns it on, which adds that cost back. Fix 11 caps it: a feed load pays
+only for events this user has not had scored in the last 24 hours under the
+current profile, so the per-user cost tracks new events rather than app opens.
+Measure it with `select error_message, count(*), sum(cost_usd) from claude_runs
+where phase = 'rank' group by 1` (`cache_hit:N` marks reused scores).
+
+Quality note: scores from different calls are mixed in one feed. Each call
+scores absolute fit (0-100) against the same profile, so they should compare,
+but there is no eval to confirm it.
 
 ## Next: the gap gate
 

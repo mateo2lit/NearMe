@@ -84,6 +84,63 @@ function buildRankPrompt(profile: ProfileRow, events: EventLite[]): string {
  */
 export const MAX_EVENT_IDS = 30;
 
+interface Ranked { event_id: string; rank_score: number; blurb: string }
+
+/**
+ * How long a user's score for an event is reused. A city's catalog refreshes
+ * every 2-6 hours but mostly re-finds the same events, so without this nearly
+ * every feed load re-asked Haiku about events it had just scored. A preference
+ * change invalidates sooner, through `profile_version`.
+ */
+export const RANK_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+function byScore(rows: Ranked[]): Ranked[] {
+  return [...rows].sort((a, b) => b.rank_score - a.rank_score);
+}
+
+/** A failed read is a cache miss, never an error: it only costs one fresh ranking. */
+async function readRankCache(
+  supabase: any, userId: string, profileVersion: string, eventIds: string[],
+): Promise<Ranked[]> {
+  const cutoffMs = Date.now() - RANK_CACHE_TTL_MS;
+  const { data, error } = await supabase
+    .from("rank_cache")
+    .select("event_id,rank_score,blurb,profile_version,created_at")
+    .eq("user_id", userId)
+    .eq("profile_version", profileVersion)
+    .gte("created_at", new Date(cutoffMs).toISOString())
+    .in("event_id", eventIds);
+  if (error || !Array.isArray(data)) {
+    if (error) console.log(`[claude-rank] cache read skipped: ${error.message}`);
+    return [];
+  }
+  const wanted = new Set(eventIds);
+  return data
+    .filter((r: any) =>
+      wanted.has(r.event_id) &&
+      r.profile_version === profileVersion &&
+      Date.parse(r.created_at) >= cutoffMs)
+    .map((r: any) => ({ event_id: r.event_id, rank_score: Number(r.rank_score), blurb: r.blurb ?? "" }));
+}
+
+async function writeRankCache(
+  supabase: any, userId: string, profileVersion: string, rows: Ranked[],
+): Promise<void> {
+  const now = new Date().toISOString();
+  const { error } = await supabase.from("rank_cache").upsert(
+    rows.map((r) => ({
+      user_id: userId,
+      event_id: r.event_id,
+      profile_version: profileVersion,
+      rank_score: r.rank_score,
+      blurb: r.blurb,
+      created_at: now,
+    })),
+    { onConflict: "user_id,event_id" },
+  );
+  if (error) console.log(`[claude-rank] cache write failed: ${error.message}`);
+}
+
 export async function handleRankRequest(req: RankRequest): Promise<Response> {
   const { body, deps } = req;
   if (!body.user_id || !Array.isArray(body.event_ids) || body.event_ids.length === 0) {
@@ -112,16 +169,51 @@ export async function handleRankRequest(req: RankRequest): Promise<Response> {
     return new Response(JSON.stringify({ error: "profile_not_found" }), { status: 404 });
   }
 
-  const { data: events, error: eErr } = await deps.supabase
-    .from("events").select("id,title,category,tags,is_free,price_min")
-    .in("id", eventIds)
-    .limit(MAX_EVENT_IDS);
-  if (eErr) return new Response(JSON.stringify({ error: "events_lookup_failed" }), { status: 500 });
-
   const startedAt = new Date().toISOString();
-  const prompt = buildRankPrompt(profile as ProfileRow, (events ?? []) as EventLite[]);
+  const profileVersion = String((profile as { updated_at?: unknown }).updated_at ?? "");
+  const cached = await readRankCache(deps.supabase, body.user_id, profileVersion, eventIds);
+  const cachedIds = new Set(cached.map((r) => r.event_id));
+  const missing = eventIds.filter((id) => !cachedIds.has(id));
 
-  let parsed: { event_id: string; rank_score: number; blurb: string }[] = [];
+  let events: EventLite[] = [];
+  if (missing.length > 0) {
+    const { data, error: eErr } = await deps.supabase
+      .from("events").select("id,title,category,tags,is_free,price_min")
+      .in("id", missing)
+      .limit(MAX_EVENT_IDS);
+    if (eErr) return new Response(JSON.stringify({ error: "events_lookup_failed" }), { status: 500 });
+    const wanted = new Set(missing);
+    events = ((data ?? []) as EventLite[]).filter((e) => wanted.has(e.id));
+  }
+
+  // Everything asked for was scored recently for this version of the profile.
+  if (events.length === 0) {
+    await deps.runWriter({
+      phase: "rank",
+      user_id: body.user_id,
+      geohash: null,
+      started_at: startedAt,
+      finished_at: new Date().toISOString(),
+      status: "ok",
+      events_emitted: 0,
+      events_persisted: 0,
+      rejections: [],
+      input_tokens: 0,
+      output_tokens: 0,
+      cached_input_tokens: 0,
+      web_searches: null,
+      cost_usd: 0,
+      error_message: `cache_hit:${cached.length}`,
+    });
+    return new Response(JSON.stringify(byScore(cached)), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  const prompt = buildRankPrompt(profile as ProfileRow, events);
+
+  let parsed: Ranked[] = [];
   let cost = 0;
   let usage = { input_tokens: 0, output_tokens: 0, cached_input_tokens: 0 };
   let status: "ok" | "error" = "ok";
@@ -153,9 +245,16 @@ export async function handleRankRequest(req: RankRequest): Promise<Response> {
     const payload = JSON.parse(txt);
     parsed = payload?.rankings;
     if (!Array.isArray(parsed)) throw new Error("not an array");
+    // Only ids we actually sent: a made-up id would fail the cache write's
+    // foreign key and take every other row in the batch down with it.
+    const sent = new Set(events.map((e) => e.id));
     parsed = parsed
-      .filter((p) => typeof p?.event_id === "string" && typeof p?.rank_score === "number")
-      .map((p) => ({ ...p, blurb: typeof p.blurb === "string" ? p.blurb.slice(0, 80) : "" }));
+      .filter((p) => typeof p?.event_id === "string" && typeof p?.rank_score === "number" && sent.has(p.event_id))
+      .map((p) => ({
+        event_id: p.event_id,
+        rank_score: p.rank_score,
+        blurb: typeof p.blurb === "string" ? p.blurb.slice(0, 80) : "",
+      }));
 
     usage = {
       input_tokens: resp.usage?.input_tokens ?? 0,
@@ -184,10 +283,12 @@ export async function handleRankRequest(req: RankRequest): Promise<Response> {
     cached_input_tokens: usage.cached_input_tokens,
     web_searches: null,
     cost_usd: cost,
-    error_message: errorMessage,
+    error_message: errorMessage ?? (cached.length > 0 ? `cache_hit:${cached.length}` : null),
   });
 
-  return new Response(JSON.stringify(parsed), {
+  if (parsed.length > 0) await writeRankCache(deps.supabase, body.user_id, profileVersion, parsed);
+
+  return new Response(JSON.stringify(byScore([...cached, ...parsed])), {
     status: 200,
     headers: { "Content-Type": "application/json" },
   });

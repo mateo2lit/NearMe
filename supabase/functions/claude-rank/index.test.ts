@@ -158,3 +158,124 @@ Deno.test("ranking asks for no more events than the feed can show", async () => 
   // max_tokens sized to the cap: ~40 output tokens per ranked event plus slack.
   assertEquals(sent.max_tokens, 1500);
 });
+
+// ─── Rank cache ──────────────────────────────────────────────
+// A user's score for an event is reused for 24h against the same profile
+// version, so a feed load only pays for events it has not scored yet.
+
+const PROFILE_V = "2026-09-25T12:00:00+00:00";
+const versionedProfile = { ...fakeProfile, updated_at: PROFILE_V };
+const fresh = () => new Date().toISOString();
+
+function countingAnthropic(rankings: any[]) {
+  const calls: any[] = [];
+  return {
+    calls,
+    client: {
+      messages: {
+        create: async (opts: any) => {
+          calls.push(opts);
+          return {
+            content: [{ type: "text", text: JSON.stringify({ rankings }) }],
+            usage: { input_tokens: 500, output_tokens: 40, cache_read_input_tokens: 0 },
+            model: opts.model,
+          };
+        },
+      },
+    } as any,
+  };
+}
+
+Deno.test("rank cache — a full hit returns cached scores without calling Claude", async () => {
+  const supabase = makeFakeSupabase({
+    tables: {
+      events: fakeEvents,
+      rank_cache: [
+        { event_id: "e1", rank_score: 90, blurb: "cached jazz", profile_version: PROFILE_V, created_at: fresh() },
+        { event_id: "e2", rank_score: 10, blurb: "cached gym", profile_version: PROFILE_V, created_at: fresh() },
+      ],
+    },
+    singles: { user_profiles: versionedProfile, claude_circuit: { enabled: true } },
+  });
+  const a = countingAnthropic([]);
+  const rows: any[] = [];
+  const res = await handleRankRequest({
+    body: { user_id: "u1", event_ids: ["e1", "e2"] },
+    deps: { supabase, anthropic: a.client, runWriter: async (r) => { rows.push(r); } },
+  });
+  const json = await res.json();
+  assertEquals(a.calls.length, 0);
+  assertEquals(json.map((r: any) => r.event_id), ["e1", "e2"]);
+  assertEquals(rows[0].cost_usd, 0);
+  assertEquals(rows[0].error_message, "cache_hit:2");
+});
+
+Deno.test("rank cache — a partial hit sends Claude only the unscored events and caches them", async () => {
+  const supabase = makeFakeSupabase({
+    tables: {
+      events: fakeEvents,
+      rank_cache: [
+        { event_id: "e1", rank_score: 90, blurb: "cached jazz", profile_version: PROFILE_V, created_at: fresh() },
+      ],
+    },
+    singles: { user_profiles: versionedProfile, claude_circuit: { enabled: true } },
+  });
+  const a = countingAnthropic([{ event_id: "e2", rank_score: 20, blurb: "new gym" }]);
+  const res = await handleRankRequest({
+    body: { user_id: "u1", event_ids: ["e1", "e2"] },
+    deps: { supabase, anthropic: a.client, runWriter: async () => {} },
+  });
+  const json = await res.json();
+  assertEquals(a.calls.length, 1);
+  const prompt = a.calls[0].messages[0].content as string;
+  assertEquals(prompt.includes("Crossfit class"), true);
+  assertEquals(prompt.includes("Jazz at The Wick"), false);
+  assertEquals(json.map((r: any) => r.event_id), ["e1", "e2"]);
+  const write = supabase.writes.find((w: any) => w.table === "rank_cache");
+  assertEquals((write!.rows as any[]).map((r) => r.event_id), ["e2"]);
+  assertEquals((write!.rows as any[])[0].profile_version, PROFILE_V);
+});
+
+Deno.test("rank cache — scores from an older profile or older than 24h are not reused", async () => {
+  const dayAgo = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
+  const supabase = makeFakeSupabase({
+    tables: {
+      events: fakeEvents,
+      rank_cache: [
+        { event_id: "e1", rank_score: 90, blurb: "old tastes", profile_version: "2026-01-01T00:00:00+00:00", created_at: fresh() },
+        { event_id: "e2", rank_score: 10, blurb: "stale", profile_version: PROFILE_V, created_at: dayAgo },
+      ],
+    },
+    singles: { user_profiles: versionedProfile, claude_circuit: { enabled: true } },
+  });
+  const a = countingAnthropic([
+    { event_id: "e1", rank_score: 70, blurb: "fresh jazz" },
+    { event_id: "e2", rank_score: 30, blurb: "fresh gym" },
+  ]);
+  const res = await handleRankRequest({
+    body: { user_id: "u1", event_ids: ["e1", "e2"] },
+    deps: { supabase, anthropic: a.client, runWriter: async () => {} },
+  });
+  const json = await res.json();
+  assertEquals(a.calls.length, 1);
+  assertEquals(json[0].blurb, "fresh jazz");
+});
+
+Deno.test("rank cache — an event id the model made up is neither returned nor cached", async () => {
+  const supabase = makeFakeSupabase({
+    tables: { events: fakeEvents, rank_cache: [] },
+    singles: { user_profiles: versionedProfile, claude_circuit: { enabled: true } },
+  });
+  const a = countingAnthropic([
+    { event_id: "e1", rank_score: 80, blurb: "real" },
+    { event_id: "not-a-real-event", rank_score: 99, blurb: "invented" },
+  ]);
+  const res = await handleRankRequest({
+    body: { user_id: "u1", event_ids: ["e1", "e2"] },
+    deps: { supabase, anthropic: a.client, runWriter: async () => {} },
+  });
+  const json = await res.json();
+  assertEquals(json.map((r: any) => r.event_id), ["e1"]);
+  const write = supabase.writes.find((w: any) => w.table === "rank_cache");
+  assertEquals((write!.rows as any[]).map((r) => r.event_id), ["e1"]);
+});

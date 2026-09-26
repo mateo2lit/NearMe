@@ -8,6 +8,7 @@ import { configureIap } from "../src/services/iap";
 import { initCrashReporting, identifyForCrashReports } from "../src/services/crashReporting";
 import { getOrCreateUserId } from "../src/hooks/usePreferences";
 import { configureNotifications } from "../src/services/reminders";
+import { backfillProfileOnce } from "../src/services/profileSync";
 
 export default function RootLayout() {
   // Start reporting before anything else so a crash during startup is caught.
@@ -17,6 +18,7 @@ export default function RootLayout() {
     configureIap().catch(() => {});
     configureNotifications().catch(() => {});
     getOrCreateUserId().then(identifyForCrashReports).catch(() => {});
+    backfillProfileOnce();
   }, []);
 
   return (
