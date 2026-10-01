@@ -61,3 +61,25 @@ Deno.test("osm — every mirror failing throws one error naming each", async () 
   assertEquals(message.includes("overpass-api.de HTTP 429"), true);
   assertEquals(message.includes("maps.mail.ru HTTP 429"), true);
 });
+
+Deno.test("osm — mirrors that never answer give up at the overall deadline", async () => {
+  const { discoverOsmCivic } = await import("./osm-civic.ts");
+  let calls = 0;
+  const hang = (_url: string, init: RequestInit) => {
+    calls++;
+    return new Promise<Response>((_, reject) => {
+      init.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+    });
+  };
+  const started = Date.now();
+  let message = "";
+  try {
+    await discoverOsmCivic({ lat: 0, lng: 0, radiusMeters: 1000, fetcher: hang, deadlineMs: 200 });
+  } catch (err) {
+    message = (err as Error).message;
+  }
+  const elapsed = Date.now() - started;
+  assertEquals(elapsed < 1000, true, `took ${elapsed}ms`);
+  assertEquals(calls, 1); // the first mirror used the whole budget; the rest were never tried
+  assertEquals(message.includes("deadline"), true, message);
+});

@@ -35,6 +35,9 @@ export const OVERPASS_URLS = [
   "https://overpass.kumi.systems/api/interpreter",
 ];
 
+/** Total time library discovery may take; it retries the next day on failure. */
+export const DISCOVERY_DEADLINE_MS = 20_000;
+
 export const OVERPASS_USER_AGENT = "NearMe-events/1.0 (local events app; finds public library calendars)";
 
 const SELECTORS = [
@@ -99,12 +102,25 @@ export async function discoverOsmCivic(opts: {
   lng: number;
   radiusMeters: number;
   fetcher: (url: string, init: RequestInit) => Promise<Response>;
+  /**
+   * One budget for every mirror together. Trying four mirrors one after another,
+   * each with its own timeout, took ~90s on 2026-10-01 when all of them failed,
+   * and pushed a city's first refresh past the 150s request limit.
+   */
+  deadlineMs?: number;
 }): Promise<OsmCivicSource[]> {
   const body = new URLSearchParams({ data: buildOverpassQuery(opts.lat, opts.lng, opts.radiusMeters) }).toString();
   const failures: string[] = [];
+  const deadline = Date.now() + (opts.deadlineMs ?? DISCOVERY_DEADLINE_MS);
   for (const url of OVERPASS_URLS) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      failures.push(`deadline of ${opts.deadlineMs ?? DISCOVERY_DEADLINE_MS}ms reached`);
+      break;
+    }
     try {
       const res = await opts.fetcher(url, {
+        signal: AbortSignal.timeout(remaining),
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",

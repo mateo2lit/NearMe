@@ -193,7 +193,9 @@ async function timeoutFetch(
   const ac = new AbortController();
   const id = setTimeout(() => ac.abort(), timeoutMs ?? UPSTREAM_TIMEOUT_MS);
   try {
-    return await fetch(input, { ...rest, signal: ac.signal });
+    // Honor the caller's signal too (e.g. a shared deadline across retries).
+    const signal = rest.signal ? AbortSignal.any([ac.signal, rest.signal]) : ac.signal;
+    return await fetch(input, { ...rest, signal });
   } finally {
     clearTimeout(id);
   }
