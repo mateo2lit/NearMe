@@ -30,6 +30,7 @@ import { isSourceDue, onCadence, type SourceRunStore } from "../_shared/source-c
 import { aiSpentLast24h, globalDailyUsd, globalDecision } from "../_shared/global-budget.ts";
 import { discoverOsmCivic } from "../_shared/osm-civic.ts";
 import { reverseGeocodeOsm } from "../_shared/osm-geocode.ts";
+import { isSubscribed, userIdFromRequest } from "../_shared/entitlement.ts";
 import { isValidPart, type Part, PARTS, takePart } from "../_shared/work-split.ts";
 import {
   nextLocalOccurrence,
@@ -165,6 +166,10 @@ const MEETUP_API_TOKEN = Deno.env.get("MEETUP_API_TOKEN");
 // Optional: SerpApi key for Google Events. 250 searches/month free. Unset
 // means this source is simply off — see _shared/google-events.ts.
 const SERPAPI_KEY = Deno.env.get("SERPAPI_KEY");
+const REVENUECAT_SECRET_KEY = Deno.env.get("REVENUECAT_SECRET_KEY") ?? "";
+const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+/** Off until the build that sends user JWTs is live; until then, only logged. */
+const AI_REQUIRES_SUBSCRIPTION = Deno.env.get("AI_REQUIRES_SUBSCRIPTION") === "true";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
@@ -2143,12 +2148,27 @@ serve(async (req: Request) => {
     const hoursSince = lastSync
       ? (Date.now() - new Date(lastSync).getTime()) / 3600000
       : Infinity;
+    // Only a subscriber's request may spend on AI. Asked only when AI is
+    // requested, so free refreshes never call RevenueCat.
+    let requestedAi = body.allow_ai === true;
+    let entitlementNote: string | null = null;
+    if (requestedAi && !isCurator) {
+      const userId = await userIdFromRequest(req, supabase, SUPABASE_ANON_KEY, SUPABASE_SERVICE_KEY);
+      const subscribed = userId
+        ? await isSubscribed(userId, { supabase, secretKey: REVENUECAT_SECRET_KEY })
+        : false;
+      if (!subscribed) {
+        entitlementNote = userId ? "not subscribed" : "no signed-in user";
+        console.log(`[entitlement] ${entitlementNote}${AI_REQUIRES_SUBSCRIPTION ? " — AI off" : " (not enforced)"}`);
+        if (AI_REQUIRES_SUBSCRIPTION) requestedAi = false;
+      }
+    }
     // Two clocks. `synced_at` paces the free sources; `ai_synced_at` paces the
     // paid ones. A free-only refresh (the onboarding preview) must not start
     // the AI cooldown and hold back a new subscriber's first real refresh.
     const aiPolicy = syncPolicy({
       lastSync: syncLog?.[0]?.ai_synced_at ?? null, lastCount, lookupFailed: !!syncLogError,
-      isCurator, requestedAi: body.allow_ai === true,
+      isCurator, requestedAi,
     });
     let allowAi = aiPolicy.allowAi;
 
@@ -2709,7 +2729,7 @@ serve(async (req: Request) => {
         synced: true,
         lat, lng, geohash,
         ai: allowAi,
-        ai_skipped_reason: budgetNote,
+        ai_skipped_reason: budgetNote ?? (AI_REQUIRES_SUBSCRIPTION ? entitlementNote : null),
         gap_gate: gate,
         venues_error: venueResult.error,
         // Empty object means every source that ran, ran clean.
