@@ -177,7 +177,15 @@ export async function fetchGoogleEvents(
         continue;
       }
 
-      for (const e of body?.events_results || []) {
+      if (!Array.isArray(body?.events_results) || body.events_results.length === 0) {
+        // Ten runs from 2026-09-26 to 10-01 saved nothing and reported nothing.
+        // Name what Google did show, so a silent zero can be told apart.
+        const sections = Object.keys(body ?? {}).filter((k) => k !== "search_metadata" && k !== "search_parameters" && k !== "search_information");
+        opts.onError?.(`no events_results for "${q}"; got: ${sections.join(", ") || "nothing"}`);
+        continue;
+      }
+
+      for (const e of body.events_results) {
         if (!e?.title) continue;
         const key = `${e.title}|${e.when?.start_date ?? ""}`;
         if (seen.has(key)) continue;

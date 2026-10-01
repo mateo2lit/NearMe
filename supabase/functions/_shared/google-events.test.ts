@@ -127,3 +127,17 @@ Deno.test("serp date — falls back to start_date, and nothing readable gives nu
 Deno.test("serp date — yesterday evening stays this year", () => {
   assertEquals(parseSerpDate({ when: "Fri, Sep 25, 9 PM" }, NY, SEP26).iso, "2026-09-26T01:00:00.000Z");
 });
+
+Deno.test("a search with no events section says what it did return", async () => {
+  const errors: string[] = [];
+  const body = { search_metadata: { status: "Success" }, organic_results: [{}], top_stories: [{}], local_results: { places: [] } };
+  const out = await fetchGoogleEvents({
+    cityName: "Orlando", timezone: "America/New_York", apiKey: "k",
+    fetchJson: () => jsonResponse(body), onError: (e) => errors.push(e),
+  });
+  assertEquals(out.length, 0);
+  assertEquals(errors.length, 1);
+  assertEquals(errors[0].includes("no events_results"), true, errors[0]);
+  assertEquals(errors[0].includes("organic_results"), true, errors[0]);
+  assertEquals(errors[0].includes("local_results"), true, errors[0]);
+});

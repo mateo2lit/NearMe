@@ -1877,6 +1877,10 @@ async function fetchGoogleEventsRows(
     });
   }
   console.log(`[google-events] ${rows.length} rows after filtering`);
+  if (raw.length > 0 && rows.length === 0) {
+    const noStart = raw.filter((e) => !e.start_time).length;
+    noteSourceError("google_events", `all ${raw.length} results dropped (${noStart} had no parseable date)`);
+  }
   return rows;
 }
 
