@@ -31,7 +31,7 @@ import { isSourceDue, onCadence, type SourceRunStore } from "../_shared/source-c
 import { aiSpentLast24h, globalDailyUsd, globalDecision } from "../_shared/global-budget.ts";
 import { discoverOsmCivic } from "../_shared/osm-civic.ts";
 import { reverseGeocodeOsm } from "../_shared/osm-geocode.ts";
-import { isSubscribed, userIdFromRequest } from "../_shared/entitlement.ts";
+import { enforcementActive, isSubscribed, userIdFromRequest } from "../_shared/entitlement.ts";
 import { isValidPart, type Part, PARTS, takePart } from "../_shared/work-split.ts";
 import {
   nextLocalOccurrence,
@@ -171,6 +171,8 @@ const REVENUECAT_SECRET_KEY = Deno.env.get("REVENUECAT_SECRET_KEY") ?? "";
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
 /** Off until the build that sends user JWTs is live; until then, only logged. */
 const AI_REQUIRES_SUBSCRIPTION = Deno.env.get("AI_REQUIRES_SUBSCRIPTION") === "true";
+/** The flag alone is not enough: without a RevenueCat key the gate only logs. */
+const ENFORCE_SUBSCRIPTION = enforcementActive(AI_REQUIRES_SUBSCRIPTION, REVENUECAT_SECRET_KEY);
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
@@ -2162,14 +2164,19 @@ async function handleRequest(req: Request): Promise<Response> {
     let requestedAi = body.allow_ai === true;
     let entitlementNote: string | null = null;
     if (requestedAi && !isCurator) {
+      if (AI_REQUIRES_SUBSCRIPTION && !ENFORCE_SUBSCRIPTION) {
+        console.error(
+          "[entitlement] AI_REQUIRES_SUBSCRIPTION is on but REVENUECAT_SECRET_KEY is missing — not enforcing",
+        );
+      }
       const userId = await userIdFromRequest(req, supabase, SUPABASE_ANON_KEY, SUPABASE_SERVICE_KEY);
       const subscribed = userId
         ? await isSubscribed(userId, { supabase, secretKey: REVENUECAT_SECRET_KEY })
         : false;
       if (!subscribed) {
         entitlementNote = userId ? "not subscribed" : "no signed-in user";
-        console.log(`[entitlement] ${entitlementNote}${AI_REQUIRES_SUBSCRIPTION ? " — AI off" : " (not enforced)"}`);
-        if (AI_REQUIRES_SUBSCRIPTION) requestedAi = false;
+        console.log(`[entitlement] ${entitlementNote}${ENFORCE_SUBSCRIPTION ? " — AI off" : " (not enforced)"}`);
+        if (ENFORCE_SUBSCRIPTION) requestedAi = false;
       }
     }
     // Two clocks. `synced_at` paces the free sources; `ai_synced_at` paces the
@@ -2738,7 +2745,7 @@ async function handleRequest(req: Request): Promise<Response> {
         synced: true,
         lat, lng, geohash,
         ai: allowAi,
-        ai_skipped_reason: budgetNote ?? (AI_REQUIRES_SUBSCRIPTION ? entitlementNote : null),
+        ai_skipped_reason: budgetNote ?? (ENFORCE_SUBSCRIPTION ? entitlementNote : null),
         gap_gate: gate,
         venues_error: venueResult.error,
         // Empty object means every source that ran, ran clean.

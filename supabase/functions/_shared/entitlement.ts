@@ -36,6 +36,15 @@ export function cacheVerdict(row: StatusRow | null, now: number): "active" | "in
   return row.active ? "active" : "inactive";
 }
 
+/**
+ * Enforce the subscription gate only when the flag is on AND RevenueCat can be
+ * asked. With no key, every stale cache row reads as "not subscribed", which
+ * would lock paying subscribers out of AI; log-only is the safer failure.
+ */
+export function enforcementActive(flag: boolean, secretKey: string): boolean {
+  return flag && secretKey.length > 0;
+}
+
 /** RevenueCat unreachable: trust a cached subscription until it expires. */
 export function fallbackVerdict(row: StatusRow | null, now: number): boolean {
   return !!row && row.active && unexpired(row, now);

@@ -1,5 +1,5 @@
 import { assertEquals } from "https://deno.land/std@0.177.0/testing/asserts.ts";
-import { cacheVerdict, fallbackVerdict, isSubscribed, parseRevenueCat, userIdFromRequest } from "./entitlement.ts";
+import { cacheVerdict, enforcementActive, fallbackVerdict, isSubscribed, parseRevenueCat, userIdFromRequest } from "./entitlement.ts";
 
 const NOW = Date.parse("2026-10-01T12:00:00Z");
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -71,4 +71,13 @@ Deno.test("entitlement — RevenueCat failure falls back to the cache, never thr
   };
   const fetchImpl = () => Promise.reject(new Error("network"));
   assertEquals(await isSubscribed("u1", { supabase, secretKey: "sk", fetchImpl: fetchImpl as any, now: NOW }), true);
+});
+
+// Enforcing with no RevenueCat key would refuse AI to every paying subscriber
+// whose cache row has gone stale. A missing key must not lock them out.
+Deno.test("entitlement — enforcement needs both the flag and a RevenueCat key", () => {
+  assertEquals(enforcementActive(true, "sk_live"), true);
+  assertEquals(enforcementActive(true, ""), false);
+  assertEquals(enforcementActive(false, "sk_live"), false);
+  assertEquals(enforcementActive(false, ""), false);
 });
