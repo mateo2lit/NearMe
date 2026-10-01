@@ -23,3 +23,16 @@ Deno.test("rejected event writes cannot be mistaken for successful refreshes", a
   const client = { from: () => ({ upsert: async () => ({ error: { message: "database unavailable" } }) }) };
   await assertRejects(() => writeVerifiedEvents(client, [{ source: "ticketmaster", source_id: "a" }]), Error, "event write failed");
 });
+
+Deno.test("a listing with no known time is never tagged by time of day", async () => {
+  let written: any[] = [];
+  const client = { from: () => ({ upsert: (rows: any[]) => { written = rows; return Promise.resolve({ error: null }); } }) };
+  await writeVerifiedEvents(client, [
+    { source: "scraped", source_id: "a", tags: ["all-ages", "late-night", "time-tba"] },
+    { source: "scraped", source_id: "b", tags: ["daytime", "time-tba", "outdoor"] },
+    { source: "scraped", source_id: "c", tags: ["late-night"] },
+  ]);
+  assertEquals(written[0].tags, ["all-ages", "time-tba"]);
+  assertEquals(written[1].tags, ["time-tba", "outdoor"]);
+  assertEquals(written[2].tags, ["late-night"]); // a real time keeps its tag
+});

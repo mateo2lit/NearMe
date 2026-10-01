@@ -139,3 +139,22 @@ Deno.test("a venue in London keeps London time", async () => {
   // 8pm BST is 19:00Z.
   assertEquals(out[0].start_time, "2026-09-19T19:00:00.000Z");
 });
+
+Deno.test("an all-day listing is a date, not a midnight start", async () => {
+  // artswarehouse.org, 2026-10-01: a two-month exhibition published as all-day.
+  const body = {
+    events: [{
+      title: "Interstitial | Exhibition",
+      start_date: "2026-10-02 00:00:00",
+      end_date: "2026-11-28 23:59:59",
+      utc_start_date: "2026-10-02 00:00:00",
+      utc_end_date: "2026-11-28 23:59:59",
+      all_day: true,
+      timezone: "UTC+0",
+      url: "https://artswarehouse.org/events/interstitial-exhibition/",
+    }],
+  };
+  const out = await fetchTheEventsCalendar("https://artswarehouse.org/", () => jsonResponse(body), "America/New_York");
+  assertEquals(out.length, 1);
+  assertEquals(out[0].time_confirmed, false);
+});

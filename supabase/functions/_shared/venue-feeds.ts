@@ -145,7 +145,9 @@ export async function fetchTheEventsCalendar(
         price_min,
         image_url: e.image?.url || null,
         source_url: e.url || base,
-        time_confirmed: !!start,
+        // An all-day listing's 00:00 is its first day, not a start time.
+        // Arts Warehouse's two-month exhibitions read as "TONIGHT · 12:00 AM".
+        time_confirmed: !!start && e.all_day !== true,
       });
     }
     return out;
