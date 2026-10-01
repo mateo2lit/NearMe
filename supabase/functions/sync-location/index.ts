@@ -1,10 +1,11 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.103.0";
 import { generateTags } from "../_shared/tag-generator.ts";
 import { hasServiceRole } from "../_shared/service-auth.ts";
 import { claimCutoffs, nextVenuesSyncedAt, shouldDiscoverVenues, syncLogFilter, syncPolicy } from "../_shared/sync-log.ts";
 import { eventSignature } from "../_shared/page-signature.ts";
-import { resetUsage, usageSummary } from "../_shared/ai-usage.ts";
+import { runWithUsage, usageSummary } from "../_shared/ai-usage.ts";
 import { type NeighborhoodInfo, resolveNeighborhood } from "../_shared/neighborhood-cache.ts";
 import { supabaseExtractionCache } from "../_shared/extraction-cache.ts";
 import { writeVerifiedEvents } from "../_shared/event-writes.ts";
@@ -205,11 +206,21 @@ async function timeoutFetch(
  * has no events" produced the same silent zero. Eventbrite hid behind the same
  * pattern for years while returning 404. A source that fails should say so in
  * the sync response, where it is visible without reading logs.
+ *
+ * Scoped to the request: one isolate serves concurrent requests (the
+ * orchestrator's own worker calls among them), so a shared map would report
+ * one caller's errors as another's.
  */
-const sourceErrors: Record<string, string> = {};
+const sourceErrorStore = new AsyncLocalStorage<Record<string, string>>();
+const defaultSourceErrors: Record<string, string> = {};
+
+function currentSourceErrors(): Record<string, string> {
+  return sourceErrorStore.getStore() ?? defaultSourceErrors;
+}
 
 function noteSourceError(source: string, detail: unknown) {
   const text = detail instanceof Error ? detail.message : String(detail);
+  const sourceErrors = currentSourceErrors();
   if (!sourceErrors[source]) sourceErrors[source] = text.slice(0, 200);
   console.error(`[${source}] ${text}`);
 }
@@ -2033,15 +2044,13 @@ function isAbusiveRequest(lat: number, lng: number, radiusMiles: number): boolea
 
 // ─── Main Handler ────────────────────────────────────────────
 
-serve(async (req: Request) => {
-  try {
-    // Edge instances are reused between requests, so a stale error from the
-    // previous caller would otherwise be reported as this one's.
-    for (const key of Object.keys(sourceErrors)) delete sourceErrors[key];
-    // Same reason: a reused isolate would otherwise bill the previous
-    // location's LLM spend to this one.
-    resetUsage();
+// Each request gets its own source-error map and LLM-spend ledger. Isolates
+// are reused and serve requests concurrently, so per-isolate state reset at
+// the top of a request would be wiped and mixed by its neighbours.
+serve((req: Request) => runWithUsage(() => sourceErrorStore.run({}, () => handleRequest(req))));
 
+async function handleRequest(req: Request): Promise<Response> {
+  try {
     const body = await req.json();
 
     // A worker invocation: one share of one heavy source, for an orchestrating
@@ -2085,7 +2094,7 @@ serve(async (req: Request) => {
       // recorded what it paid for. Events are written here, not by the
       // orchestrator, so they survive it dying after the fan-out.
       await writeVerifiedEvents(supabase, rows);
-      return new Response(JSON.stringify({ rows: [], written: rows.length, source_errors: sourceErrors }), {
+      return new Response(JSON.stringify({ rows: [], written: rows.length, source_errors: currentSourceErrors() }), {
         status: 200, headers: { "Content-Type": "application/json" },
       });
     }
@@ -2733,7 +2742,7 @@ serve(async (req: Request) => {
         gap_gate: gate,
         venues_error: venueResult.error,
         // Empty object means every source that ran, ran clean.
-        source_errors: sourceErrors,
+        source_errors: currentSourceErrors(),
         quality,
         venues: venueCount,
         ticketmaster: tm.length,
@@ -2762,4 +2771,4 @@ serve(async (req: Request) => {
       status: 500, headers: { "Content-Type": "application/json" },
     });
   }
-});
+}

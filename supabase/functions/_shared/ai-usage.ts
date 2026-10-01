@@ -11,10 +11,14 @@
  * run and Meetup 20% is what decides which lever to pull next; a single total
  * decides nothing.
  *
- * Module-level like `sourceErrors` in sync-location, and reset the same way at
- * the top of each request. Edge isolates are reused between requests, so
- * failing to reset would bill one location's spend to the next.
+ * Scoped to the request with AsyncLocalStorage. Edge isolates are reused and
+ * serve concurrent requests (the orchestrator fires ~10 worker calls at its
+ * own URL at once), so a module-level ledger reset per request let those
+ * requests wipe and mix each other's totals. Outside `runWithUsage` (tests,
+ * scripts) calls fall back to a module-level default ledger.
  */
+
+import { AsyncLocalStorage } from "node:async_hooks";
 
 export interface UsageTokens {
   input_tokens: number;
@@ -59,12 +63,29 @@ const emptyTotals = (): LabelTotals => ({
   cost_usd: 0,
 });
 
-let total = emptyTotals();
-let byLabel: Record<string, LabelTotals> = {};
+interface Ledger {
+  total: LabelTotals;
+  byLabel: Record<string, LabelTotals>;
+}
+
+const freshLedger = (): Ledger => ({ total: emptyTotals(), byLabel: {} });
+
+const storage = new AsyncLocalStorage<Ledger>();
+const defaultLedger = freshLedger();
+
+function ledger(): Ledger {
+  return storage.getStore() ?? defaultLedger;
+}
+
+/** Run `fn` (one request) with its own ledger. */
+export function runWithUsage<T>(fn: () => T): T {
+  return storage.run(freshLedger(), fn);
+}
 
 export function resetUsage(): void {
-  total = emptyTotals();
-  byLabel = {};
+  const l = ledger();
+  l.total = emptyTotals();
+  l.byLabel = {};
 }
 
 function add(into: LabelTotals, rec: UsageRecord): void {
@@ -82,6 +103,7 @@ function add(into: LabelTotals, rec: UsageRecord): void {
 }
 
 export function noteUsage(rec: UsageRecord): void {
+  const { total, byLabel } = ledger();
   add(total, rec);
   if (!byLabel[rec.label]) byLabel[rec.label] = emptyTotals();
   add(byLabel[rec.label], rec);
@@ -89,6 +111,7 @@ export function noteUsage(rec: UsageRecord): void {
 
 /** A snapshot: later calls do not mutate an already-returned summary. */
 export function usageSummary(): UsageSummary {
+  const { total, byLabel } = ledger();
   const labels: Record<string, LabelTotals> = {};
   for (const [label, totals] of Object.entries(byLabel)) {
     labels[label] = { ...totals };
