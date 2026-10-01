@@ -1,6 +1,6 @@
 import type { Event } from "../types";
-import { effectiveStart } from "./time-windows";
-import { hasUnknownTime, isStale } from "./freshness";
+import { effectiveStart, hasClaimableTime } from "./time-windows";
+import { isStale } from "./freshness";
 
 /**
  * Choosing the one event the onboarding preview shows before the paywall.
@@ -23,7 +23,7 @@ export const RANK_CANDIDATES = 30;
  */
 export function isHeroQuality(event: Event, now: Date = new Date()): boolean {
   if (event.tags?.includes("adult")) return false;
-  if (hasUnknownTime(event) || isStale(event, now)) return false;
+  if (!hasClaimableTime(event) || isStale(event, now)) return false;
   if (!event.title?.trim()) return false;
   if (!event.venue?.name?.trim() && !event.address?.trim()) return false;
   const start = effectiveStart(event).getTime();

@@ -21,6 +21,9 @@ describe("isHeroQuality", () => {
   it("accepts a confirmed, placed event in the next two weeks", () => {
     expect(isHeroQuality(ev("a"), now)).toBe(true);
   });
+  it("rejects a multi-day run, whose stored midnight is not a start time", () => {
+    expect(isHeroQuality(ev("a", { start_time: inDays(1), end_time: inDays(50) }), now)).toBe(false);
+  });
   it("rejects past, far-off, placeless, adult and stale events", () => {
     expect(isHeroQuality(ev("a", { start_time: inDays(-1) }), now)).toBe(false);
     expect(isHeroQuality(ev("a", { start_time: inDays(30) }), now)).toBe(false);

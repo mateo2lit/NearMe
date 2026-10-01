@@ -1,8 +1,11 @@
+import { TIME_TBA_TAG } from "./freshness";
+
 type EventLike = {
   start_time: string;
   end_time?: string | null;
   is_recurring?: boolean;
   recurrence_rule?: string | null;
+  tags?: string[] | null;
 };
 
 // Accept full names AND abbreviations — recurrence rules in the wild come in
@@ -39,6 +42,20 @@ const MAX_LIVE_HOURS = 6;
  * treated as live.
  */
 const MULTI_DAY_HOURS = 18;
+
+/**
+ * Whether we know when this starts well enough to say "tonight", "starts in
+ * 2h" or "happening now". Not for a listing that gave no time (its stored
+ * clock is a placeholder), and not for a date range such as an exhibition
+ * (its stored midnight is the first day, not a start). On 2026-10-01 both
+ * shapes reached "Happening now & soon": a parks tour with no listed time as
+ * "starts in 2 hours", and an all-day exhibition opening the next day as
+ * TONIGHT · 12:00 AM. Day-level filters (tomorrow, weekend) still apply.
+ */
+export function hasClaimableTime(event: EventLike): boolean {
+  if ((event.tags || []).includes(TIME_TBA_TAG)) return false;
+  return !isMultiDaySpan(event);
+}
 
 /** True when the event's stored span is a date range, not a single sitting. */
 export function isMultiDaySpan(event: EventLike): boolean {
@@ -111,6 +128,7 @@ function addDays(d: Date, days: number): Date {
 // includes events that already started but haven't ended yet (a happy hour at
 // 6-9pm should show at 7:30pm, even though it "started" before now).
 export function isTonight(event: EventLike, now: Date = new Date()): boolean {
+  if (!hasClaimableTime(event)) return false;
   const start = effectiveStart(event);
   const end = effectiveEnd(event);
   const cutoff = new Date(
@@ -150,6 +168,7 @@ export function isWithinNextHours(
   hours: number,
   now: Date = new Date()
 ): boolean {
+  if (!hasClaimableTime(event)) return false;
   const t = effectiveStart(event);
   const cutoff = new Date(now.getTime() + hours * 3600_000);
   return t >= now && t <= cutoff;
@@ -177,6 +196,7 @@ export function isHappeningNowOrSoon(
   soonHours: number,
   now: Date = new Date()
 ): boolean {
+  if (!hasClaimableTime(event)) return false;
   const start = effectiveStart(event).getTime();
   const n = now.getTime();
   if (start > n) return start <= n + soonHours * 3600_000;
@@ -198,4 +218,21 @@ export function isSameCalendarDay(
     t.getMonth() === now.getMonth() &&
     t.getDate() === now.getDate()
   );
+}
+
+/**
+ * The day and time a card prints, without inventing either. A timed event
+ * shows its clock; an untimed one its day and "Time TBA"; a date range says
+ * when it opens, or when it closes once it is running.
+ */
+export function cardTimeText(event: EventLike, now: Date = new Date()): { day: string; time: string } {
+  const start = effectiveStart(event);
+  const day = start.toLocaleDateString("en-US", { weekday: "short" }).toUpperCase();
+  if (isMultiDaySpan(event)) {
+    if (start > now) return { day, time: "Opens" };
+    const end = new Date(event.end_time as string);
+    return { day: "ON VIEW", time: `Through ${end.toLocaleDateString("en-US", { month: "short", day: "numeric" })}` };
+  }
+  if ((event.tags || []).includes(TIME_TBA_TAG)) return { day, time: "Time TBA" };
+  return { day, time: start.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) };
 }

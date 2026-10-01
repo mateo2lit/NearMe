@@ -4,11 +4,10 @@ import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { Event } from "../types";
 import { formatDistance, effectiveStart, getEventTimeLabel } from "../services/events";
-import { isHappeningNow } from "../lib/time-windows";
+import { cardTimeText, isHappeningNow } from "../lib/time-windows";
 import { CATEGORY_MAP } from "../constants/categories";
 import { TAG_MAP } from "../constants/tags";
 import { getEventImage } from "../constants/images";
-import { hasUnknownTime } from "../lib/freshness";
 import { COLORS, RADIUS } from "../constants/theme";
 import { FoundForYouChip } from "./FoundForYouChip";
 
@@ -80,9 +79,11 @@ export default function FeedCard({ event, isSaved, onPress, onSave, userInterest
   const dateStr = startDate.toLocaleDateString([], {
     weekday: "short", month: "short", day: "numeric",
   }).toUpperCase();
-  const timeStr = hasUnknownTime(event)
-    ? "Time TBA"
-    : startDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  // Never print a clock time we invented, or a midnight that is really the
+  // first day of an exhibition. See cardTimeText.
+  const claim = cardTimeText(event);
+  const dayLabel = claim.day === "ON VIEW" ? claim.day : dateStr;
+  const timeStr = claim.time;
   const altTimeStr = (event.additionalStartTimes || [])
     .map((iso) =>
       new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
@@ -146,7 +147,7 @@ export default function FeedCard({ event, isSaved, onPress, onSave, userInterest
 
       <View style={styles.info}>
         <Text style={styles.meta}>
-          {dateStr} · {timeStr}{altTimeStr ? ` & ${altTimeStr}` : ""}{distanceStr ? ` · ${distanceStr}` : ""}
+          {dayLabel} · {timeStr}{altTimeStr ? ` & ${altTimeStr}` : ""}{distanceStr ? ` · ${distanceStr}` : ""}
         </Text>
         {(() => {
           const srcLabel = sourceLabel(event.source);

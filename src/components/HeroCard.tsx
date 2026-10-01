@@ -3,9 +3,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { Event } from "../types";
 import { CATEGORY_MAP } from "../constants/categories";
 import EventImage from "./EventImage";
-import { hasUnknownTime } from "../lib/freshness";
+import { cardTimeText } from "../lib/time-windows";
 import { COLORS, RADIUS } from "../constants/theme";
-import { effectiveStart } from "../services/events";
 
 interface Props {
   event: Event;
@@ -15,12 +14,8 @@ interface Props {
 export default function HeroCard({ event, onPress }: Props) {
   const category = CATEGORY_MAP[event.category];
 
-  const startDate = effectiveStart(event);
-  const dayName = startDate.toLocaleDateString([], { weekday: "short" }).toUpperCase();
-  // Never print a clock time we invented. See lib/freshness.
-  const timeStr = hasUnknownTime(event)
-    ? "Time TBA"
-    : startDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  // Never print a clock time we invented. See cardTimeText.
+  const { day: dayName, time: timeStr } = cardTimeText(event);
 
   const venueName = event.venue?.name || event.address?.split(",")[0] || "";
   const distanceStr = event.distance != null ? ` · ${event.distance.toFixed(1)} mi` : "";
