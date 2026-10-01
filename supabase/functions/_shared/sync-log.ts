@@ -65,6 +65,19 @@ export function syncPolicy(input: {
 
 
 /**
+ * The newest last-refresh stamp that still lets a refresh run, for the atomic
+ * claim in `claim_refresh()`. Reading the stamp and writing it as two steps let
+ * two requests 19 ms apart both run (and both pay) on 2026-10-01.
+ */
+export function claimCutoffs(input: { lastCount: number; isCurator: boolean; now?: number }) {
+  const now = input.now ?? Date.now();
+  const cooldownMs = input.lastCount >= HEALTHY_EVENT_FLOOR ? HEALTHY_COOLDOWN_MS : THIN_COOLDOWN_MS;
+  // The curator may always refresh: a cutoff in the future accepts any stamp.
+  const cutoff = new Date(input.isCurator ? now + 86_400_000 : now - cooldownMs).toISOString();
+  return { freeCutoff: cutoff, aiCutoff: cutoff };
+}
+
+/**
  * Whether this crawl should pay Google Places to re-discover venues.
  *
  * Venue discovery is 14 `places:searchNearby` calls on the field tier that

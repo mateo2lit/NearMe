@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.103.0";
 import { generateTags } from "../_shared/tag-generator.ts";
 import { hasServiceRole } from "../_shared/service-auth.ts";
-import { nextVenuesSyncedAt, shouldDiscoverVenues, syncLogFilter, syncPolicy } from "../_shared/sync-log.ts";
+import { claimCutoffs, nextVenuesSyncedAt, shouldDiscoverVenues, syncLogFilter, syncPolicy } from "../_shared/sync-log.ts";
 import { eventSignature } from "../_shared/page-signature.ts";
 import { resetUsage, usageSummary } from "../_shared/ai-usage.ts";
 import { type NeighborhoodInfo, resolveNeighborhood } from "../_shared/neighborhood-cache.ts";
@@ -2143,10 +2143,6 @@ serve(async (req: Request) => {
     // Two clocks. `synced_at` paces the free sources; `ai_synced_at` paces the
     // paid ones. A free-only refresh (the onboarding preview) must not start
     // the AI cooldown and hold back a new subscriber's first real refresh.
-    const freePolicy = syncPolicy({
-      lastSync, lastCount, lookupFailed: !!syncLogError,
-      isCurator, requestedAi: false,
-    });
     const aiPolicy = syncPolicy({
       lastSync: syncLog?.[0]?.ai_synced_at ?? null, lastCount, lookupFailed: !!syncLogError,
       isCurator, requestedAi: body.allow_ai === true,
@@ -2175,15 +2171,19 @@ serve(async (req: Request) => {
         console.log(`[budget] global cap: ${global.reason}`);
       }
     }
-    const inCooldown = freePolicy.inCooldown && !allowAi;
+    const cutoffs = claimCutoffs({ lastCount, isCurator });
+    const { data: claimRows, error: claimError } = await supabase.rpc("claim_refresh", {
+      p_grid_key: gridKey, p_geohash: geohash, p_lat: gridLat, p_lng: gridLng,
+      p_free_cutoff: cutoffs.freeCutoff, p_ai_cutoff: cutoffs.aiCutoff,
+      p_want_ai: allowAi, p_is_client: !isCurator,
+    });
+    if (claimError) throw new Error(`sync claim failed: ${claimError.message}`);
+    const claim = claimRows?.[0] ?? { free_claimed: false, ai_claimed: false, claimed_at: null };
+    // Another request may have claimed this cell between our read and now.
+    allowAi = !!claim.ai_claimed;
 
-    // Curator runs are scheduled, not user-triggered, so the cooldown that
-    // protects against per-open client cost does not apply to them.
-    if (inCooldown) {
-      // A client asking for this cell is demand whether or not we do any work,
-      // so the curator's signal is refreshed before the early return. Writing
-      // it only on a completed sync would let a cell whose catalog is healthy
-      // — and therefore always in cooldown — look abandoned and age out.
+    if (!claim.free_claimed) {
+      // A client asking for this cell is demand whether or not we do any work.
       if (!isCurator) {
         const { error: demandError } = await supabase.from("sync_log")
           .update({ last_client_sync_at: new Date().toISOString() })
@@ -2200,23 +2200,7 @@ serve(async (req: Request) => {
         { status: 200, headers: { "Content-Type": "application/json" } }
       );
     }
-
-    // Record the refresh before doing any of it. A refresh that crashed (the
-    // worker hit its compute limit on 2026-09-26) used to leave no trace, so the
-    // next app open re-ran and re-paid the whole fan-out. The completed-run
-    // write at the end replaces these values.
-    const claimedAt = new Date().toISOString();
-    const { error: claimError } = await supabase.from("sync_log").upsert({
-      grid_key: gridKey,
-      geohash,
-      lat: gridLat,
-      lng: gridLng,
-      synced_at: claimedAt,
-      event_count: lastCount,
-      ...(allowAi ? { ai_synced_at: claimedAt } : {}),
-      ...(isCurator ? {} : { last_client_sync_at: claimedAt }),
-    }, { onConflict: "grid_key" });
-    if (claimError) throw new Error(`sync claim failed: ${claimError.message}`);
+    const claimedAt: string = claim.claimed_at;
 
     // Reserve budget for the same reason: a crashed run never reports its
     // spend. Settled to the real figure at the end.

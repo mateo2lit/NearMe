@@ -1,5 +1,5 @@
 import { assertEquals, assertStringIncludes } from "https://deno.land/std@0.177.0/testing/asserts.ts";
-import { nextVenuesSyncedAt, shouldDiscoverVenues, syncLogFilter, syncPolicy } from "./sync-log.ts";
+import { claimCutoffs, nextVenuesSyncedAt, shouldDiscoverVenues, syncLogFilter, syncPolicy } from "./sync-log.ts";
 
 Deno.test("the comma inside grid_key is quoted, not left to split the filter", () => {
   const filter = syncLogFilter("dhxn1", "26.4,-80.1");
@@ -131,4 +131,21 @@ Deno.test("a skipped discovery preserves whatever was already there", () => {
     nextVenuesSyncedAt({ discovered: false, venueCount: 0, prior, now }),
     prior,
   );
+});
+
+Deno.test("claimCutoffs — a healthy cell may refresh only if last stamped 6h+ ago", () => {
+  const now = Date.parse("2026-10-01T12:00:00Z");
+  const c = claimCutoffs({ lastCount: 100, isCurator: false, now });
+  assertEquals(c.freeCutoff, "2026-10-01T06:00:00.000Z");
+  assertEquals(c.aiCutoff, "2026-10-01T06:00:00.000Z");
+});
+
+Deno.test("claimCutoffs — a thin cell may refresh after 2h", () => {
+  const now = Date.parse("2026-10-01T12:00:00Z");
+  assertEquals(claimCutoffs({ lastCount: 3, isCurator: false, now }).aiCutoff, "2026-10-01T10:00:00.000Z");
+});
+
+Deno.test("claimCutoffs — the curator bypasses the cooldown", () => {
+  const now = Date.parse("2026-10-01T12:00:00Z");
+  assertEquals(claimCutoffs({ lastCount: 100, isCurator: true, now }).aiCutoff, "2026-10-02T12:00:00.000Z");
 });
