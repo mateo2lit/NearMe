@@ -2756,7 +2756,7 @@ async function handleRequest(req: Request): Promise<Response> {
         pickleheads: pickleheads.length,
         university: university.length,
         highschool: hsWritten,
-        upserted: unique.length,
+        upserted: unique.length + workerWritten,
         neighborhood: neighborhoodInfo?.neighborhood || null,
         nearby_neighborhoods: neighborhoodInfo?.nearby || [],
         well_covered_categories: categoryHint.wellCovered,
