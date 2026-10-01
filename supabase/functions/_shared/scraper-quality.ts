@@ -98,7 +98,14 @@ export function validateScrapedEvent(input: {
   title: string;
   description?: string | null;
   venueName?: string | null;
-}): ScraperResult {
+}, opts: {
+  /**
+   * The description rule exists to catch junk an LLM pulled off a page. A
+   * structured listing (Google's events box, since 2026-10, sends none) is
+   * judged by its title, venue and link instead.
+   */
+  requireDescription?: boolean;
+} = {}): ScraperResult {
   const title = (input.title || "").trim();
   const description = (input.description || "").trim();
   const venueName = (input.venueName || "").trim();
@@ -139,7 +146,7 @@ export function validateScrapedEvent(input: {
     .replace(/^\s*(recurring|weekly|nightly|special)\s+event\.?\s*$/i, "")
     .trim();
 
-  if (cleanedDesc.length < 24) {
+  if (opts.requireDescription !== false && cleanedDesc.length < 24) {
     return { ok: false, reason: `description too short: "${cleanedDesc || description}"` };
   }
 

@@ -70,3 +70,15 @@ Deno.test("existing quality rules still hold", () => {
   assertEquals(check("Tap 42 Craft Kitchen", GOOD_DESC, "Tap 42 Craft Kitchen").ok, false);
   assertEquals(check("Tuesday Trivia Night", "Trivia.").ok, false, "description too short");
 });
+
+Deno.test("a structured listing without a description passes when told not to require one", () => {
+  const input = { title: "Tampa Bay Lightning vs. Florida Panthers", description: "", venueName: "Amalie Arena" };
+  assertEquals(validateScrapedEvent(input).ok, false);
+  assertEquals(validateScrapedEvent(input, { requireDescription: false }).ok, true);
+});
+
+Deno.test("dropping the description rule keeps every other check", () => {
+  const opts = { requireDescription: false };
+  assertEquals(validateScrapedEvent({ title: "Amalie Arena", description: "", venueName: "Amalie Arena" }, opts).ok, false);
+  assertEquals(validateScrapedEvent({ title: "Fun", description: "" }, opts).ok, false);
+});

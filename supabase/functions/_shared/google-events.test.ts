@@ -136,8 +136,34 @@ Deno.test("a search with no events section says what it did return", async () =>
     fetchJson: () => jsonResponse(body), onError: (e) => errors.push(e),
   });
   assertEquals(out.length, 0);
-  assertEquals(errors.length, 1);
+  assertEquals(errors.length, 2); // one per query tried, the fallback included
   assertEquals(errors[0].includes("no events_results"), true, errors[0]);
   assertEquals(errors[0].includes("organic_results"), true, errors[0]);
   assertEquals(errors[0].includes("local_results"), true, errors[0]);
+});
+
+Deno.test("serp date — the plain-string form SerpApi sends since 2026-10 is a date, not a time", () => {
+  const now = new Date("2026-10-01T22:00:00Z");
+  const { iso, confirmed } = parseSerpDate("Oct 2", "America/New_York", now);
+  assertEquals(iso?.slice(0, 10), "2026-10-02");
+  assertEquals(confirmed, false);
+});
+
+Deno.test("searches with a phrasing Google still answers with an events box", async () => {
+  const asked: string[] = [];
+  await fetchGoogleEvents({
+    cityName: "Tampa", timezone: "America/New_York", apiKey: "k",
+    fetchJson: (url) => { asked.push(new URL(url).searchParams.get("q") ?? ""); return jsonResponse({ events_results: [] }); },
+  });
+  // "events in <city>" returned only an AI overview on 2026-10-01; these returned events.
+  assertEquals(asked, ["Tampa events this weekend", "concerts in Tampa"]);
+});
+
+Deno.test("the fallback query is only spent when the first gets no events box", async () => {
+  const asked: string[] = [];
+  await fetchGoogleEvents({
+    cityName: "Tampa", timezone: "America/New_York", apiKey: "k",
+    fetchJson: (url) => { asked.push(new URL(url).searchParams.get("q") ?? ""); return jsonResponse(SAMPLE); },
+  });
+  assertEquals(asked, ["Tampa events this weekend"]);
 });

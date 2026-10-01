@@ -1821,22 +1821,27 @@ async function fetchGoogleEventsRows(
   });
 
   const rows: any[] = [];
+  const dropped: Record<string, number> = {};
+  const drop = (why: string) => { dropped[why] = (dropped[why] ?? 0) + 1; };
   for (const e of raw) {
-    if (!e.title || !e.start_time) continue;
+    if (!e.title || !e.start_time) { drop("no date"); continue; }
 
+    // Structured listings often carry no description now; require a venue and
+    // a link instead, so what remains is still something you can go to.
+    if (!e.venue_name || !e.source_url) { drop("no venue or link"); continue; }
     const quality = validateScrapedEvent({
       title: e.title,
       description: e.description,
       venueName: e.venue_name,
-    });
-    if (!quality.ok) continue;
+    }, { requireDescription: false });
+    if (!quality.ok) { drop(`quality: ${quality.reason}`); continue; }
 
     const adultSignal = detectAdultSignal({
       title: e.title,
       description: e.description,
       venueName: e.venue_name,
     });
-    if (adultSignal.hard) continue;
+    if (adultSignal.hard) { drop("adult"); continue; }
 
     // Google's results span every kind of event; filing them all under
     // "community" hid them from the category counts the gap gate reads.
@@ -1878,8 +1883,8 @@ async function fetchGoogleEventsRows(
   }
   console.log(`[google-events] ${rows.length} rows after filtering`);
   if (raw.length > 0 && rows.length === 0) {
-    const noStart = raw.filter((e) => !e.start_time).length;
-    noteSourceError("google_events", `all ${raw.length} results dropped (${noStart} had no parseable date)`);
+    const why = Object.entries(dropped).map(([k, n]) => `${n} ${k}`).join("; ");
+    noteSourceError("google_events", `all ${raw.length} results dropped (${why})`);
   }
   return rows;
 }

@@ -94,7 +94,10 @@ export function parseSerpDate(
   }
 
   const when = typeof date?.when === "string" ? date.when : "";
-  const startDate = typeof date?.start_date === "string" ? date.start_date : "";
+  // Since 2026-10 SerpApi sends `date` as a bare string ("Oct 2"): a day, no time.
+  const startDate = typeof date === "string"
+    ? date
+    : typeof date?.start_date === "string" ? date.start_date : "";
   const fromWhen = findMonthDay(when);
   const md = fromWhen ?? findMonthDay(startDate);
   if (!md) return { iso: null, confirmed: false };
@@ -153,11 +156,17 @@ export async function fetchGoogleEvents(
   }
   if (!opts.cityName) return [];
 
-  const queries = opts.queries ?? [`events in ${opts.cityName}`];
+  // "events in <city>" now gets an AI overview and no events box; on
+  // 2026-10-01 "<city> events this weekend" and "concerts in <city>" still did.
+  // Fallbacks: the second is only searched when the first gets no events box.
+  const fallbacks = !opts.queries;
+  const queries = opts.queries ?? [`${opts.cityName} events this weekend`, `concerts in ${opts.cityName}`];
   const out: GoogleEventExtract[] = [];
   const seen = new Set<string>();
 
+  let stopAfterThis = false;
   for (const q of queries) {
+    if (stopAfterThis) break;
     try {
       const url = new URL("https://serpapi.com/search.json");
       // Regular Google Search. SerpApi retired the dedicated `google_events`
@@ -185,6 +194,7 @@ export async function fetchGoogleEvents(
         continue;
       }
 
+      if (fallbacks) stopAfterThis = true;
       for (const e of body.events_results) {
         if (!e?.title) continue;
         const key = `${e.title}|${e.when?.start_date ?? ""}`;
