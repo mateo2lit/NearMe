@@ -8,6 +8,8 @@ import { resetUsage, usageSummary } from "../_shared/ai-usage.ts";
 import { type NeighborhoodInfo, resolveNeighborhood } from "../_shared/neighborhood-cache.ts";
 import { supabaseExtractionCache } from "../_shared/extraction-cache.ts";
 import { writeVerifiedEvents } from "../_shared/event-writes.ts";
+import { cleanText } from "../_shared/text-clean.ts";
+import { finalizeRows, shapeHighschoolRows, shapeMeetupRows } from "../_shared/worker-rows.ts";
 import {
   mapTMCategory,
   mapVenueCategory,
@@ -145,33 +147,6 @@ const REDDIT_EVENT_SCHEMA = {
   required: ["title", "description", "category", "subcategory", "start_time", "is_free", "source_url"],
   additionalProperties: false,
 } as const;
-
-/**
- * Strip HTML/markup from a description and cap its length. Schema.org JSON-LD
- * descriptions on venue sites often contain raw WordPress markup, captions,
- * inline styles, and embed shortcodes — none of which belong in a feed card.
- */
-function cleanText(raw: string | null | undefined, maxLen = 500): string | null {
-  if (!raw) return null;
-  const cleaned = raw
-    .replace(/<script[\s\S]*?<\/script>/gi, "")
-    .replace(/<style[\s\S]*?<\/style>/gi, "")
-    .replace(/\[caption[\s\S]*?\[\/caption\]/gi, "")
-    .replace(/\[\/?\w+[^\]]*\]/g, "")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#?\w+;/g, "")
-    .replace(/https?:\/\/\S+/g, "") // strip raw URLs that escaped tag stripping
-    .replace(/\s+/g, " ")
-    .trim();
-  if (!cleaned) return null;
-  if (cleaned.length <= maxLen) return cleaned;
-  return cleaned.slice(0, maxLen).trim() + "…";
-}
 
 /**
  * On-demand sync for a specific location.
@@ -1970,7 +1945,7 @@ async function runWorker(worker: WorkerName, part: Part, c: WorkerContext): Prom
   }
 }
 
-async function callWorker(c: WorkerContext, worker: WorkerName, part: Part): Promise<any[]> {
+async function callWorker(c: WorkerContext, worker: WorkerName, part: Part): Promise<number> {
   const res = await timeoutFetch(`${SUPABASE_URL}/functions/v1/sync-location`, {
     method: "POST",
     headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, "Content-Type": "application/json" },
@@ -1978,35 +1953,35 @@ async function callWorker(c: WorkerContext, worker: WorkerName, part: Part): Pro
     timeoutMs: WORKER_TIMEOUT_MS,
   });
   const data = await res.json().catch(() => null);
-  if (!res.ok || !Array.isArray(data?.rows)) {
+  if (!res.ok || typeof data?.written !== "number") {
     const why = data?.message ?? data?.error ?? `HTTP ${res.status}`;
     throw new Error(`${worker} part ${part.index + 1}/${part.of}: ${why}`);
   }
   for (const [source, detail] of Object.entries(data.source_errors ?? {})) {
     noteSourceError(source, String(detail));
   }
-  return data.rows;
+  return data.written;
 }
 
 /**
  * Every part of one source, in parallel. Rows from parts that finished are
- * kept when another part fails; `complete` says whether all of them did.
+ * already saved when another part fails; `complete` says whether all of them did.
  */
-async function fanOut(c: WorkerContext, worker: WorkerName): Promise<{ rows: any[]; complete: boolean }> {
+async function fanOut(c: WorkerContext, worker: WorkerName): Promise<{ written: number; complete: boolean }> {
   const of = PARTS[worker] ?? 1;
   const settled = await Promise.allSettled(
     Array.from({ length: of }, (_, index) => callWorker(c, worker, { index, of })),
   );
-  const rows: any[] = [];
+  let written = 0;
   let complete = true;
   for (const r of settled) {
-    if (r.status === "fulfilled") rows.push(...r.value);
+    if (r.status === "fulfilled") written += r.value;
     else {
       complete = false;
       noteSourceError(worker, (r.reason as Error)?.message ?? String(r.reason));
     }
   }
-  return { rows, complete };
+  return { written, complete };
 }
 
 // ─── Rate Limiting ───────────────────────────────────────────
@@ -2076,7 +2051,15 @@ serve(async (req: Request) => {
       if (!isValidPart(body.part)) {
         return new Response(JSON.stringify({ error: "invalid part" }), { status: 400 });
       }
-      const rows = await runWorker(body.worker as WorkerName, body.part, body as WorkerContext);
+      const raw = await runWorker(body.worker as WorkerName, body.part, body as WorkerContext);
+      const shapeCtx = { lat: body.lat, lng: body.lng, timezone: timezoneForCoords(body.lat, body.lng) };
+      const shaped = body.worker === "meetup" ? shapeMeetupRows(raw, shapeCtx)
+        : body.worker === "highschool" ? shapeHighschoolRows(raw, shapeCtx)
+        : raw;
+      const rows = finalizeRows(shaped);
+      // Written here, not by the orchestrator: if it dies after the fan-out,
+      // what this worker paid for is already saved.
+      await writeVerifiedEvents(supabase, rows);
       const workerSpend = usageSummary();
       if (workerSpend.calls > 0) {
         const { error: spendError } = await supabase.from("ai_usage_log").insert({
@@ -2094,7 +2077,7 @@ serve(async (req: Request) => {
         });
         if (spendError) console.error(`[worker] spend write failed: ${spendError.message}`);
       }
-      return new Response(JSON.stringify({ rows, source_errors: sourceErrors }), {
+      return new Response(JSON.stringify({ rows: [], written: rows.length, source_errors: sourceErrors }), {
         status: 200, headers: { "Content-Type": "application/json" },
       });
     }
@@ -2414,40 +2397,40 @@ serve(async (req: Request) => {
     // A failed worker may have spent before failing, and its spend record
     // died with it; the reservation is then kept rather than settled down.
     let workersComplete = true;
-    const pacedFan = async (worker: WorkerName, scope: string): Promise<any[]> => {
+    const pacedFan = async (worker: WorkerName, scope: string): Promise<number> => {
       const lastRan = runsFor(scope)[worker];
       if (!isSourceDue({ source: worker, lastRanAt: lastRan })) {
         console.log(`[cadence] ${worker} skipped for ${scope} (ran ${lastRan})`);
-        return [];
+        return 0;
       }
-      const { rows, complete } = await fanOut(workerContext, worker);
+      const { written, complete } = await fanOut(workerContext, worker);
       if (complete) {
         await sourceRunStore.mark(scope, worker)
           .catch((err) => console.error(`[cadence] mark ${worker} failed: ${(err as Error).message}`));
       } else {
         workersComplete = false;
       }
-      return rows;
+      return written;
     };
 
     const [
-      reddit,
-      scraped,
-      civic,
+      redditWritten,
+      scrapedWritten,
+      civicWritten,
       googleEvents,
-      meetupRaw,
+      meetupWritten,
       espnRaw,
       pickleheadsRaw,
       uniRaw,
-      hsRaw,
+      hsWritten,
     ] = await Promise.all([
-      paidDue("reddit") && REDDIT_ENABLED ? pacedFan("reddit", cityScope) : Promise.resolve([]),
+      paidDue("reddit") && REDDIT_ENABLED ? pacedFan("reddit", cityScope) : Promise.resolve(0),
       paidDue("venues")
         ? fanOut(workerContext, "venues").then((r) => {
             if (!r.complete) workersComplete = false;
-            return r.rows;
+            return r.written;
           })
-        : Promise.resolve([]),
+        : Promise.resolve(0),
       // No tokens, but parsing sixteen calendars is CPU the orchestrator
       // cannot afford. Libraries are found through OpenStreetMap once a month
       // per cell, then read like any other civic calendar.
@@ -2466,7 +2449,7 @@ serve(async (req: Request) => {
         return pacedFan("civic", gridKey);
       })(),
       paced("google_events", () => fetchGoogleEventsRows(lat, lng, cityName)),
-      paidDue("meetup") && ANTHROPIC_API_KEY ? pacedFan("meetup", cityScope) : Promise.resolve([]),
+      paidDue("meetup") && ANTHROPIC_API_KEY ? pacedFan("meetup", cityScope) : Promise.resolve(0),
       paced("espn", () => fetchCollegeSports({ lat, lng, daysForward: 14 })),
       paidDue("pickleheads") && ANTHROPIC_API_KEY
         ? paced("pickleheads", () => fetchPickleheadsEvents({
@@ -2483,66 +2466,8 @@ serve(async (req: Request) => {
         : Promise.resolve([]),
       paidDue("highschool") && placesOk && GOOGLE_API_KEY && ANTHROPIC_API_KEY
         ? pacedFan("highschool", gridKey)
-        : Promise.resolve([]),
+        : Promise.resolve(0),
     ]);
-
-    // Convert Meetup extracts into event rows, applying the same quality +
-    // adult guards as every other source. Source-id is derived from the
-    // title slug since Meetup pages may not give us a stable group id.
-    const meetup: any[] = [];
-    for (const ev of meetupRaw) {
-      if (!ev.title || !ev.start_time) continue;
-      const quality = validateScrapedEvent({
-        title: ev.title,
-        description: ev.description,
-        venueName: ev.venue_name,
-      });
-      if (!quality.ok) {
-        console.log(`[meetup] drop quality: ${quality.reason}`);
-        continue;
-      }
-      const adultSignal = detectAdultSignal({
-        title: ev.title,
-        description: ev.description,
-        venueName: ev.venue_name,
-      });
-      if (adultSignal.hard) {
-        console.log(`[meetup] drop adult: "${ev.title}"`);
-        continue;
-      }
-      const tags = generateTags({
-        category: ev.category || "sports",
-        subcategory: ev.subcategory || "event",
-        title: ev.title,
-        description: ev.description,
-        is_free: ev.is_free,
-        start_time: ev.start_time,
-        ticket_url: ev.source_url,
-        timezone: syncTimezone,
-      });
-      meetup.push({
-        source: "meetup",
-        source_id: `meetup-${ev.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 60)}-${ev.start_time.slice(0, 10)}`,
-        title: ev.title,
-        description: ev.description,
-        category: ev.category || "sports",
-        subcategory: ev.subcategory || "event",
-        lat, lng, // Meetup events don't always expose venue lat/lng — use user's location as a best-effort
-        address: ev.address_hint || ev.venue_name || "",
-        image_url: null,
-        start_time: ev.start_time,
-        end_time: null,
-        is_recurring: false,
-        recurrence_rule: null,
-        is_free: ev.is_free,
-        price_min: null,
-        price_max: null,
-        ticket_url: ev.source_url,
-        source_url: ev.source_url,
-        tags,
-      });
-    }
-    console.log(`[meetup] ${meetup.length} after filtering`);
 
     // ESPN college sports — already shape-clean since the source has structured
     // venue + competitor info. Still apply adult guard (irrelevant for sports
@@ -2689,74 +2614,19 @@ serve(async (req: Request) => {
     }
     console.log(`[uni] ${university.length} after filtering`);
 
-    // HS sports — Places-discovered schools, Claude-extracted schedules.
-    const hs: any[] = [];
-    for (const ev of hsRaw) {
-      if (!ev.title || !ev.start_time) continue;
-      const quality = validateScrapedEvent({
-        title: ev.title,
-        description: ev.description,
-        venueName: ev.venue_name,
-      });
-      if (!quality.ok) {
-        console.log(`[hs] drop quality: ${quality.reason}`);
-        continue;
-      }
-      const tags = generateTags({
-        category: "sports",
-        subcategory: ev.subcategory,
-        title: ev.title,
-        description: ev.description,
-        is_free: ev.is_free,
-        start_time: ev.start_time,
-        ticket_url: ev.source_url,
-        timezone: syncTimezone,
-      });
-      hs.push({
-        source: "highschool",
-        source_id: ev.source_id,
-        title: ev.title,
-        description: ev.description,
-        category: "sports",
-        subcategory: ev.subcategory,
-        lat: ev.lat ?? lat,
-        lng: ev.lng ?? lng,
-        address: ev.address_hint || ev.venue_name || "",
-        image_url: null,
-        start_time: ev.start_time,
-        end_time: null,
-        is_recurring: false,
-        recurrence_rule: null,
-        is_free: ev.is_free,
-        price_min: null, price_max: null,
-        ticket_url: ev.source_url,
-        source_url: ev.source_url,
-        tags,
-      });
-    }
-    console.log(`[hs] ${hs.length} after filtering`);
-
-    // 5. Dedupe and upsert
+    // 5. Dedupe and upsert. The workers' sources were written by the workers.
     const all = mergeBigEvents([
-      ...tm, ...reddit, ...scraped, ...civic, ...googleEvents, ...meetup,
-      ...espn, ...pickleheads, ...university, ...hs,
-    ], big).filter((e) => e.start_time);
+      ...tm, ...googleEvents, ...espn, ...pickleheads, ...university,
+    ], big);
     const seen = new Set<string>();
-    const unique = all.filter((e) => {
+    const unique = finalizeRows(all).filter((e) => {
       const key = `${e.source}:${e.source_id}`;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
     });
-
-    // Final cleanup pass: strip HTML/markup from descriptions. Schema.org
-    // JSON-LD on venue sites often contains raw WordPress markup that
-    // shouldn't reach the feed card.
-    for (const e of unique) {
-      e.description = cleanText(e.description);
-    }
-
     await writeVerifiedEvents(supabase, unique);
+    const workerWritten = redditWritten + scrapedWritten + civicWritten + meetupWritten + hsWritten;
 
     // What does someone standing here actually get? Counting rows written
     // measures our effort; this measures the product. Read back from the
@@ -2783,7 +2653,7 @@ serve(async (req: Request) => {
       lat: gridLat,
       lng: gridLng,
       synced_at: claimedAt,
-      event_count: unique.length,
+      event_count: unique.length + workerWritten,
       // A discovery that found nothing keeps the prior count and the prior
       // timestamp, so a Places failure retries on the next crawl instead of
       // being cached for a week.
@@ -2859,15 +2729,15 @@ serve(async (req: Request) => {
         venues: venueCount,
         ticketmaster: tm.length,
         big_events: big.length,
-        reddit: reddit.length,
-        civic: civic.length,
+        reddit: redditWritten,
+        civic: civicWritten,
         google_events: googleEvents.length,
-        scraped: scraped.length,
-        meetup: meetup.length,
+        scraped: scrapedWritten,
+        meetup: meetupWritten,
         espn: espn.length,
         pickleheads: pickleheads.length,
         university: university.length,
-        highschool: hs.length,
+        highschool: hsWritten,
         upserted: unique.length,
         neighborhood: neighborhoodInfo?.neighborhood || null,
         nearby_neighborhoods: neighborhoodInfo?.nearby || [],
