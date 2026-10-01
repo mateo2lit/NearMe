@@ -6,6 +6,7 @@ import Purchases, {
   CustomerInfo,
   PURCHASES_ERROR_CODE,
 } from "react-native-purchases";
+import { getIdentityMode, getUserId } from "./identity";
 
 export const ENTITLEMENT_ID = "premium";
 
@@ -23,6 +24,14 @@ export async function configureIap() {
   if (!IOS_KEY) return;
   Purchases.configure({ apiKey: IOS_KEY });
   configured = true;
+  // RevenueCat's app user id becomes the Supabase user id, so the server can
+  // ask RevenueCat whether the caller is subscribed. logIn (unlike configuring
+  // with an appUserID) carries an anonymous purchaser's subscription over.
+  const userId = await getUserId().catch(() => null);
+  if (userId && getIdentityMode() === "supabase") {
+    const current = await Purchases.getAppUserID().catch(() => null);
+    if (current !== userId) await Purchases.logIn(userId).catch(() => {});
+  }
 }
 
 export async function getOfferings(): Promise<PurchasesOffering | null> {

@@ -1,5 +1,6 @@
 import { Event, EventCategory } from "../types";
-import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY } from "./supabase";
+import { supabase, SUPABASE_URL } from "./supabase";
+import { functionBearer } from "./functionAuth";
 import { getCachedEvents, setCachedEvents } from "./eventCache";
 import { markSyncStart, markSyncDone, setSyncContext } from "../hooks/useSyncStatus";
 import { sortByStartTime as sortEventsByStart, isMultiDaySpan } from "../lib/time-windows";
@@ -38,10 +39,11 @@ export async function triggerLocationSync(
   // the LLM. syncPolicy enforces a 6-hour cooldown for healthy cells and 2
   // hours for thin ones — those two numbers are the whole cost control.
   const allowAi = opts?.allowAi ?? waitForCompletion;
+  const bearer = await functionBearer();
   const request = fetch(`${SUPABASE_URL}/functions/v1/sync-location`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      Authorization: `Bearer ${bearer}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ lat, lng, radius_miles: radiusMiles, allow_ai: allowAi }),
