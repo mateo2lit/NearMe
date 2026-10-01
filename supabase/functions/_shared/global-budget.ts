@@ -10,6 +10,8 @@
  * behind it.
  */
 
+import { effectiveCost } from "./city-budget.ts";
+
 export const DEFAULT_GLOBAL_DAILY_USD = 5;
 
 /** Fresh ranking calls one user may make in 24 hours; beyond it they get cached scores. */
@@ -32,11 +34,13 @@ const sum = (rows: { cost_usd: unknown }[] | null | undefined) =>
 export async function aiSpentLast24h(supabase: any, now = Date.now()): Promise<number | null> {
   const since = new Date(now - 86_400_000).toISOString();
   const [catalog, runs] = await Promise.all([
-    supabase.from("ai_usage_log").select("cost_usd").gte("created_at", since).limit(20000),
+    supabase.from("ai_usage_log").select("cost_usd, created_at, refresh_id, settled, trigger_source").gte("created_at", since).limit(20000),
     supabase.from("claude_runs").select("cost_usd").gte("started_at", since).limit(20000),
   ]);
   if (catalog?.error || runs?.error) return null;
-  return sum(catalog?.data) + sum(runs?.data);
+  const rows = catalog?.data ?? [];
+  const catalogSpent = rows.reduce((s: number, r: any) => s + effectiveCost(r, rows, now), 0);
+  return catalogSpent + sum(runs?.data);
 }
 
 export function globalDecision(spent: number | null, capUsd: number): { ok: boolean; reason: string | null } {

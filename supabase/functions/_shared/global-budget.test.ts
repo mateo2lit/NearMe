@@ -35,3 +35,19 @@ Deno.test("global budget — env parsing", () => {
   assertEquals(globalDailyUsd("12"), 12);
   assertEquals(globalDailyUsd("0"), 0);
 });
+
+Deno.test("global budget — a stale reservation plus its workers sums to the workers' total", async () => {
+  const now = Date.parse("2026-10-01T12:00:00Z");
+  const at = new Date(now - 3_600_000).toISOString();
+  const supabase = makeFakeSupabase({
+    tables: {
+      ai_usage_log: [
+        { cost_usd: 0.25, created_at: at, refresh_id: "r1", settled: false, trigger_source: "client" },
+        { cost_usd: 0.08, created_at: at, refresh_id: "r1", settled: true, trigger_source: "worker:venues" },
+        { cost_usd: 0.06, created_at: at, refresh_id: "r1", settled: true, trigger_source: "worker:meetup" },
+      ],
+      claude_runs: [],
+    },
+  });
+  assertEquals(Math.round((await aiSpentLast24h(supabase, now))! * 100) / 100, 0.14);
+});

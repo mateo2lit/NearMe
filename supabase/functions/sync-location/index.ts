@@ -1720,7 +1720,7 @@ async function loadSourceRuns(scope: string): Promise<Record<string, string>> {
 async function loadCitySpend(gridKey: string) {
   const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
   const { data, error } = await supabase.from("ai_usage_log")
-    .select("cost_usd, created_at")
+    .select("cost_usd, created_at, refresh_id, settled, trigger_source")
     .eq("grid_key", gridKey)
     .gte("created_at", since);
   if (error) {
@@ -1903,6 +1903,7 @@ interface WorkerContext {
   categoryHint: { wellCovered: string[]; underRepresented: string[] };
   fastEventCount: number;
   thinPriorSync: boolean;
+  refreshId: string | null;
 }
 
 /** Longer than any one part should take, shorter than the orchestrator's own limit. */
@@ -2057,9 +2058,6 @@ serve(async (req: Request) => {
         : body.worker === "highschool" ? shapeHighschoolRows(raw, shapeCtx)
         : raw;
       const rows = finalizeRows(shaped);
-      // Written here, not by the orchestrator: if it dies after the fan-out,
-      // what this worker paid for is already saved.
-      await writeVerifiedEvents(supabase, rows);
       const workerSpend = usageSummary();
       if (workerSpend.calls > 0) {
         const { error: spendError } = await supabase.from("ai_usage_log").insert({
@@ -2067,6 +2065,7 @@ serve(async (req: Request) => {
           lat: body.gridLat,
           lng: body.gridLng,
           trigger_source: `worker:${body.worker}`,
+          refresh_id: body.refreshId ?? null,
           calls: workerSpend.calls,
           failures: workerSpend.failures,
           input_tokens: workerSpend.input_tokens,
@@ -2077,6 +2076,10 @@ serve(async (req: Request) => {
         });
         if (spendError) console.error(`[worker] spend write failed: ${spendError.message}`);
       }
+      // Spend is recorded first so a worker whose event write throws has still
+      // recorded what it paid for. Events are written here, not by the
+      // orchestrator, so they survive it dying after the fan-out.
+      await writeVerifiedEvents(supabase, rows);
       return new Response(JSON.stringify({ rows: [], written: rows.length, source_errors: sourceErrors }), {
         status: 200, headers: { "Content-Type": "application/json" },
       });
@@ -2204,6 +2207,7 @@ serve(async (req: Request) => {
 
     // Reserve budget for the same reason: a crashed run never reports its
     // spend. Settled to the real figure at the end.
+    const refreshId = allowAi ? crypto.randomUUID() : null;
     let reserveId: number | string | null = null;
     if (allowAi) {
       const { data: reserve, error: reserveError } = await supabase.from("ai_usage_log").insert({
@@ -2214,6 +2218,7 @@ serve(async (req: Request) => {
         calls: 0, failures: 0,
         input_tokens: 0, output_tokens: 0, cached_input_tokens: 0,
         cost_usd: REFRESH_RESERVE_USD,
+        refresh_id: refreshId, settled: false,
         by_label: { reserve: { calls: 0, failures: 0, input_tokens: 0, output_tokens: 0, cached_input_tokens: 0, cost_usd: REFRESH_RESERVE_USD } },
       }).select("id").single();
       if (reserveError) throw new Error(`budget reserve failed: ${reserveError.message}`);
@@ -2376,7 +2381,7 @@ serve(async (req: Request) => {
 
     const workerContext: WorkerContext = {
       lat, lng, radiusMeters, gridKey, gridLat, gridLng, cityName,
-      categoryHint, fastEventCount: tm.length, thinPriorSync,
+      categoryHint, fastEventCount: tm.length, thinPriorSync, refreshId,
     };
     // A failed worker may have spent before failing, and its spend record
     // died with it; the reservation is then kept rather than settled down.
@@ -2686,7 +2691,7 @@ serve(async (req: Request) => {
         ? spendRow
         : { ...spendRow, cost_usd: Math.max(spendRow.cost_usd, REFRESH_RESERVE_USD) };
       const { error: settleError } = await supabase.from("ai_usage_log")
-        .update(settled).eq("id", reserveId);
+        .update({ ...settled, settled: true }).eq("id", reserveId);
       if (settleError) console.error(`[ai-spend] settle failed: ${settleError.message}`);
     } else if (spend.calls > 0) {
       const { error: spendWriteError } = await supabase.from("ai_usage_log").insert({

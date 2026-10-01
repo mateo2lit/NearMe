@@ -32,7 +32,33 @@ export function monthlyBudgetUsd(raw: string | undefined | null): number {
   return Number.isFinite(n) && n >= 0 ? n : DEFAULT_MONTHLY_USD;
 }
 
-export interface SpendRow { cost_usd: number | string | null; created_at: string }
+export interface SpendRow {
+  cost_usd: number | string | null;
+  created_at: string;
+  refresh_id?: string | null;
+  settled?: boolean | null;
+  trigger_source?: string | null;
+}
+
+/** Longer than any refresh runs (workers time out at 120 s). */
+export const RESERVE_HOLD_MS = 600_000;
+
+/**
+ * What a spend row really counts for. A reservation is replaced by the real
+ * figure when its refresh finishes, but a refresh whose orchestrator dies never
+ * settles it, and on 2026-10-01 that left $0.25 holds standing for refreshes
+ * whose workers had already recorded every cent. Workers write their own rows
+ * in their own invocations, so once a reservation is stale they are the truth.
+ */
+export function effectiveCost(row: SpendRow, all: SpendRow[], now: number): number {
+  const cost = Number(row.cost_usd) || 0;
+  if (row.settled !== false || !row.refresh_id) return cost;
+  if (now - Date.parse(row.created_at) < RESERVE_HOLD_MS) return cost;
+  const workersReported = all.some((r) =>
+    r !== row && r.refresh_id === row.refresh_id && (r.trigger_source ?? "").startsWith("worker:")
+  );
+  return workersReported ? 0 : cost;
+}
 
 export function budgetDecision(input: {
   rows: SpendRow[];
@@ -46,7 +72,7 @@ export function budgetDecision(input: {
   let spent24h = 0;
   for (const r of input.rows) {
     const t = Date.parse(r.created_at);
-    const cost = Number(r.cost_usd) || 0;
+    const cost = effectiveCost(r, input.rows, now);
     if (!Number.isFinite(t) || t < monthAgo) continue;
     spent30d += cost;
     if (t >= dayAgo) spent24h += cost;
