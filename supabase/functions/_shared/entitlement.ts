@@ -8,6 +8,8 @@
  */
 export const ENTITLEMENT_ID = "premium";
 const RECHECK_MS = 3_600_000;
+/** A cached "not subscribed" goes stale fast: the user may have just paid. */
+const INACTIVE_RECHECK_MS = 300_000;
 const RC_TIMEOUT_MS = 4_000;
 
 export interface StatusRow { active: boolean; expires_at: string | null; checked_at: string }
@@ -31,7 +33,7 @@ function unexpired(row: StatusRow, now: number) {
 
 export function cacheVerdict(row: StatusRow | null, now: number): "active" | "inactive" | "stale" {
   if (!row) return "stale";
-  if (now - Date.parse(row.checked_at) > RECHECK_MS) return "stale";
+  if (now - Date.parse(row.checked_at) > (row.active ? RECHECK_MS : INACTIVE_RECHECK_MS)) return "stale";
   if (row.active && !unexpired(row, now)) return "stale";
   return row.active ? "active" : "inactive";
 }

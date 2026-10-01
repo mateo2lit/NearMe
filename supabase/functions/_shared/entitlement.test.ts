@@ -81,3 +81,10 @@ Deno.test("entitlement — enforcement needs both the flag and a RevenueCat key"
   assertEquals(enforcementActive(false, "sk_live"), false);
   assertEquals(enforcementActive(false, ""), false);
 });
+
+// A user who just paid must not be refused AI for an hour on a cached "no".
+Deno.test("entitlement — a cached \"not subscribed\" is trusted for 5 minutes, not an hour", () => {
+  const row = (ageMs: number) => ({ active: false, expires_at: null, checked_at: iso(NOW - ageMs) });
+  assertEquals(cacheVerdict(row(4 * 60_000), NOW), "inactive");
+  assertEquals(cacheVerdict(row(6 * 60_000), NOW), "stale");
+});
