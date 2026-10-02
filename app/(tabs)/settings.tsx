@@ -484,6 +484,11 @@ export default function SettingsScreen() {
         <AboutLink icon="refresh-outline" label={restoring ? "Restoring…" : "Restore purchases"} onPress={restore} />
         <AboutLink icon="shield-checkmark-outline" label="Privacy policy" onPress={() => Linking.openURL("https://mateo2lit.github.io/NearMe/privacy.html").catch(() => {})} />
         <AboutLink icon="document-text-outline" label="Terms of use" onPress={() => Linking.openURL("https://mateo2lit.github.io/NearMe/terms.html").catch(() => {})} />
+        {/* Overture Maps data (CDLA Permissive 2.0 / Apache 2.0) requires attribution. */}
+        <View style={styles.aboutRow}>
+          <Ionicons name="map-outline" size={20} color={COLORS.muted} />
+          <Text style={styles.aboutText}>Place data © Overture Maps Foundation</Text>
+        </View>
         {/* The privacy policy promises this path, so the app has to offer it. */}
         <AboutLink icon="mail-outline" label="Request your data or deletion" onPress={() => Linking.openURL("mailto:dbh28tekkit@gmail.com?subject=NearMe%20data%20request").catch(() => {})} />
       </View>
