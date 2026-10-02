@@ -38,6 +38,12 @@ Deno.test("shared feed owner is deterministic and then stable; reader fields nev
   assertEquals("failures" in rows[0], false);
   assertThrows(() => planSourceWrites([{ ...source, lat: 100 }], []));
   assertThrows(() =>
+    planSourceWrites([{
+      ...source,
+      feed_url: "https://example.org/event/one.ics",
+    }], [])
+  );
+  assertThrows(() =>
     planSourceWrites([{ ...source, place_name: "Example Strip Club" }], [])
   );
 });

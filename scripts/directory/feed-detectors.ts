@@ -31,6 +31,14 @@ export const PLATFORMS = [
   "civicrec",
   "recdesk",
 ];
+export function singleEventUrl(value: string): boolean {
+  const u = new URL(value);
+  return /\/(?:event|event-details)\//i.test(u.pathname) ||
+    /\/events\/[^/]+\/?$/i.test(u.pathname) &&
+      !/\/events\/(?:calendar|calendar\.ics|feed|ical)\/?$/i.test(u.pathname) ||
+    /\/eventcalendar\/ical\/[^/]+\.ics$/i.test(u.pathname) ||
+    /[?&](?:eventid|eid)=/i.test(u.search);
+}
 function unescape(s: string): string {
   return s.replace(/&amp;/gi, "&").replace(
     /&#(?:x([0-9a-f]+)|(\d+));/gi,
@@ -89,6 +97,7 @@ export function detectCandidates(
   const add = (platform: string, url: string) => {
     try {
       const feed_url = normalizeUrl(url, siteUrl);
+      if (singleEventUrl(feed_url)) return;
       if (!found.some((c) => c.feed_url === feed_url)) {
         found.push({ platform, feed_url, page_url: siteUrl });
       }

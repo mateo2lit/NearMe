@@ -1,6 +1,7 @@
 import type { SourceRow } from "./probe-types.ts";
 import { isAdultVenue } from "../../supabase/functions/_shared/adult-filter.ts";
 import { normalizeUrl } from "./probe-targets.ts";
+import { singleEventUrl } from "./feed-detectors.ts";
 export function planSourceWrites(
   input: SourceRow[],
   existing: SourceRow[],
@@ -24,6 +25,7 @@ export function planSourceWrites(
     ) throw new Error("invalid_source");
     const feed_url = normalizeUrl(source.feed_url),
       page_url = normalizeUrl(source.page_url);
+    if (singleEventUrl(feed_url)) throw new Error("single_event_source");
     const previousOwner = known.get(feed_url) ?? result.get(feed_url);
     const owner =
       previousOwner && previousOwner.overture_id !== source.overture_id

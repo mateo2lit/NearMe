@@ -14,7 +14,7 @@ The query used `pg_database_size(current_database())` and `pg_total_relation_siz
 
 ## Implementation checks
 
-Latest local verification: **413 edge/directory tests passed**. Deno CLI entry points type-check; workflow YAML parses. App/Edge Function runtime code is unchanged.
+Latest local verification: **416 edge/directory tests passed**. Deno CLI entry points type-check; workflow YAML parses. App/Edge Function runtime code is unchanged.
 
 - Deno 2.7.13: pinned for GitHub runners; supports native Temporal for explicit IANA timezone validation, rejecting DST ambiguity and gaps.
 - PostgreSQL migration tested in isolated in-memory PGlite 0.3.14, including roles, RLS, unique URLs and coordinate constraints. This machine has no Docker. This tests PostgreSQL behavior, but does not substitute for a linked Supabase migration/grant check after authorization.
@@ -77,3 +77,11 @@ A subsequent plan audit restored the existing adult-venue filter at target prepa
 - The sample is too small to estimate national yield confidently. Full-tile discovery and additional platform fixtures remain required. At the observed sample throughput, the full tile may require multiple bounded runs; no one-hour national promise is justified.
 - [Full-tile continuation](https://github.com/mateo2lit/NearMe/actions/runs/37043202262) runs commit `ab9e725`, restores the corrected sample's review-only checkpoint, and has a 50,000-site / four-hour crawl ceiling. It was still running when this note was written. A successful capped run must not be described as complete if its `remaining` count is nonzero.
 - Subsequent local safeguards (for the next run): first negative rechecks are hash-spread across months 1–6, then repeat every six months; storage limits also cover failure updates; robots redirect origins share the site-origin budget; Event subtypes validate; Communico is explicitly key-gated according to its official API documentation. The running commit is fixed and does not receive these later edits.
+
+### Full-run interruption and recovery
+
+Run `37043202262` failed at 18:20:10 UTC with `Uncaught null`, without a stack trace. Its artifact successfully preserved a checksummed snapshot of **8,600 website entries**, including the initial 100: 112 verified website results deduplicate to **99 pending source candidates**. Other outcomes: 3,416 later-phase deferrals, 2,044 HTTP errors, 675 robots denials, 980 no-feed, 912 invalid-feed, 280 timeouts, 131 exhausted budgets, 34 empty-future feeds, 6 unsupported and 10 terms-blocked. These are partial checkpoint counts, not full-tile completion or accepted-source counts. The last progress line records 8,500 new completions in 1,814 seconds; total request/byte counters were not checkpointed before this fatal exit.
+
+Code inspection found an HTTP error-listener gap: a response exceeding the Content-Length cap was destroyed before its response error listener was attached. Response errors are now handled before any early destruction, including null errors; request errors tolerate null and aborted bodies reject cleanly. Regression tests cover oversized headers, streamed overflow and aborts. This fixes a demonstrated error path, but the production log alone does not prove it was the sole cause of this exit.
+
+Candidate review also found single-event Localist/GrowthZone exports and JSON-LD event-detail pages. Their recognized URL forms are now excluded from discovery and rejected by the write planner. Previously saved candidates are still review evidence, not authorization to load them. The conservative path heuristic can miss calendar-category pages; broader platform-specific routes need fixture evidence before loosening it.

@@ -1,5 +1,9 @@
 import robotsParserModule from "npm:robots-parser@3.0.1";
-import { request as httpRequest } from "node:http";
+import {
+  type ClientRequest,
+  type IncomingMessage,
+  request as httpRequest,
+} from "node:http";
 import { request as httpsRequest } from "node:https";
 import { lookup } from "node:dns/promises";
 import { normalizeUrl, publicAddress } from "./probe-targets.ts";
@@ -16,6 +20,41 @@ export interface Budget {
   origins: Set<string>;
 }
 const MAX_BODY = 2 * 1024 * 1024;
+export function responseBody(
+  res: IncomingMessage,
+  req: Pick<ClientRequest, "destroy">,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    // Attach before any early destroy; response errors are independent of request errors.
+    res.on("error", () => reject(new Error("http_error")));
+    res.on("aborted", () => reject(new Error("http_error")));
+    const tooLarge = () => {
+      reject(new Error("body_limit"));
+      req.destroy(new Error("body_limit"));
+    };
+    if (Number(res.headers["content-length"] ?? 0) > MAX_BODY) {
+      tooLarge();
+      return;
+    }
+    res.on("data", (chunk: Uint8Array) => {
+      size += chunk.byteLength;
+      if (size > MAX_BODY) tooLarge();
+      else chunks.push(chunk);
+    });
+    res.on("end", () => {
+      if (size > MAX_BODY) return;
+      const joined = new Uint8Array(size);
+      let offset = 0;
+      for (const c of chunks) {
+        joined.set(c, offset);
+        offset += c.length;
+      }
+      resolve(new TextDecoder().decode(joined));
+    });
+  });
+}
 // robots-parser is CommonJS; its bundled declaration uses an ESM default.
 const robotsParser = robotsParserModule as unknown as (
   url: string,
@@ -66,25 +105,7 @@ export async function pinnedRequest(
           } else callback(null, addresses[0].address, 4);
         },
       }, (res) => {
-        const chunks: Uint8Array[] = [];
-        let size = 0;
-        if (Number(res.headers["content-length"] ?? 0) > MAX_BODY) {
-          req.destroy(new Error("body_limit"));
-          return;
-        }
-        res.on("data", (chunk: Uint8Array) => {
-          size += chunk.byteLength;
-          if (size > MAX_BODY) req.destroy(new Error("body_limit"));
-          else chunks.push(chunk);
-        });
-        res.on("error", reject);
-        res.on("end", () => {
-          const joined = new Uint8Array(size);
-          let offset = 0;
-          for (const c of chunks) {
-            joined.set(c, offset);
-            offset += c.length;
-          }
+        responseBody(res, req).then((body) => {
           const h: Record<string, string> = {};
           for (const [key, value] of Object.entries(res.headers)) {
             if (value !== undefined) {
@@ -94,10 +115,10 @@ export async function pinnedRequest(
           resolve({
             status: res.statusCode ?? 0,
             headers: h,
-            body: new TextDecoder().decode(joined),
+            body,
             url,
           });
-        });
+        }, reject);
       });
       req.on(
         "error",
@@ -106,7 +127,7 @@ export async function pinnedRequest(
             new Error(
               abort.signal.aborted
                 ? "timeout"
-                : e.message === "body_limit"
+                : e?.message === "body_limit"
                 ? "body_limit"
                 : "http_error",
             ),

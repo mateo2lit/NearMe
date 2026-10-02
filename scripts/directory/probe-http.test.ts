@@ -2,13 +2,49 @@ import {
   assertEquals,
   assertRejects,
 } from "https://deno.land/std@0.177.0/testing/asserts.ts";
-import { createProbeHttp, type WireResponse } from "./probe-http.ts";
+import {
+  createProbeHttp,
+  responseBody,
+  type WireResponse,
+} from "./probe-http.ts";
+import { type ClientRequest, IncomingMessage } from "node:http";
+import { Socket } from "node:net";
 import { publicAddress } from "./probe-targets.ts";
 const response = (
   body = "",
   status = 200,
   headers: Record<string, string> = {},
 ): WireResponse => ({ body, status, headers });
+Deno.test("oversized HTTP headers handle null response errors before early destruction", async () => {
+  const res = new IncomingMessage(new Socket());
+  res.headers["content-length"] = "2097153";
+  const req = {
+    destroy: () => {
+      res.emit("error", null);
+      return req;
+    },
+  } as unknown as ClientRequest;
+  await assertRejects(() => responseBody(res, req), Error, "body_limit");
+});
+Deno.test("streamed body overflow and aborted responses remain caught failures", async () => {
+  for (const mode of ["overflow", "aborted"]) {
+    const res = new IncomingMessage(new Socket());
+    const req = {
+      destroy: () => {
+        res.emit("error", null);
+        return req;
+      },
+    } as unknown as ClientRequest;
+    const result = responseBody(res, req);
+    if (mode === "overflow") res.emit("data", new Uint8Array(2097153));
+    else res.emit("aborted");
+    await assertRejects(
+      () => result,
+      Error,
+      mode === "overflow" ? "body_limit" : "http_error",
+    );
+  }
+});
 Deno.test("robots redirects to the public canonical host are bounded, cached and enforced", async () => {
   const seen: string[] = [];
   const http = createProbeHttp({

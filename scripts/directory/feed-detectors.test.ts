@@ -42,6 +42,23 @@ Deno.test("single-event CivicPlus exports do not masquerade as renewable calenda
   assertEquals(result.some((c) => c.feed_url.includes("eventID=")), false);
   assertEquals(result.some((c) => c.feed_url.includes("catID=3")), true);
 });
+Deno.test("Localist, GrowthZone and event-detail exports are not calendar subscriptions", () => {
+  const result = detectCandidates(
+    "https://example.org/",
+    '<a href="/event/one.ics">One</a><a href="/eventcalendar/ICal/trip-123.ics">Trip</a><a href="/events/show/?ical=1">Show</a><a href="/events/?ical=1">Calendar</a>',
+  );
+  assertEquals(
+    result.filter((c) => c.platform !== "tec").map((c) => c.feed_url),
+    ["https://example.org/events/?ical=1"],
+  );
+  assertEquals(
+    detectCandidates(
+      "https://example.org/event-details/show",
+      '<script type="application/ld+json">{}</script>',
+    ).some((c) => c.platform === "jsonld"),
+    false,
+  );
+});
 Deno.test("published export routes cover plugin, athletics, chamber and recreation classes", () => {
   const samples: [string, string][] = [
     ["events_manager", "events-manager"],

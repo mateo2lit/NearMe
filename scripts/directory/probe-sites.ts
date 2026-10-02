@@ -1,5 +1,10 @@
 import { createProbeHttp } from "./probe-http.ts";
-import { detectCandidates, links, PLATFORMS } from "./feed-detectors.ts";
+import {
+  detectCandidates,
+  links,
+  PLATFORMS,
+  singleEventUrl,
+} from "./feed-detectors.ts";
 import { validateFeed } from "./feed-validation.ts";
 import {
   DETECTOR_VERSION,
@@ -109,6 +114,11 @@ export async function probeSite(
       if (validation.outcome !== "invalid_feed" || c.platform !== "tec") {
         saw = validation.outcome;
       }
+      return false;
+    }
+    if (singleEventUrl(response.url ?? c.feed_url)) {
+      saw = "unsupported";
+      reason = "single_event_source";
       return false;
     }
     candidate = { ...c, feed_url: response.url ?? c.feed_url };
