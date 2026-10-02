@@ -1,6 +1,6 @@
 # Event source directory — design
 
-**Date:** 2026-10-01 · **Status:** approved in conversation, awaiting spec review
+**Date:** 2026-10-01 · **Status:** approved by the user 2026-10-01 (with the added sources)
 **Research:** `reports/Event data sources for NearMe.md`
 
 ## Why
@@ -59,6 +59,11 @@ Map Overture's taxonomy (`basic_category` / `taxonomy.primary`) to five classes.
 | `government` | city hall, town hall, municipal / county government office, parks & recreation department |
 | `university` | college, university |
 | `community` | community/recreation center, museum, art gallery, cultural center, park (only when it has its own website) |
+| `school` | high school, school district (athletics calendars) |
+| `chamber` | chamber of commerce, business association, downtown/main-street association |
+| `tourism` | visitor center, tourist information, convention & visitors bureau |
+| `worship` | place of worship (feeds kept only after the services filter) |
+| `store` | game store, hobby/comic store, outdoor retailer (for national event finders) |
 
 ### 3. Probe — find feeds on each website
 
@@ -79,6 +84,15 @@ For each place's website, check known platforms in order of cheapness and stop a
 | Squarespace events | `?format=json` on an events collection | JSON |
 | Generic iCal | `<link rel="alternate" type="text/calendar">` or `.ics` links | iCal |
 | schema.org Event | JSON-LD `Event` objects on the site's events page | JSON-LD (already parsed by `venue-feeds.ts`) |
+| WordPress: Events Manager | `/events/` + plugin markers | `?ical=1` / `/events.ics` iCal |
+| WordPress: Modern Events Calendar | `mec-` markers, `/wp-json/mec/` | iCal export / REST |
+| WordPress: EventON | `eventon` markers | iCal export |
+| WordPress: Timely (All-in-One Event Calendar) | `ai1ec` / `timely` markers | iCal export / Timely feed |
+| WordPress: My Calendar | `my-calendar` markers | iCal export |
+| College athletics (Sidearm, PrestoSports) | athletics site linked from a university site; platform markers | per-sport schedule iCal |
+| School athletics (rSchoolToday, ArbiterLive, similar) | linked from school / district sites | iCal |
+| Chamber platforms (GrowthZone / ChamberMaster) | `growthzone` / `chambermaster` markers | public calendar iCal / RSS |
+| Parks & rec registration (ActiveNet, CivicRec, RecDesk) | linked from government sites | public activity / program listings (JSON or iCal where public) |
 
 Probe budget per site: homepage fetch plus at most 8 further requests; 8 s timeout each; robots.txt checked once per host. Sites with no feed are recorded as such (and venues still go to `venues`, where the AI scan can use them).
 
@@ -142,7 +156,9 @@ About 1–2 runner-hours a month. A manual run can target one platform (after a 
 
 ## Quality filters
 
-- **Meetings filter** for government and library feeds: drop titles matching council / commission / board / committee / public hearing / workshop-meeting / budget hearing / agenda patterns (tested against real feeds).
+- **Meetings filter** for government, library and chamber feeds: drop titles matching council / commission / board / committee / public hearing / workshop-meeting / budget hearing / agenda patterns (tested against real feeds).
+- **Services filter** for worship feeds: drop regular worship services, masses, prayer and study meetings; keep concerts, festivals, fairs, dinners and community events.
+- **Not added** (terms or no lawful route): parkrun, Eventbrite pages, Facebook, Instagram, Untappd, newspaper calendars.
 - **Categorization** reuses `categorizeCivic` and `generateTags`.
 - All existing honesty rules apply unchanged (all-day → `time-tba`, every row linked, `writeVerifiedEvents` tag hygiene).
 - The `quality` scorecard gets a `structured_share` figure (events from feeds ÷ all events).
@@ -157,9 +173,27 @@ About 1–2 runner-hours a month. A manual run can target one platform (after a 
 
 Each reader turns on when its secret is set, the same pattern as `SERPAPI_KEY` and Reddit.
 
-## Leagues and trivia
+## Terms-checked detectors
 
-National operators — social sports leagues (e.g. Volo, ZogSports, Big Shot, JAM) and trivia companies (e.g. Geeks Who Drink, Sporcle Live, King Trivia) — publish their own city and venue pages. For each operator:
+Free and structured, but each is built only after its terms of service and robots.txt are read and allow it (outcome recorded in memory either way):
+
+| Source | Why | Discovery |
+|---|---|---|
+| Tourism-board calendars (Simpleview and other DMO platforms) | regional calendars with times | `tourism` places' websites; platform markers or published feeds |
+| Luma calendars | social, tech, networking; official subscribe iCal | `lu.ma` / `luma.com` links on organizer and venue sites |
+| Meetup group iCal | official per-group export; could replace Meetup HTML + AI extraction | group links found on venue/organizer sites and Meetup's own public pages |
+| City open-data special-event permits | festivals, street fairs, races | each government domain's Socrata / ArcGIS catalog search |
+| Houses of worship (Planning Center and similar) | concerts, festivals, community dinners | `worship` places' websites; a services filter drops regular worship times |
+
+## Leagues, trivia and national operators
+
+National operators publish their own city and venue pages:
+- social sports leagues (e.g. Volo, ZogSports, Big Shot, JAM);
+- trivia companies (e.g. Geeks Who Drink, Sporcle Live, King Trivia);
+- chains with public event finders: game stores (Wizards of the Coast store and event locator — Friday Night Magic, board-game nights), REI classes and outings, and similar;
+- volunteer events (VolunteerMatch partner API).
+
+For each operator:
 
 1. Read its terms of service and robots.txt.
 2. If reuse of public listings is allowed, add a detector that starts from **the operator's own national index** (its city list or venue finder) — discovered by method, never a per-city list in code.
@@ -187,9 +221,12 @@ Settings gets one line: "Place data © Overture Maps Foundation" (and any wordin
 1. **Venues from Overture** → `venues`. Immediate effect: the existing AI venue scan works in every US/CA city. Includes the workflow skeleton, extraction, classification, load, attribution line.
 2. **Feed probing** → `event_sources`, probe ledger, incremental monthly rule.
 3. **Platform readers** in sync-location, with the worker kind and cadence; venue scan skips venues with feeds.
-4. **Meetings filter**, then retire Overpass / `civic_sources`.
+4. **Meetings and services filters**, then retire Overpass / `civic_sources`.
 5. **Keyed sources** (RunSignup, USDA, BiblioCommons official), off until keys exist.
-6. **Leagues and trivia**, per the terms review.
+6. **Terms-checked detectors** (tourism boards, Luma, Meetup iCal, open-data permits, houses of worship), each only after its terms review.
+7. **Leagues, trivia and national operators** (including game stores, REI, VolunteerMatch), per the terms review.
+
+High-school athletics feeds (Phase 3) are measured against the existing high-school source; if they cover it, the Places + AI high-school path is retired.
 
 Each phase ships and is measured on its own.
 
