@@ -10,6 +10,6 @@ module.exports = {
   // Edge-function tests import Deno URLs that Jest cannot resolve. They run
   // under `npm run test:edge` instead. Without this they reported as six
   // "failed to run" suites on every run, which trained us to ignore them.
-  testPathIgnorePatterns: ["/node_modules/", "<rootDir>/supabase/"],
+  testPathIgnorePatterns: ["/node_modules/", "<rootDir>/supabase/", "<rootDir>/scripts/directory/"],
   moduleFileExtensions: ["ts", "tsx", "js", "jsx"],
 };
