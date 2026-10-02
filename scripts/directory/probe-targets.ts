@@ -65,7 +65,11 @@ export function prepareTarget(
     return {
       overture_id: p.id,
       place_name: p.name,
-      place_class: cls.cls,
+      // Official 2026-09-23 taxonomy uses the plural; extraction already includes
+      // these through government_office. Keep the Phase 1 venue mapping unchanged.
+      place_class: p.primary_cat === "chambers_of_commerce"
+        ? "chamber"
+        : cls.cls,
       website: normalizeUrl(p.website),
       tile,
       lat: p.lat,

@@ -14,7 +14,7 @@ The query used `pg_database_size(current_database())` and `pg_total_relation_siz
 
 ## Implementation checks
 
-Latest local verification: **412 edge/directory tests passed**. Deno CLI entry points type-check; workflow YAML parses. App/Edge Function runtime code is unchanged.
+Latest local verification: **413 edge/directory tests passed**. Deno CLI entry points type-check; workflow YAML parses. App/Edge Function runtime code is unchanged.
 
 - Deno 2.7.13: pinned for GitHub runners; supports native Temporal for explicit IANA timezone validation, rejecting DST ambiguity and gaps.
 - PostgreSQL migration tested in isolated in-memory PGlite 0.3.14, including roles, RLS, unique URLs and coordinate constraints. This machine has no Docker. This tests PostgreSQL behavior, but does not substitute for a linked Supabase migration/grant check after authorization.
@@ -62,6 +62,10 @@ These limits are visible rollout gaps, not a claim that every adapter variant ha
 ## Florida sample results
 
 The extraction selected release `2026-09-23.1`: **43,763 places**, **41,700 eligible targets**, **36,381 distinct website URLs**. The tile is much larger than Palm Beach County. These are extraction counts, not newly inserted production rows.
+
+Offline classification of this extraction finds **21,989 Phase 2 website URLs** and **14,392 URLs whose associations are entirely later-phase classes** (worship, tourism or stores). Eligible place associations: 18,236 venues, 3,085 government offices, 1,490 community institutions, 1,442 universities, 796 schools, 677 libraries and 53 chambers; later-phase associations comprise 14,601 worship places, 1,209 stores and 111 tourism places. Association counts can exceed distinct URLs.
+
+The [official Overture September taxonomy](https://docs.overturemaps.org/taxonomy/2026-09-23.0/taxonomy.csv) names the category `chambers_of_commerce`. The Phase 1 mapping used the singular, so these 53 targets were already extracted and probed through their `government_office` basic category. A tested Phase 2-only correction now labels them as chambers; Phase 1 and deployed functions remain unchanged. The running full-tile job predates this labeling correction.
 
 - [Initial sample, commit 6c88314](https://github.com/mateo2lit/NearMe/actions/runs/37041506258): 100 websites processed in 75 crawler seconds, 76 content requests, 69 robots requests, zero AI calls. 39 later-phase deferrals, 39 generic fetch errors. Its sole positive was a one-event CivicPlus export; review rejected it as a renewable calendar source.
 - [Corrected sample, commit 5e6f9b1](https://github.com/mateo2lit/NearMe/actions/runs/37042411777): same 100 websites, 85 crawler seconds, 179 content requests, 116 robots requests, zero AI calls. Results: 39 later-phase deferrals, 18 HTTP errors, 8 robots denials, 12 no-feed, 17 invalid-feed, 2 timeouts, 3 exhausted budgets, **1 verified calendar**. All production load/publish jobs were skipped.

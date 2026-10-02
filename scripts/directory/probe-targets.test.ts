@@ -45,3 +45,18 @@ Deno.test("URL safety and equivalence do not erase branch or feed identity", () 
     ]
   ) assertThrows(() => normalizeUrl(url));
 });
+Deno.test("current Overture chambers keep their specific source class", () => {
+  assertEquals(
+    prepareTarget({
+      ...place,
+      primary_cat: "chambers_of_commerce",
+      basic_category: "government_office",
+      hierarchy: [
+        "community_and_government",
+        "government_office",
+        "chambers_of_commerce",
+      ],
+    }, "t24_85")?.place_class,
+    "chamber",
+  );
+});
