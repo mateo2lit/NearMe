@@ -1,0 +1,205 @@
+name: Source directory feeds
+
+on:
+  workflow_dispatch:
+    inputs:
+      tile:
+        description: "Tile id (blank = all); pilot t24_85"
+        default: "t24_85"
+      release:
+        description: "Overture release (blank = newest)"
+        default: ""
+      min_confidence:
+        description: "Minimum confidence"
+        default: "0.6"
+      platform:
+        description: "Platform id or all"
+        default: "all"
+      dry_run:
+        description: "Review artifacts only; no database or ledger writes"
+        type: boolean
+        default: true
+      bootstrap:
+        description: "Allow a missing production ledger for the first run"
+        type: boolean
+        default: false
+      max_sites:
+        description: "Maximum websites (1–50000)"
+        default: "5000"
+      review_run:
+        description: "Prior dry-run id to resume (dry runs only)"
+        default: ""
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: source-directory-feeds
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      tiles: ${{ steps.plan.outputs.tiles }}
+      release: ${{ steps.plan.outputs.release }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with: { deno-version: v2.7.13 }
+      - id: plan
+        env:
+          TILE: ${{ inputs.tile }}
+          RELEASE: ${{ inputs.release }}
+          MIN_CONF: ${{ inputs.min_confidence }}
+          PLATFORM: ${{ inputs.platform }}
+          MAX_SITES: ${{ inputs.max_sites }}
+        run: deno run --config scripts/directory/deno.json --allow-env --allow-net --allow-read --allow-write scripts/directory/prepare-feed-run.ts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: feed-extraction-manifest
+          path: out/places/manifest.json
+          retention-days: 14
+
+  extract:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        tile: ${{ fromJSON(needs.plan.outputs.tiles) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with: { deno-version: v2.7.13 }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: python -m pip install --quiet duckdb
+      - name: Extract all mapped classes without loading venues
+        env:
+          TILE: ${{ matrix.tile }}
+          RELEASE: ${{ needs.plan.outputs.release }}
+          MIN_CONF: ${{ inputs.min_confidence || '0.6' }}
+        run: |
+          mkdir -p out
+          deno run --allow-read scripts/directory/extract.sql.ts "$TILE" "$RELEASE" "$MIN_CONF" > out/extract.sql
+          python -c "import duckdb; con = duckdb.connect(); [con.execute(s) for s in open('out/extract.sql').read().split(';') if s.strip()]"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: feed-places-${{ matrix.tile }}
+          path: out/${{ matrix.tile }}.ndjson
+          if-no-files-found: error
+          retention-days: 14
+
+  probe:
+    needs: [plan, extract]
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with: { deno-version: v2.7.13 }
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: feed-places-*
+          merge-multiple: true
+          path: out/places
+      - uses: actions/download-artifact@v4
+        with:
+          name: feed-extraction-manifest
+          path: out/places
+      - name: Restore production ledger
+        if: ${{ inputs.review_run == '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BOOTSTRAP: ${{ inputs.bootstrap }}
+        run: |
+          flags=()
+          if [ "$BOOTSTRAP" = "true" ]; then flags+=(--bootstrap); fi
+          deno run --config scripts/directory/deno.json --allow-env --allow-net --allow-read --allow-write scripts/directory/ledger-store.ts download --out out/ledger "${flags[@]}"
+      - name: Validate dry-run continuation
+        if: ${{ inputs.review_run != '' }}
+        env:
+          REVIEW_RUN: ${{ inputs.review_run }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          [[ "$DRY_RUN" = "true" && "$REVIEW_RUN" =~ ^[0-9]+$ ]] || exit 1
+      - uses: actions/download-artifact@v4
+        if: ${{ inputs.review_run != '' && inputs.dry_run }}
+        with:
+          name: feed-probe-review
+          run-id: ${{ inputs.review_run }}
+          github-token: ${{ github.token }}
+          path: out/ledger
+      - name: Probe public websites
+        env:
+          TILE: ${{ inputs.tile || 'all' }}
+          PLATFORM: ${{ inputs.platform || 'all' }}
+          MAX_SITES: ${{ inputs.max_sites || '5000' }}
+          BOOTSTRAP: ${{ inputs.bootstrap }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          flags=()
+          if [ "$BOOTSTRAP" = "true" ]; then flags+=(--bootstrap); fi
+          if [ "$DRY_RUN" = "true" ]; then flags+=(--dry-run); fi
+          deno run --config scripts/directory/deno.json --allow-env --allow-net --allow-read --allow-write scripts/directory/probe-sites.ts --input-dir out/places --ledger-in out/ledger --out out/probe --tile "$TILE" --platform "$PLATFORM" --max-sites "$MAX_SITES" "${flags[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: ${{ inputs.dry_run && 'feed-probe-review' || 'feed-probe-live' }}
+          path: out/probe/
+          if-no-files-found: warn
+          retention-days: 14
+
+  load:
+    needs: probe
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with: { deno-version: v2.7.13 }
+      - uses: actions/download-artifact@v4
+        with: { name: feed-probe-live, path: out/probe }
+      - name: Capacity-checked source load
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: deno run --config scripts/directory/deno.json --allow-env --allow-net --allow-read --allow-write scripts/directory/load-sources.ts --in out/probe --out out/load | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: feed-load-receipts
+          path: out/load/
+          if-no-files-found: warn
+
+  publish:
+    needs: [probe, load]
+    if: ${{ always() && !inputs.dry_run && needs.probe.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with: { deno-version: v2.7.13 }
+      - uses: actions/download-artifact@v4
+        with: { name: feed-probe-live, path: out/state }
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with: { name: feed-load-receipts, path: out/receipts }
+      - name: Publish complete snapshot with pending writes preserved
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          state=out/state
+          if [ -f out/receipts/snapshot.json ]; then state=out/receipts; fi
+          deno run --config scripts/directory/deno.json --allow-env --allow-net --allow-read --allow-write scripts/directory/ledger-store.ts publish --in "$state" | tee -a "$GITHUB_STEP_SUMMARY"

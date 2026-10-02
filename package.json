@@ -10,7 +10,7 @@
     "web": "expo start --web",
     "test": "jest",
     "test:watch": "jest --watch",
-    "test:edge": "deno test --allow-env --allow-net --allow-read supabase/functions scripts/directory",
+    "test:edge": "deno test --config scripts/directory/deno.json --allow-env --allow-net --allow-read supabase/functions scripts/directory",
     "test:all": "npm test && npm run test:edge"
   },
   "dependencies": {
