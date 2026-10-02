@@ -29,24 +29,51 @@ permissions:
 jobs:
   plan:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
     outputs:
       tiles: ${{ steps.t.outputs.tiles }}
     steps:
       - uses: actions/checkout@v4
       - uses: denoland/setup-deno@v2
         with: { deno-version: v2.x }
-      - id: t
+      - id: validate
+        env:
+          TILE: ${{ inputs.tile }}
+          RELEASE: ${{ inputs.release || '2026-09-23.1' }}
+          MIN_CONF: ${{ inputs.min_confidence || '0.6' }}
         run: |
-          if [ -n "${{ inputs.tile }}" ]; then
-            echo "tiles=[\"${{ inputs.tile }}\"]" >> "$GITHUB_OUTPUT"
+          # Validate release format: YYYY-MM-DD.N
+          if ! [[ "$RELEASE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}\.[0-9]+$ ]]; then
+            echo "Invalid release format: $RELEASE (expected YYYY-MM-DD.N)" >&2
+            exit 1
+          fi
+          # Validate min_confidence format: 0.N or 1.0 or 1
+          if ! [[ "$MIN_CONF" =~ ^0?\.[0-9]+$|^1(\.0+)?$ ]]; then
+            echo "Invalid min_confidence: $MIN_CONF (expected 0.N or 1)" >&2
+            exit 1
+          fi
+      - id: t
+        env:
+          TILE: ${{ inputs.tile }}
+        run: |
+          if [ -n "$TILE" ]; then
+            # Validate tile against real ids
+            deno eval "const tile = Deno.env.get('TILE'); import {tiles} from './supabase/functions/_shared/venue-match.ts'; const validIds = tiles().map(t => t.id); if (!validIds.includes(tile)) { throw new Error('Invalid tile: ' + tile); } console.log(tile);" > /dev/null
+            echo "tiles=[\"$TILE\"]" >> "$GITHUB_OUTPUT"
           else
-            echo "tiles=$(deno eval 'import {tiles} from "./supabase/functions/_shared/venue-match.ts"; console.log(JSON.stringify(tiles().map(t=>t.id)))')" >> "$GITHUB_OUTPUT"
+            TILE_LIST=$(deno eval 'import {tiles} from "./supabase/functions/_shared/venue-match.ts"; console.log(JSON.stringify(tiles().map(t=>t.id)))')
+            echo "tiles=$TILE_LIST" >> "$GITHUB_OUTPUT"
           fi
 
   venues:
     needs: plan
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       max-parallel: 20
@@ -61,15 +88,21 @@ jobs:
       - name: Install DuckDB
         run: python -m pip install --quiet duckdb
       - name: Extract
+        env:
+          MATRIX_TILE: ${{ matrix.tile }}
+          RELEASE: ${{ inputs.release || '2026-09-23.1' }}
+          MIN_CONF: ${{ inputs.min_confidence || '0.6' }}
         run: |
           mkdir -p out
-          deno run --allow-read scripts/directory/extract.sql.ts "${{ matrix.tile }}" "${{ inputs.release || '2026-09-23.1' }}" "${{ inputs.min_confidence || '0.6' }}" > extract.sql
+          deno run --allow-read scripts/directory/extract.sql.ts "$MATRIX_TILE" "$RELEASE" "$MIN_CONF" > extract.sql
           # The Python package was verified against Overture's S3 data on 2026-10-01.
           python -c "import duckdb; con = duckdb.connect(); [con.execute(s) for s in open('extract.sql').read().split(';') if s.strip()]"
-          echo "places: $(wc -l < out/${{ matrix.tile }}.ndjson)"
+          echo "places: $(wc -l < "out/$MATRIX_TILE.ndjson" 2>/dev/null || echo 0)"
       - name: Load venues
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          MATRIX_TILE: ${{ matrix.tile }}
+          DRY_RUN: ${{ inputs.dry_run && '--dry-run' || '' }}
         run: |
-          deno run -A scripts/directory/load-venues.ts --tile "${{ matrix.tile }}" --in "out/${{ matrix.tile }}.ndjson" ${{ inputs.dry_run && '--dry-run' || '' }} | tee -a "$GITHUB_STEP_SUMMARY"
+          deno run -A scripts/directory/load-venues.ts --tile "$MATRIX_TILE" --in "out/$MATRIX_TILE.ndjson" $DRY_RUN | tee -a "$GITHUB_STEP_SUMMARY"
