@@ -191,7 +191,8 @@ export function createProbeHttp(
       }
       return r;
     });
-    state.tail = run;
+    // Keep ordering without retaining the last HTML/feed body for every host.
+    state.tail = run.then(() => undefined, () => undefined);
     return await run;
   }
   async function rules(url: URL, budget: Budget) {
@@ -213,7 +214,16 @@ export function createProbeHttp(
           let fetched = robotsPages.get(robotUrl);
           if (!fetched) {
             stats.robots_requests++;
-            fetched = send(robotUrl);
+            fetched = send(robotUrl).then((response) => ({
+              ...response,
+              // Only actual policy text needs caching. Error/redirect bodies and
+              // HTML soft-404 pages can otherwise retain gigabytes across hosts.
+              body: response.status !== 200
+                ? ""
+                : /<(?:html|!doctype)/i.test(response.body)
+                ? "<html>"
+                : response.body,
+            }));
             robotsPages.set(robotUrl, fetched);
           }
           r = await fetched;

@@ -126,16 +126,23 @@ if (import.meta.main) {
   await safeMain(async () => {
     const a = args();
     if (!a.in || !a.out) throw new Error("missing_arguments");
+    const maxPerPlatform = Number(a["max-per-platform"] ?? 1);
+    const maxSamples = Number(a["max-samples"] ?? 20);
+    if (
+      !Number.isSafeInteger(maxPerPlatform) || maxPerPlatform < 1 ||
+      maxPerPlatform > 50 || !Number.isSafeInteger(maxSamples) ||
+      maxSamples < 1 || maxSamples > 50
+    ) throw new Error("invalid_sample_limit");
     const http = createProbeHttp();
     const now = new Date();
     const manifest: Record<string, unknown>[] = [];
-    const seen = new Set<string>();
+    const seen = new Map<string, number>();
     await Deno.mkdir(a.out, { recursive: true });
     for await (const line of lines(a.in)) {
       const source: SourceRow = JSON.parse(line);
-      if (seen.has(source.platform)) continue;
-      seen.add(source.platform);
-      if (seen.size > 20) break;
+      if (manifest.length >= maxSamples) break;
+      if ((seen.get(source.platform) ?? 0) >= maxPerPlatform) continue;
+      seen.set(source.platform, (seen.get(source.platform) ?? 0) + 1);
       try {
         const response = await http.get(source.feed_url, http.budget());
         if (response.status !== 200) {

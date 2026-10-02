@@ -111,7 +111,15 @@ These checks inspect publishers' public pages in addition to the crawler's date 
 | [Florida Holocaust Museum](https://www.thefhm.org/events/) | Future November 9 commemoration shown as date-only; do not manufacture a start time. |
 | [Nathan Benderson Park](https://nathanbendersonpark.org/events/) | Renewable calendar includes ongoing programs as well as dated events; future-start validation does not cover every ongoing program. |
 | [Wickham Park](https://wickhampark.org/) | **Rejected association:** publisher says Manchester/East Hartford, Connecticut; Overture's discovering record is Melbourne, Florida. |
+| [Sun City Center](https://www.suncitycenter.org/events/) | Future October 25 and 29 performances at different community facilities; membership/audience restrictions require reader review. |
+| [Downtown West Palm Beach](https://downtownwpb.com/events/) | Renewable district-wide October calendar, not events at the development authority's office. |
+| [Apex Theatre](https://www.apextheatrejax.com/events/) | Publisher event archive supports the discovered calendar route; final date/schema recapture still pending. |
+| [Studio 620](https://thestudioat620.org/events/) | Renewable performance calendar extends into November; final feed recapture still pending. |
 
 The Wickham mismatch is recorded as a negative data-quality decision in `scripts/directory/source-review-exclusions.json`, scoped to the Overture id plus hostname with primary evidence and date. Both target preparation and source-write validation enforce it. It is not a discovery seed list and does not block correctly associated records elsewhere. No existing production row is deleted. This removes one further target association from the offline eligibility counts above.
 
 Attempts to inspect the CFBACC and Martin MPO pages timed out/failed, and Sanford did not yield reviewable browser text; these are not counted as successful manual reviews. The fixture helper now also minimizes TEC, Localist, Squarespace and JSON-LD date evidence, preserving original dates while removing descriptions/contact fields; tests ensure it cannot turn an originally invalid event into positive evidence.
+
+Offline replay through the current write planner accepts the structure of **93 of the 99** saved candidates (57 iCal, 20 TEC, 14 JSON-LD, 2 Timely). It rejects five single-event URLs and the Wickham association. This is not a completed feed-quality review or final pilot count. The initial 16 KiB/source planning reserve for those 93 is **1,523,712 bytes**; actual table/index growth remains unmeasured until authorized loading.
+
+Additional audited safeguards for the next run: each site uses its actual probe-start timestamp rather than the whole crawl's start time; completed host queues no longer retain their last response body; robots caches discard unused error/redirect bodies and compact HTML soft-404 bodies while preserving their unavailable-policy outcome. Focused HTTP/orchestration/capture tests pass after these changes. The public User-Agent repository URL returned unauthenticated HTTP 200 during the review.

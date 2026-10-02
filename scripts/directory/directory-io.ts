@@ -14,6 +14,8 @@ export function args() {
       "max-runtime-seconds",
       "expected-parent",
       "max-db-bytes",
+      "max-per-platform",
+      "max-samples",
     ],
     boolean: ["dry-run", "bootstrap"],
   });

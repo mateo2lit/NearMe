@@ -305,7 +305,7 @@ if (import.meta.main) {
         const result = await probeSite(
           targets,
           http,
-          now,
+          new Date(),
           state.entries[key],
           platform,
         );
