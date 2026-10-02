@@ -193,6 +193,45 @@ export async function probeSite(
     );
   }
 }
+/**
+ * Runs one site's probe with a hard deadline. Two full Florida runs died
+ * mid-crawl with "Uncaught null" and lost the work since their last
+ * checkpoint; a probe that hangs or throws now costs only that site, recorded
+ * as a retryable timeout that keeps any previously verified feed.
+ */
+export async function probeWithDeadline(
+  run: () => Promise<LedgerEntry>,
+  ms: number,
+  targets: ProbeTarget[],
+  now: Date,
+  old?: LedgerEntry,
+): Promise<LedgerEntry> {
+  const failed = (reason: string): LedgerEntry => ({
+    outcome: "timeout",
+    probed_at: now.toISOString(),
+    next_check_at: nextCheck("timeout", now, old?.failures ?? 0),
+    failures: (old?.failures ?? 0) + 1,
+    associations: targets,
+    candidate: old?.candidate,
+    future_dates: old?.future_dates ?? [],
+    etag: old?.etag,
+    last_modified: old?.last_modified,
+    requests: 0,
+    detector_version: DETECTOR_VERSION,
+    reason,
+  });
+  let timer: number | undefined;
+  try {
+    return await Promise.race([
+      run().catch(() => failed("site_crash")),
+      new Promise<LedgerEntry>((resolve) => {
+        timer = setTimeout(() => resolve(failed("site_deadline")), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 function sourceFrom(entry: LedgerEntry): SourceRow | null {
   if (entry.outcome !== "verified" || !entry.candidate) return null;
   const { website: _website, tile: _tile, ...place } =
@@ -206,7 +245,23 @@ export function stableOrder(key: string): number {
   for (const c of key) h = Math.imul(h ^ c.charCodeAt(0), 16777619);
   return h >>> 0;
 }
+/** Nine requests at an 8 s transport timeout, plus host-queue waits. */
+const SITE_DEADLINE_MS = 180_000;
+let strayErrors = 0;
 if (import.meta.main) {
+  // A stray error from inside the HTTP stack must not end a multi-hour crawl;
+  // the site it belonged to is caught by its deadline. Only a count is logged
+  // (error text can carry URLs).
+  globalThis.addEventListener("error", (e) => {
+    e.preventDefault();
+    strayErrors++;
+    console.error("stray_error");
+  });
+  globalThis.addEventListener("unhandledrejection", (e) => {
+    e.preventDefault();
+    strayErrors++;
+    console.error("stray_rejection");
+  });
   await safeMain(async () => {
     const a = args(), tile = a.tile ?? "all", platform = a.platform ?? "all";
     const maxSites = Number(a["max-sites"] ?? 5000),
@@ -302,12 +357,13 @@ if (import.meta.main) {
         Date.now() - started < maxSeconds * 1000
       ) {
         const [key, targets] = due[cursor++];
-        const result = await probeSite(
+        const probedAt = new Date();
+        const result = await probeWithDeadline(
+          () => probeSite(targets, http, probedAt, state.entries[key], platform),
+          SITE_DEADLINE_MS,
           targets,
-          http,
-          new Date(),
+          probedAt,
           state.entries[key],
-          platform,
         );
         state.entries[key] = result;
         const source = sourceFrom(result);
@@ -377,6 +433,7 @@ if (import.meta.main) {
       ...http.stats,
       elapsed_seconds: Math.round((Date.now() - started) / 1000),
       ai_calls: 0,
+      stray_errors: strayErrors,
       dry_run: !!a["dry-run"],
       generation: state.generation,
     };

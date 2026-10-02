@@ -1,5 +1,5 @@
 import { assertEquals } from "https://deno.land/std@0.177.0/testing/asserts.ts";
-import { probeSite } from "./probe-sites.ts";
+import { probeSite, probeWithDeadline } from "./probe-sites.ts";
 import { createProbeHttp } from "./probe-http.ts";
 import type { LedgerEntry, ProbeTarget } from "./probe-types.ts";
 const target: ProbeTarget = {
@@ -90,4 +90,23 @@ Deno.test("blocked/deferred discovery cannot become no_feed", async () => {
       .outcome,
     "deferred_phase",
   );
+});
+
+// Two full-tile runs died mid-crawl ("Uncaught null"). One site must never be
+// able to stall a worker or end the whole run.
+Deno.test("a site that hangs or throws is recorded as a timeout, not a dead run", async () => {
+  const now = new Date("2026-10-02T12:00:00Z");
+  const site: ProbeTarget[] = [{ ...target }];
+  const hung = await probeWithDeadline(() => new Promise(() => {}), 20, site, now);
+  assertEquals([hung.outcome, hung.reason, hung.failures], ["timeout", "site_deadline", 1]);
+  const threw = await probeWithDeadline(() => Promise.reject(null), 1000, site, now);
+  assertEquals([threw.outcome, threw.reason], ["timeout", "site_crash"]);
+  const old = { ...hung, failures: 2, candidate: { feed_url: "https://x.example/cal.ics", page_url: "https://x.example/", platform: "ical" } } as LedgerEntry;
+  const again = await probeWithDeadline(() => new Promise(() => {}), 20, site, now, old);
+  assertEquals([again.failures, again.candidate?.feed_url], [3, "https://x.example/cal.ics"]);
+});
+
+Deno.test("a site that finishes in time keeps its own result", async () => {
+  const ok = { outcome: "no_feed" } as LedgerEntry;
+  assertEquals(await probeWithDeadline(() => Promise.resolve(ok), 1000, [{ ...target }], new Date()), ok);
 });
