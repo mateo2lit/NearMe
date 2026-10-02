@@ -42,18 +42,22 @@ export function planWrites(
     seen.add(p.id);
     const bh = bareHost(p.website);
     if (bh && (hostCount.get(bh) ?? 0) >= 3) { sharedSite++; continue; }
+    const self = { name: p.name!, website: p.website, lat: p.lat, lng: p.lng };
+    // Refreshed and linked places join the pool too, so a later duplicate of
+    // the same venue is caught in this run and in every re-run.
     const owner = byOvertureId.get(p.id);
     if (owner) {
       if (owner.source === "overture") upserts.push(toInsert(p, stamp));
+      planned.push({ id: p.id, ...self, overture_id: p.id });
       continue;
     }
-    const match = matchKnownVenue({ name: p.name!, website: p.website, lat: p.lat, lng: p.lng }, unlinked);
+    const match = matchKnownVenue(self, unlinked);
     if (match) {
       links.push({ id: match.id, overture_id: p.id });
       unlinked.splice(unlinked.indexOf(match as KnownRow), 1);
+      planned.push({ id: p.id, ...self, overture_id: p.id });
       continue;
     }
-    const self = { name: p.name!, website: p.website, lat: p.lat, lng: p.lng };
     if (matchKnownVenue(self, planned)) { dupOverture++; continue; }
     planned.push({ id: p.id, ...self, overture_id: p.id });
     upserts.push(toInsert(p, stamp));

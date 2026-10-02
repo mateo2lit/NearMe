@@ -44,11 +44,31 @@ Deno.test("plan — exact id wins over a name match (no wedge)", () => {
   assertEquals(r.upserts.length, 1);
 });
 
-Deno.test("plan — two places matching one Google row: only the first links", () => {
+Deno.test("plan — two places matching one Google row: only the first links, the second is a duplicate", () => {
   const r = planWrites([place("o1"), place("o2")], [row("g1")]);
   assertEquals(r.links, [{ id: "g1", overture_id: "o1" }]);
-  assertEquals(r.upserts.length, 1);
-  assertEquals(r.upserts[0].overture_id, "o2");
+  assertEquals(r.upserts.length, 0);
+  assertEquals(r.dupOverture, 1);
+});
+
+Deno.test("plan — run 2: a refreshed Overture row still catches its dropped duplicate", () => {
+  const a = place("o1", { name: "A Place" });
+  const b = place("o2", { name: "Other Name", lat: 26.3727 });
+  const run1 = planWrites([a, b], []);
+  assertEquals(run1.upserts.map((u) => u.overture_id), ["o1"]);
+  assertEquals(run1.dupOverture, 1);
+  const known = [row("x1", { overture_id: "o1", source: "overture", name: "A Place" })];
+  const run2 = planWrites([a, b], known);
+  assertEquals(run2.upserts.map((u) => u.overture_id), ["o1"]);
+  assertEquals(run2.dupOverture, 1);
+  assertEquals(run2.links.length, 0);
+});
+
+Deno.test("plan — run 1: a duplicate of a place linked to a Google row is not inserted", () => {
+  const r = planWrites([place("o1", { name: "A Place" }), place("o2", { name: "Other Name", lat: 26.3727 })], [row("g1")]);
+  assertEquals(r.links, [{ id: "g1", overture_id: "o1" }]);
+  assertEquals(r.upserts.length, 0);
+  assertEquals(r.dupOverture, 1);
 });
 
 Deno.test("plan — duplicate ids are processed once", () => {
