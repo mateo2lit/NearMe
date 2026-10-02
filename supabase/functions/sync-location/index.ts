@@ -1290,23 +1290,19 @@ async function scanVenues(
     part?: Part;
   },
 ) {
-  const { data: venues } = await supabase
-    .from("venues")
-    .select("id, name, website, lat, lng, address, category, rating, photo_url")
-    .not("website", "is", null);
-
+  // Nearest venues with a website, from PostGIS. Selecting the whole table
+  // stopped working once the source directory loaded every US/CA venue.
+  const { data: venues, error: venuesError } = await supabase.rpc("venues_near", {
+    p_lat: lat, p_lng: lng, p_radius_m: radiusMeters,
+  });
+  if (venuesError) {
+    noteSourceError("venues", `venues_near failed: ${venuesError.message}`);
+    return [];
+  }
   if (!venues?.length) return [];
 
-  const degPerMile = 1 / 69;
-  const radiusMiles = radiusMeters / 1609.34;
-  // Distance filter + adult-venue backstop. The ingestion-time filter in
-  // syncVenues catches new entries; this re-filter catches legacy rows already
-  // sitting in the DB so existing strip clubs stop getting scanned.
-  const nearby = venues.filter((v: any) =>
-    !isAdultVenue(v.name) &&
-    Math.abs(v.lat - lat) < degPerMile * radiusMiles &&
-    Math.abs(v.lng - lng) < degPerMile * radiusMiles
-  );
+  // Adult-venue backstop: catches rows loaded before a filter existed.
+  const nearby = venues.filter((v: any) => !isAdultVenue(v.name));
 
   const healthByVenue = await loadVenueScanHealth(nearby.map((v: any) => v.id));
   const nowMs = Date.now();
@@ -1584,11 +1580,10 @@ async function fetchCivicEvents(
   radiusMeters: number,
   part?: Part,
 ): Promise<any[]> {
-  const { data: venues, error } = await supabase
-    .from("venues")
-    .select("id, name, website, lat, lng, address, category")
-    .not("website", "is", null)
-    .in("category", ["park", "venue", "other"]);
+  const { data: venues, error } = await supabase.rpc("venues_near", {
+    p_lat: lat, p_lng: lng, p_radius_m: radiusMeters,
+    p_categories: ["park", "venue", "other"], p_limit: 200,
+  });
 
   if (error) {
     noteSourceError("civic", error.message);
@@ -1596,12 +1591,11 @@ async function fetchCivicEvents(
   }
   if (!venues?.length) return [];
 
+  // venues_near already bounds by radius; degPerMile is still used for the
+  // civic_sources bounding box below.
   const degPerMile = 1 / 69;
   const radiusMiles = radiusMeters / 1609.34;
-  const nearby = venues.filter((v: any) =>
-    Math.abs(v.lat - lat) < degPerMile * radiusMiles &&
-    Math.abs(v.lng - lng) < degPerMile * radiusMiles
-  );
+  const nearby = venues;
 
   // Institutions worth asking. Name matching is crude but effective: Places
   // categorizes a public library as "other" or "venue", not as a library.
