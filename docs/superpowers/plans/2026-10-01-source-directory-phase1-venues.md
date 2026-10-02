@@ -957,7 +957,7 @@ Run the workflow with `tile = t24_85`, `dry_run = false` (and the confidence cho
 ```bash
 npx supabase db query --linked "select source, count(*) from venues where lat between 24 and 30 and lng between -85 and -75 group by source"
 npx supabase db query --linked "select count(*) from venues_near(28.54, -81.38, 24140)"
-npx supabase db query --linked "select count(*) - count(distinct overture_id) as dup_overture from venues where overture_id is not null"
+npx supabase db query --linked "select count(overture_id) - count(distinct overture_id) as dup_overture from venues"
 ```
 
 Expected: `overture` rows in the thousands for Florida; Orlando's `venues_near` > 0 (it was 0); `dup_overture` = 0.
