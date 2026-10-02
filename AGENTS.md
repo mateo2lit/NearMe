@@ -44,3 +44,18 @@ NearMe is an Expo/React Native iOS app (local events) with a Supabase backend
 - Next: Phase 2 (probe venue and official websites for calendar feeds and
   record them in `event_sources`). It needs its own plan in
   `docs/superpowers/plans/`, written from the spec, before any code.
+
+## Things learned the hard way
+
+- `npx supabase db query --linked` returns JSON; query `venues` through
+  `venues_near` or with a `limit`, never unbounded (370k rows).
+- New Supabase `sb_secret_` keys are not JWTs: send them in `apikey` only.
+  JWT keys also go in `Authorization: Bearer`.
+- Anthropic structured outputs reject `maxItems`, `minimum`/`maximum` and
+  `minLength`/`maxLength` (`toApiSchema` strips them); Haiku 4.5 rejects `effort`.
+- Scraped events must not inherit a venue's location blindly: promoter sites
+  list events in other cities (see `happensElsewhere` in
+  `supabase/functions/_shared/scraper-quality.ts`).
+- Any crawler must respect robots.txt, identify itself, rate-limit per host and
+  link back to the source. Use official APIs and keys where a site offers them.
+- Write production data (deletes, bulk updates) only with the owner's go-ahead.
