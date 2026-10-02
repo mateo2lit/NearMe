@@ -124,6 +124,12 @@ export function parseSerpDate(
   return { iso: at.toISOString(), confirmed: time != null };
 }
 
+function googleSearchUrl(query: string): string {
+  const url = new URL("https://www.google.com/search");
+  url.searchParams.set("q", query.replace(/\s+/g, " ").trim());
+  return url.toString();
+}
+
 /** Searches kept back each month so a runaway loop cannot drain the plan to zero. */
 export const SEARCH_RESERVE = 20;
 
@@ -215,11 +221,14 @@ export async function fetchGoogleEvents(
           address: addressParts.join(", "),
           venue_name: e.venue?.name ?? (Array.isArray(e.address) ? addressParts[0] : firstPart) ?? null,
           image_url: e.image || e.thumbnail || null,
-          source_url: e.link || e.event_location_map?.link || null,
+          // The compact shape (2026-10) carries no link. The search the event
+          // was found in is still a real source: tapping it shows the listing.
+          source_url: e.link || e.event_location_map?.link ||
+            googleSearchUrl(`${e.title} ${firstPart ?? ""} ${opts.cityName}`),
           time_confirmed: confirmed,
         });
         const last = out[out.length - 1];
-        if (!last.venue_name && !last.source_url && !reportedShape) {
+        if (!last.venue_name && !e.link && !e.event_location_map?.link && !reportedShape) {
           // SerpApi has reshaped these items before; name what it sent.
           reportedShape = true;
           opts.onError?.(`item has no venue or link; fields: ${Object.keys(e).join(", ")}`);

@@ -187,3 +187,22 @@ Deno.test("an address sent as plain text still yields a venue and address", asyn
   assertEquals(out[0].venue_name, "Bayfront Park");
   assertEquals(out[0].address, "Bayfront Park, 301 Biscayne Blvd, Miami, FL");
 });
+
+Deno.test("an event with no link of its own links to the Google search it came from", async () => {
+  const body = { events_results: [{ title: "Space Coast Jazz Festival", date: "Oct 3", address: "Eau Gallie Square, Melbourne, FL" }] };
+  const out = await fetchGoogleEvents({
+    cityName: "Melbourne", timezone: "America/New_York", apiKey: "k",
+    fetchJson: () => jsonResponse(body),
+  });
+  const url = new URL(out[0].source_url!);
+  assertEquals(url.origin + url.pathname, "https://www.google.com/search");
+  assertEquals(url.searchParams.get("q"), "Space Coast Jazz Festival Eau Gallie Square Melbourne");
+});
+
+Deno.test("an event's own link wins over the search fallback", async () => {
+  const out = await fetchGoogleEvents({
+    cityName: "Miami", timezone: "America/New_York", apiKey: "k",
+    fetchJson: () => jsonResponse(SAMPLE),
+  });
+  assertEquals(out[0].source_url, "https://example.com/jazz");
+});
