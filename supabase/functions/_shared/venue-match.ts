@@ -25,7 +25,9 @@ export interface KnownVenue {
 }
 
 function normName(name: string): string {
-  return name.toLowerCase().replace(/^the\s+/, "").replace(/[^a-z0-9]+/g, " ").trim();
+  // Fold accents: NFD decompose then strip combining marks
+  const normalized = name.normalize("NFD").replace(/\p{Mn}/gu, "");
+  return normalized.toLowerCase().replace(/^the\s+/, "").replace(/[^a-z0-9]+/g, " ").trim();
 }
 
 /** Metres between two points (equirectangular; fine at these distances). */
@@ -49,7 +51,7 @@ export function matchKnownVenue(
   for (const k of known) {
     const d = metres(p.lat, p.lng, k.lat, k.lng);
     if (key && d <= 2000 && siteKey(k.website) === key) return k;
-    if (d <= 150 && normName(k.name) === name) return k;
+    if (d <= 150 && name && normName(k.name) === name) return k;
   }
   return null;
 }
@@ -67,7 +69,7 @@ export interface Tile { id: string; west: number; south: number; east: number; n
 
 /**
  * Map tiles for one workflow job each: a 6°×10° grid over the populated US and
- * southern Canada, plus Alaska, Hawaii and northern Canada. Empty tiles cost
+ * southern Canada, plus Alaska, Hawaii, northern Canada, and Caribbean. Empty tiles cost
  * DuckDB almost nothing because Overture's files carry bbox statistics.
  */
 export function tiles(): Tile[] {
@@ -77,8 +79,9 @@ export function tiles(): Tile[] {
       out.push({ id: `t${south}_${-west}`, west, south, east: Math.min(west + 10, -52), north: south + 6 });
     }
   }
-  out.push({ id: "alaska", west: -170, south: 51, east: -125, north: 72 });
+  out.push({ id: "alaska", west: -180, south: 48, east: -125, north: 72 });
   out.push({ id: "hawaii", west: -161, south: 18, east: -154, north: 23 });
-  out.push({ id: "north", west: -125, south: 60, east: -52, north: 72 });
+  out.push({ id: "north", west: -125, south: 60, east: -52, north: 84 });
+  out.push({ id: "caribbean", west: -68, south: 17, east: -64, north: 19 });
   return out;
 }
