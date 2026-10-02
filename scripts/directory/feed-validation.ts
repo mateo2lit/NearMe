@@ -98,7 +98,9 @@ export function validateFeed(
         const types = Array.isArray(o["@type"]) ? o["@type"] : [o["@type"]];
         if (
           types.some((t) =>
-            typeof t === "string" && /(?:^|\/)Event$/.test(t)
+            typeof t === "string" &&
+            /(?:^|\/)(?:Event|MusicEvent|ComedyEvent|TheaterEvent|SportsEvent|Festival|EducationEvent|SocialEvent|DanceEvent|FoodEvent|ExhibitionEvent|LiteraryEvent|BusinessEvent|ChildrensEvent|ScreeningEvent|VisualArtsEvent)$/
+              .test(t)
           ) && o.name && !String(o.eventStatus).includes("EventCancelled")
         ) accept(o.startDate);
         if (o["@graph"]) walk(o["@graph"]);

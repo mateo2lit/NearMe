@@ -37,6 +37,27 @@ Deno.test("robots redirects to the public canonical host are bounded, cached and
     1,
   );
 });
+Deno.test("robots redirect origins cannot bypass the per-site origin ceiling", async () => {
+  const http = createProbeHttp({
+    sleep: async () => {},
+    wire: async (url) => {
+      const current = new URL(url).hostname;
+      const next = current === "one.org"
+        ? "two.org"
+        : current === "two.org"
+        ? "three.org"
+        : "four.org";
+      return response("", 301, { location: `https://${next}/robots.txt` });
+    },
+  });
+  const budget = http.budget();
+  await assertRejects(
+    () => http.get("https://one.org/", budget),
+    Error,
+    "budget_exhausted",
+  );
+  assertEquals(http.stats.robots_requests, 3);
+});
 Deno.test("HTTP boundary shares queues and robots across sites on the same host", async () => {
   let clock = 0;
   const starts: number[] = [];

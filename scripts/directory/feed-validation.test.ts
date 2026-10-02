@@ -80,3 +80,8 @@ Deno.test("explicit IANA zones validate globally; unknown zones and DST gaps are
     "unsupported",
   );
 });
+Deno.test("schema Event subtypes preserve their future dates", () => {
+  const body =
+    '<script type="application/ld+json">{"@type":"MusicEvent","name":"Show","startDate":"2026-12-05T18:00:00-05:00"}</script>';
+  assertEquals(validateFeed("jsonld", body, now).outcome, "verified");
+});

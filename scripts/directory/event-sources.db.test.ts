@@ -26,6 +26,11 @@ Deno.test({
         "insert into public.event_sources (overture_id,place_name,place_class,platform,feed_url,page_url,lat,lng,country,verified_at) values ('a','Library','library','ical','https://example.org/a.ics','https://example.org/',26,-80,'US',now())";
       await db.exec("set role service_role");
       await db.exec(insert);
+      const stats = await db.query<
+        { database_bytes: number; sources_bytes: number; source_count: number }
+      >("select * from public.directory_storage_stats()");
+      assertEquals(Number(stats.rows[0].source_count), 1);
+      assertEquals(Number(stats.rows[0].database_bytes) > 0, true);
       await assertRejects(() => db.exec(insert));
       await assertRejects(() =>
         db.exec(insert.replace("26,-80", "126,-80").replace("a.ics", "b.ics"))

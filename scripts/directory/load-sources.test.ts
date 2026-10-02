@@ -81,4 +81,24 @@ Deno.test("failure updates replay absolute values and cannot overwrite newer ver
   assertEquals(writes[0], writes[1]);
   assertEquals(writes[0].path.includes("verified_at=lte."), true);
   assertEquals(JSON.parse(writes[0].body), { failures: 2 });
+  await assertRejects(
+    () => applyProbeFailures(updates, rest, false, undefined, 50000000),
+    Error,
+    "storage_ceiling",
+  );
+});
+Deno.test("null database metrics never authorize a write", async () => {
+  const rest = async () =>
+    new Response(
+      JSON.stringify([{
+        database_bytes: null,
+        sources_bytes: null,
+        source_count: null,
+      }]),
+    );
+  await assertRejects(
+    () => loadSources([source], rest, { dryRun: false }),
+    Error,
+    "storage_unavailable",
+  );
 });

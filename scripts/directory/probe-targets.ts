@@ -24,6 +24,7 @@ export function normalizeUrl(value: string, base?: string): string {
     (u.port && !["80", "443"].includes(u.port))
   ) throw new Error("unsafe_url");
   const host = u.hostname.replace(/\.$/, "");
+  u.hostname = host;
   if (
     /(?:^|\.)(?:facebook\.com|instagram\.com|tiktok\.com|eventbrite\.com|untappd\.com|parkrun\.com|meetup\.com|lu\.ma|luma\.com)$/
       .test(host)

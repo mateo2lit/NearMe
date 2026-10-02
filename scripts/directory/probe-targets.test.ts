@@ -32,6 +32,7 @@ Deno.test("URL safety and equivalence do not erase branch or feed identity", () 
     normalizeUrl("http://www.example.org/a?b=2"),
     "http://www.example.org/a?b=2",
   );
+  assertEquals(normalizeUrl("https://example.org./a"), "https://example.org/a");
   for (
     const url of [
       "file:///etc/passwd",

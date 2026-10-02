@@ -37,7 +37,14 @@ export async function probeSite(
   const finish = (outcome: Outcome): LedgerEntry => ({
     outcome,
     probed_at: now.toISOString(),
-    next_check_at: nextCheck(outcome, now, old?.failures ?? 0),
+    next_check_at: nextCheck(
+      outcome,
+      now,
+      old?.failures ?? 0,
+      outcome === "no_feed" && old?.outcome !== "no_feed"
+        ? stableOrder(targets[0].website) % 6 + 1
+        : undefined,
+    ),
     failures: outcome === "verified" ? 0 : (old?.failures ?? 0) + 1,
     associations: targets,
     candidate,
@@ -154,7 +161,7 @@ export async function probeSite(
         continue;
       }
       if (/communico\.(?:co|com)/i.test(page)) {
-        saw = "unsupported";
+        saw = "needs_key";
         continue;
       }
       const response = await http.get(page, budget);

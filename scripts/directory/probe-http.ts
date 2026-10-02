@@ -132,7 +132,10 @@ export function createProbeHttp(
     string,
     { tail: Promise<unknown>; next: number; delay: number }
   >();
-  const robots = new Map<string, Promise<ReturnType<typeof robotsParser>>>();
+  const robots = new Map<
+    string,
+    Promise<{ parser: ReturnType<typeof robotsParser>; origins: string[] }>
+  >();
   const robotsPages = new Map<string, Promise<WireResponse>>();
   const stats = { content_requests: 0, robots_requests: 0, bytes: 0 };
   async function send(
@@ -170,13 +173,20 @@ export function createProbeHttp(
     state.tail = run;
     return await run;
   }
-  async function rules(url: URL) {
+  async function rules(url: URL, budget: Budget) {
     let pending = robots.get(url.origin);
     if (!pending) {
       pending = (async () => {
         let robotUrl = `${url.origin}/robots.txt`;
         let r: WireResponse | undefined;
+        const origins: string[] = [];
         for (let hop = 0; hop <= 3; hop++) {
+          const origin = new URL(robotUrl).origin;
+          if (!budget.origins.has(origin) && budget.origins.size >= 3) {
+            throw new Error("budget_exhausted");
+          }
+          budget.origins.add(origin);
+          origins.push(origin);
           // Fetching robots itself is the policy bootstrap; all redirects still
           // use the public-address transport and shared host scheduler.
           let fetched = robotsPages.get(robotUrl);
@@ -210,14 +220,21 @@ export function createProbeHttp(
         const delay = parsed.getCrawlDelay(USER_AGENT);
         if (delay && Number.isFinite(delay)) {
           const state = hosts.get(url.hostname)!;
-          state.delay = Math.max(1000, delay * 1000);
+          state.delay = Math.max(state.delay, 1000, delay * 1000);
           state.next = Math.max(state.next, now() + state.delay);
         }
-        return parsed;
+        return { parser: parsed, origins };
       })();
       robots.set(url.origin, pending);
     }
-    return await pending;
+    const result = await pending;
+    for (const origin of result.origins) {
+      if (!budget.origins.has(origin) && budget.origins.size >= 3) {
+        throw new Error("budget_exhausted");
+      }
+      budget.origins.add(origin);
+    }
+    return result.parser;
   }
   async function get(
     value: string,
@@ -236,7 +253,7 @@ export function createProbeHttp(
         (!budget.origins.has(u.origin) && budget.origins.size >= 3)
       ) throw new Error("budget_exhausted");
       budget.origins.add(u.origin);
-      if ((await rules(u)).isAllowed(url, USER_AGENT) === false) {
+      if ((await rules(u, budget)).isAllowed(url, USER_AGENT) === false) {
         throw new Error("robots_disallowed");
       }
       budget.requests++;

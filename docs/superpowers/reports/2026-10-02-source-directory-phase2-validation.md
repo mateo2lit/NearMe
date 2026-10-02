@@ -14,6 +14,8 @@ The query used `pg_database_size(current_database())` and `pg_total_relation_siz
 
 ## Implementation checks
 
+Latest local verification: **412 edge/directory tests passed**. Deno CLI entry points type-check; workflow YAML parses. App/Edge Function runtime code is unchanged.
+
 - Deno 2.7.13: pinned for GitHub runners; supports native Temporal for explicit IANA timezone validation, rejecting DST ambiguity and gaps.
 - PostgreSQL migration tested in isolated in-memory PGlite 0.3.14, including roles, RLS, unique URLs and coordinate constraints. This machine has no Docker. This tests PostgreSQL behavior, but does not substitute for a linked Supabase migration/grant check after authorization.
 - robots-parser 3.0.1 is pinned in the directory-specific Deno lockfile. Its [upstream documentation and MIT license](https://github.com/samclarke/robots-parser) were inspected; tests cover user-agent policy, allow/disallow, host queues and redirects.
@@ -34,7 +36,7 @@ Platform support means detection plus future-event validation, not a complete ap
 | CivicPlus | Published iCalendar links; no invented calendar/category ids | [CivicPlus calendar categories](https://www.civicplus.help/hc/en-us/articles/115004747233-Add-Manage-Calendar-Categories); tenant's actual export still required |
 | LibCal | Published subscribe URL with actual cid/k; no private API | [Springshare LibCal](https://www.springshare.com/libcal); API exists, so authenticated API integration stays deferred |
 | BiblioCommons | `needs_key` when encountered; gateway not probed anonymously | Repo rule requires official access; Phase 5 |
-| Communico | `unsupported` until a documented permitted public endpoint is identified | No tenant credentials or endpoint guessing |
+| Communico | `needs_key`; partner API is not probed anonymously | [Official Client API documentation](https://communicocollege.com/communico-client-api) requires an API key/secret and OAuth token |
 | Trumba | Published calendar slug → `.ics` | [Calendar subscriptions](https://www.trumba.com/help/subscribe) |
 | 25Live | Published calendar slug → `.ics` | [Official calendar subscriptions](https://25livepub.collegenet.com/help/subscribe) |
 | Localist | Linked tenant public `/api/2/events` | [API reference](https://developer.localist.com/doc/api), [public API description](https://www.localist.com/event-calendar-api) |
@@ -67,3 +69,5 @@ The extraction selected release `2026-09-23.1`: **43,763 places**, **41,700 elig
 - Corrections after the initial sample: bounded/cached public robots redirects, safe failure reasons/status, rejection of one-event CivicPlus export URLs, and calendar landing pages ahead of individual event pages.
 - Remaining corrected-sample HTTP errors: 6 transport/DNS failures, 4 homepage 404s, 2 homepage 403s, 2 robots redirect limits, 2 unavailable robots responses, 1 generic transport error and 1 candidate 400. None was converted to a successful source or bypassed.
 - The sample is too small to estimate national yield confidently. Full-tile discovery and additional platform fixtures remain required. At the observed sample throughput, the full tile may require multiple bounded runs; no one-hour national promise is justified.
+- [Full-tile continuation](https://github.com/mateo2lit/NearMe/actions/runs/37043202262) runs commit `ab9e725`, restores the corrected sample's review-only checkpoint, and has a 50,000-site / four-hour crawl ceiling. It was still running when this note was written. A successful capped run must not be described as complete if its `remaining` count is nonzero.
+- Subsequent local safeguards (for the next run): first negative rechecks are hash-spread across months 1–6, then repeat every six months; storage limits also cover failure updates; robots redirect origins share the site-origin budget; Event subtypes validate; Communico is explicitly key-gated according to its official API documentation. The running commit is fixed and does not receive these later edits.

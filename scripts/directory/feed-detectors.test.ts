@@ -42,3 +42,28 @@ Deno.test("single-event CivicPlus exports do not masquerade as renewable calenda
   assertEquals(result.some((c) => c.feed_url.includes("eventID=")), false);
   assertEquals(result.some((c) => c.feed_url.includes("catID=3")), true);
 });
+Deno.test("published export routes cover plugin, athletics, chamber and recreation classes", () => {
+  const samples: [string, string][] = [
+    ["events_manager", "events-manager"],
+    ["mec", "mec-calendar"],
+    ["eventon", "eventon"],
+    ["timely", "ai1ec"],
+    ["my_calendar", "my-calendar"],
+    ["sidearm", "sidearm"],
+    ["prestosports", "prestosports"],
+    ["rschooltoday", "rschooltoday"],
+    ["arbiterlive", "arbiterlive"],
+    ["growthzone", "growthzone"],
+    ["chambermaster", "chambermaster"],
+    ["activenet", "activenet"],
+    ["civicrec", "civicrec"],
+    ["recdesk", "recdesk"],
+  ];
+  for (const [platform, marker] of samples) {
+    const result = detectCandidates(
+      "https://example.org/",
+      `<div class="${marker}"></div><a href="/schedule.ics">Subscribe</a>`,
+    );
+    assertEquals(result[0].platform, platform);
+  }
+});

@@ -43,3 +43,13 @@ Deno.test("snapshot detects corruption and preserves pending source writes", asy
     decodeSnapshot(encoded.replace('"checksum":"', '"checksum":"bad'))
   );
 });
+Deno.test("initial negative checks spread across six months, then recur every six months", () => {
+  const now = new Date("2026-10-02T12:00:00Z");
+  const dates = new Set(
+    Array.from({ length: 6 }, (_, i) => nextCheck("no_feed", now, 0, i + 1)),
+  );
+  assertEquals(dates.size, 6);
+  assertEquals(dates.has("2026-11-02T12:00:00.000Z"), true);
+  assertEquals(dates.has("2027-04-02T12:00:00.000Z"), true);
+  assertEquals(nextCheck("no_feed", now, 1), "2027-04-02T12:00:00.000Z");
+});

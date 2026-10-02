@@ -16,7 +16,11 @@ export async function applyProbeFailures(
   rest: Rest,
   dryRun: boolean,
   receipt?: (url: string) => Promise<void>,
+  ceiling = 400000000,
 ) {
+  if (!Number.isSafeInteger(ceiling) || ceiling <= 0 || ceiling > 400000000) {
+    throw new Error("invalid_storage_ceiling");
+  }
   for (let i = 0; i < updates.length; i++) {
     const update = updates[i];
     if (
@@ -29,12 +33,15 @@ export async function applyProbeFailures(
       const response = await rest("rpc/directory_storage_stats");
       if (!response.ok) throw new Error("storage_unavailable");
       const stats = (await response.json())[0];
-      if (!stats || !Number.isFinite(Number(stats.database_bytes))) {
+      if (
+        !stats || !Number.isSafeInteger(Number(stats.database_bytes)) ||
+        Number(stats.database_bytes) <= 0
+      ) {
         throw new Error("storage_unavailable");
       }
       if (
         Number(stats.database_bytes) +
-            Math.min(100, updates.length - i) * 16384 >= 400000000
+            Math.min(100, updates.length - i) * 16384 >= ceiling
       ) throw new Error("storage_ceiling");
     }
     const response = await rest(
@@ -71,12 +78,21 @@ export async function loadSources(
     const statsRes = await rest("rpc/directory_storage_stats");
     if (!statsRes.ok) throw new Error("storage_unavailable");
     const stats = (await statsRes.json())[0];
-    if (!stats || !Number.isFinite(Number(stats.database_bytes))) {
+    if (
+      !stats || !Number.isSafeInteger(Number(stats.database_bytes)) ||
+      Number(stats.database_bytes) <= 0
+    ) {
       throw new Error("storage_unavailable");
     }
     if (Number(stats.database_bytes) >= ceiling) {
       throw new Error("storage_ceiling");
     }
+    if (
+      stats.sources_bytes === null || stats.source_count === null ||
+      !Number.isSafeInteger(Number(stats.sources_bytes)) ||
+      !Number.isSafeInteger(Number(stats.source_count)) ||
+      Number(stats.sources_bytes) < 0 || Number(stats.source_count) < 0
+    ) throw new Error("storage_unavailable");
     const existing: SourceRow[] = [];
     // Keep URL filters small enough for request-line limits.
     for (let i = 0; i < batch.length; i += 2) {
@@ -148,6 +164,7 @@ if (import.meta.main) {
         );
         await writeSnapshot(a.out!, state);
       },
+      a["max-db-bytes"] ? Number(a["max-db-bytes"]) : 400000000,
     );
     await writeSnapshot(a.out, state);
     console.log(JSON.stringify(result));

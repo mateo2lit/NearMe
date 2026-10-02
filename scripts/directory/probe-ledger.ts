@@ -11,13 +11,19 @@ export function nextCheck(
   outcome: Outcome,
   now: Date,
   failures: number,
+  initialRotationMonth?: number,
 ): string {
   if (["timeout", "http_error", "budget_exhausted"].includes(outcome)) {
     return new Date(
       +now + (failures === 0 ? 1 : failures === 1 ? 7 : 30) * 86400000,
     ).toISOString();
   }
-  const months = outcome === "no_feed" ? 6 : 1;
+  if (
+    initialRotationMonth !== undefined &&
+    (!Number.isInteger(initialRotationMonth) || initialRotationMonth < 1 ||
+      initialRotationMonth > 6)
+  ) throw new Error("invalid_rotation");
+  const months = outcome === "no_feed" ? initialRotationMonth ?? 6 : 1;
   const d = new Date(now);
   const day = d.getUTCDate();
   d.setUTCDate(1);

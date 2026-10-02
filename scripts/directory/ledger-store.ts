@@ -100,6 +100,38 @@ export async function unpackState(
   }
   return state;
 }
+export async function publishChunks(
+  packed: Awaited<ReturnType<typeof packState>>,
+  io: {
+    read: (name: string) => Promise<Uint8Array | undefined>;
+    write: (
+      name: string,
+      bytes: Uint8Array,
+      contentType: string,
+    ) => Promise<void>;
+  },
+) {
+  const put = async (name: string, bytes: Uint8Array, contentType: string) => {
+    const existing = await io.read(name);
+    if (existing) {
+      if (
+        existing.length !== bytes.length ||
+        existing.some((value, i) => value !== bytes[i])
+      ) throw new Error("ledger_asset_conflict");
+      return;
+    }
+    await io.write(name, bytes, contentType);
+  };
+  for (const [name, bytes] of packed.files) {
+    await put(name, bytes, "application/gzip");
+  }
+  // A manifest is the commit marker; incomplete uploads cannot become current.
+  await put(
+    `${packed.manifest.generation}-manifest.json`,
+    new TextEncoder().encode(JSON.stringify(packed.manifest)),
+    "application/json",
+  );
+}
 if (import.meta.main) {
   await safeMain(async () => {
     const a = args(), command = String(a._[0]);
@@ -207,18 +239,6 @@ if (import.meta.main) {
       bytes: Uint8Array,
       contentType: string,
     ) => {
-      const existing = assets.find((a) => a.name === name);
-      if (existing) {
-        const response = await api(`releases/assets/${existing.id}`, {
-          headers: { Accept: "application/octet-stream" },
-        });
-        const stored = new Uint8Array(await response.arrayBuffer());
-        if (
-          stored.length !== bytes.length ||
-          stored.some((value, i) => value !== bytes[i])
-        ) throw new Error("ledger_asset_conflict");
-        return;
-      }
       const r = await fetch(
         `https://uploads.github.com/repos/${repo}/releases/${release.id}/assets?name=${
           encodeURIComponent(name)
@@ -232,15 +252,17 @@ if (import.meta.main) {
       );
       if (!r.ok) throw new Error("ledger_upload_failed");
     };
-    for (const [name, bytes] of packed.files) {
-      await upload(name, bytes, "application/gzip");
-    }
-    // Commit marker is uploaded last; failed/incomplete generations remain invisible.
-    await upload(
-      `${state.generation}-manifest.json`,
-      new TextEncoder().encode(JSON.stringify(packed.manifest)),
-      "application/json",
-    );
+    await publishChunks(packed, {
+      write: upload,
+      read: async (name) => {
+        const asset = assets.find((a) => a.name === name);
+        if (!asset) return undefined;
+        const response = await api(`releases/assets/${asset.id}`, {
+          headers: { Accept: "application/octet-stream" },
+        });
+        return new Uint8Array(await response.arrayBuffer());
+      },
+    });
     console.log(
       JSON.stringify({
         generation: state.generation,
