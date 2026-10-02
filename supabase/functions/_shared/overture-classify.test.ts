@@ -23,7 +23,29 @@ Deno.test("overture — entertainment venues map to NearMe's categories", () => 
   assertEquals(classifyOverture({ basic_category: "performing_arts_venue", primary_cat: "performing_arts_venue" })?.venueCategory, "theater");
   assertEquals(classifyOverture({ basic_category: "movie_theater", primary_cat: "movie_theater" })?.venueCategory, "cinema");
   assertEquals(classifyOverture({ basic_category: "stadium_arena", primary_cat: "stadium_arena" })?.venueCategory, "stadium");
-  assertEquals(classifyOverture({ basic_category: "sport_or_fitness_facility", primary_cat: "bowling_alley" })?.venueCategory, "venue");
+  assertEquals(classifyOverture({ basic_category: "sport_or_fitness_facility", primary_cat: "bowling_alley" })?.venueCategory, "other");
+});
+
+Deno.test("overture - amusement and hangout categories are remapped", () => {
+  for (const k of ["arcade", "bowling_alley", "escape_room", "art_gallery", "karaoke", "social_club"]) {
+    assertEquals(classifyOverture({ basic_category: null, primary_cat: k }), { cls: "venue", venueCategory: "other" }, k);
+  }
+  assertEquals(classifyOverture({ basic_category: null, primary_cat: "amusement_park" })?.venueCategory, "park");
+  for (const k of ["music_venue", "comedy_club", "event_venue", "festival_venue"]) {
+    assertEquals(classifyOverture({ basic_category: null, primary_cat: k })?.venueCategory, "venue", k);
+  }
+});
+
+Deno.test("overture - social_club is NOT club (club venues get every event tagged 21+)", () => {
+  assertEquals(classifyOverture({ basic_category: null, primary_cat: "social_club" })?.venueCategory === "club", false);
+});
+
+Deno.test("overture - social-media pages are not venue websites", () => {
+  for (const w of ["https://www.facebook.com/hophouse", "https://m.facebook.com/x", "https://instagram.com/x", "https://linktr.ee/x",
+    "https://twitter.com/x", "https://x.com/x", "https://www.tiktok.com/@x", "https://www.yelp.com/biz/x"]) {
+    assertEquals(isLoadableVenue(place({ website: w })), false, w);
+  }
+  assertEquals(isLoadableVenue(place({ website: "https://notfacebook.com" })), true);
 });
 
 Deno.test("overture — the specific label wins over the broad one", () => {

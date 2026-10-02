@@ -41,11 +41,11 @@ const MAP: Record<string, Entry> = {
   beer_garden: v("bar"), winery: v("bar"), distillery: v("bar"), // best-guess strings
   // clubs
   dance_club: v("club"), night_club: v("club"), // night_club best-guess
-  social_club: v("club"),
+  social_club: v("other"), // not "club": club venues get every event tagged 21+
   // venues
   music_venue: v("venue"), comedy_club: v("venue"), event_venue: v("venue"), festival_venue: v("venue"),
-  arcade: v("venue"), bowling_alley: v("venue"), amusement_park: v("venue"), art_gallery: v("venue"),
-  karaoke: v("venue"), escape_room: v("venue"), // best-guess strings
+  arcade: v("other"), bowling_alley: v("other"), amusement_park: v("park"), art_gallery: v("other"),
+  karaoke: v("other"), escape_room: v("other"), // best-guess strings
   // stages and screens
   theatre_venue: v("theater"), performing_arts_venue: v("theater"),
   movie_theater: v("cinema"),
@@ -84,8 +84,20 @@ export function classifyOverture(p: {
   return null;
 }
 
+const NOT_A_VENUE_SITE = ["facebook.com", "instagram.com", "linktr.ee", "twitter.com", "x.com", "tiktok.com", "yelp.com"];
+
+function isSocialHost(website: string): boolean {
+  try {
+    const host = new URL(website.trim()).hostname.toLowerCase();
+    return NOT_A_VENUE_SITE.some((d) => host === d || host.endsWith("." + d));
+  } catch {
+    return false;
+  }
+}
+
 export function isLoadableVenue(p: OverturePlace): boolean {
   if (!p.name?.trim() || !p.website?.trim()) return false;
+  if (isSocialHost(p.website)) return false;
   const entry = classifyOverture(p);
   if (!entry?.venueCategory) return false;
   return !isAdultVenue(p.name);
