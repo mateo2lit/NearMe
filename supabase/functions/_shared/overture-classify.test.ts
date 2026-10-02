@@ -40,6 +40,8 @@ Deno.test("overture — the hierarchy path works when primary and basic are null
   assertEquals(classifyOverture({ basic_category: null, primary_cat: null, hierarchy: ["arts_and_entertainment", "bar"] })?.venueCategory, "bar");
   // walks up past an unmapped leaf to a mapped ancestor
   assertEquals(classifyOverture({ basic_category: null, primary_cat: null, hierarchy: ["library", "unmapped_leaf"] })?.cls, "library");
+  // leaf-first order matters: bar (leaf, last element) wins over library (root, first element)
+  assertEquals(classifyOverture({ basic_category: null, primary_cat: null, hierarchy: ["library", "bar"] }), { cls: "venue", venueCategory: "bar" });
 });
 
 Deno.test("overture — non-venue classes are recognised but have no venue category", () => {
