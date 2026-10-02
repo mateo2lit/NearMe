@@ -29,6 +29,17 @@ Deno.test("overture — entertainment venues map to NearMe's categories", () => 
 Deno.test("overture — the specific label wins over the broad one", () => {
   // basic says restaurant, primary says it is really a bar and grill
   assertEquals(classifyOverture({ basic_category: "restaurant", primary_cat: "bar_and_grill_restaurant" })?.venueCategory, "bar");
+  // primary overrides basic when both are mapped and differ
+  assertEquals(classifyOverture({ basic_category: "library", primary_cat: "bar" })?.venueCategory, "bar");
+  // basic is used when primary is unmapped
+  assertEquals(classifyOverture({ basic_category: "brewery", primary_cat: "some_unmapped_label" })?.venueCategory, "bar");
+});
+
+Deno.test("overture — the hierarchy path works when primary and basic are null", () => {
+  // hierarchy is traversed from leaf up (reversed), so bar (last element) wins
+  assertEquals(classifyOverture({ basic_category: null, primary_cat: null, hierarchy: ["arts_and_entertainment", "bar"] })?.venueCategory, "bar");
+  // walks up past an unmapped leaf to a mapped ancestor
+  assertEquals(classifyOverture({ basic_category: null, primary_cat: null, hierarchy: ["library", "unmapped_leaf"] })?.cls, "library");
 });
 
 Deno.test("overture — non-venue classes are recognised but have no venue category", () => {
@@ -38,6 +49,8 @@ Deno.test("overture — non-venue classes are recognised but have no venue categ
   assertEquals(classifyOverture({ basic_category: "high_school", primary_cat: "high_school" })?.cls, "school");
   assertEquals(classifyOverture({ basic_category: "christian_place_of_worship", primary_cat: "baptist_place_of_worship" })?.cls, "worship");
   assertEquals(classifyOverture({ basic_category: "books_music_and_video_store", primary_cat: "video_game_store" })?.cls, "store");
+  // the wildcard pattern covers any faith (here: Sikh)
+  assertEquals(classifyOverture({ basic_category: null, primary_cat: "sikh_place_of_worship" })?.cls, "worship");
 });
 
 Deno.test("overture — everyday businesses are ignored", () => {
