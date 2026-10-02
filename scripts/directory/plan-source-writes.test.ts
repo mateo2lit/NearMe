@@ -37,6 +37,9 @@ Deno.test("shared feed owner is deterministic and then stable; reader fields nev
   assertEquals("last_read_at" in rows[0], false);
   assertEquals("failures" in rows[0], false);
   assertThrows(() => planSourceWrites([{ ...source, lat: 100 }], []));
+  assertThrows(() =>
+    planSourceWrites([{ ...source, place_name: "Example Strip Club" }], [])
+  );
 });
 Deno.test("the same feed owner can refresh its metadata without moving another owner's feed", () => {
   const updated = { ...source, place_name: "Renamed library", lat: 27 };

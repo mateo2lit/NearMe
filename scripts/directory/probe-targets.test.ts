@@ -26,6 +26,10 @@ Deno.test("probe targets retain civic classes and semantic URL paths/queries", (
   assertEquals(target.website, "https://example.org/library?branch=2");
   assertEquals(prepareTarget({ ...place, lat: NaN }, "t24_85"), null);
   assertEquals(prepareTarget({ ...place, name: null }, "t24_85"), null);
+  assertEquals(
+    prepareTarget({ ...place, name: "Example Strip Club" }, "t24_85"),
+    null,
+  );
 });
 Deno.test("URL safety and equivalence do not erase branch or feed identity", () => {
   assertEquals(

@@ -1,4 +1,5 @@
 import type { SourceRow } from "./probe-types.ts";
+import { isAdultVenue } from "../../supabase/functions/_shared/adult-filter.ts";
 import { normalizeUrl } from "./probe-targets.ts";
 export function planSourceWrites(
   input: SourceRow[],
@@ -14,7 +15,8 @@ export function planSourceWrites(
     if (
       !Number.isFinite(source.lat) || !Number.isFinite(source.lng) ||
       Math.abs(source.lat) > 90 || Math.abs(source.lng) > 180 ||
-      !source.place_name || source.place_name.length > 512 ||
+      !source.place_name?.trim() || isAdultVenue(source.place_name) ||
+      source.place_name.length > 512 ||
       !source.overture_id || source.overture_id.length > 128 ||
       source.country.length !== 2 || (source.region?.length ?? 0) > 256 ||
       (source.locality?.length ?? 0) > 256 ||

@@ -1,4 +1,5 @@
 import { isIP } from "node:net";
+import { isAdultVenue } from "../../supabase/functions/_shared/adult-filter.ts";
 import {
   classifyOverture,
   type OverturePlace,
@@ -56,7 +57,8 @@ export function prepareTarget(
 ): ProbeTarget | null {
   const cls = classifyOverture(p);
   if (
-    !cls || !p.name || !p.website || !p.country || !p.id ||
+    !cls || !p.name?.trim() || isAdultVenue(p.name) || !p.website ||
+    !p.country || !p.id ||
     !Number.isFinite(p.lat) || !Number.isFinite(p.lng) ||
     Math.abs(p.lat) > 90 || Math.abs(p.lng) > 180
   ) return null;
