@@ -167,3 +167,23 @@ Deno.test("the fallback query is only spent when the first gets no events box", 
   });
   assertEquals(asked, ["Tampa events this weekend"]);
 });
+
+Deno.test("an item with no venue and no link reports which fields it does have", async () => {
+  const errors: string[] = [];
+  const body = { events_results: [{ title: "Sunset Concert Series", date: "Oct 3", thumbnail: "t.jpg", event_info: {} }] };
+  await fetchGoogleEvents({
+    cityName: "Sarasota", timezone: "America/New_York", apiKey: "k",
+    fetchJson: () => jsonResponse(body), onError: (e) => errors.push(e),
+  });
+  assertEquals(errors.some((e) => e.includes("fields:") && e.includes("event_info")), true, errors.join(" | "));
+});
+
+Deno.test("an address sent as plain text still yields a venue and address", async () => {
+  const body = { events_results: [{ title: "Jazz at the Point", date: "Oct 3", address: "Bayfront Park, 301 Biscayne Blvd, Miami, FL", link: "https://example.com/j" }] };
+  const out = await fetchGoogleEvents({
+    cityName: "Miami", timezone: "America/New_York", apiKey: "k",
+    fetchJson: () => jsonResponse(body),
+  });
+  assertEquals(out[0].venue_name, "Bayfront Park");
+  assertEquals(out[0].address, "Bayfront Park, 301 Biscayne Blvd, Miami, FL");
+});

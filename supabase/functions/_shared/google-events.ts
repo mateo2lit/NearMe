@@ -165,6 +165,7 @@ export async function fetchGoogleEvents(
   const seen = new Set<string>();
 
   let stopAfterThis = false;
+  let reportedShape = false;
   for (const q of queries) {
     if (stopAfterThis) break;
     try {
@@ -202,17 +203,27 @@ export async function fetchGoogleEvents(
         seen.add(key);
 
         const { iso, confirmed } = parseSerpDate(e.date, opts.timezone, opts.now);
-        const addressParts = Array.isArray(e.address) ? e.address : [];
+        // A list of lines, or (in the compact shape) one comma-separated string.
+        const addressParts: string[] = Array.isArray(e.address)
+          ? e.address
+          : typeof e.address === "string" ? [e.address] : [];
+        const firstPart = addressParts[0]?.split(",")[0]?.trim() || null;
         out.push({
           title: String(e.title).slice(0, 140),
           description: String(e.description ?? "").slice(0, 500),
           start_time: iso,
           address: addressParts.join(", "),
-          venue_name: e.venue?.name ?? addressParts[0] ?? null,
+          venue_name: e.venue?.name ?? (Array.isArray(e.address) ? addressParts[0] : firstPart) ?? null,
           image_url: e.image || e.thumbnail || null,
           source_url: e.link || e.event_location_map?.link || null,
           time_confirmed: confirmed,
         });
+        const last = out[out.length - 1];
+        if (!last.venue_name && !last.source_url && !reportedShape) {
+          // SerpApi has reshaped these items before; name what it sent.
+          reportedShape = true;
+          opts.onError?.(`item has no venue or link; fields: ${Object.keys(e).join(", ")}`);
+        }
       }
     } catch (err) {
       opts.onError?.(err instanceof Error ? err.message : String(err));

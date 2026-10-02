@@ -1817,7 +1817,7 @@ async function fetchGoogleEventsRows(
     timezone,
     apiKey: SERPAPI_KEY,
     fetchJson: (url) => timeoutFetch(url, { timeoutMs: 15000 }) as any,
-    onError: (detail) => noteSourceError("google_events", detail),
+    onError: (detail) => noteSourceError(detail.startsWith("item has") ? "google_events_shape" : "google_events", detail),
   });
 
   const rows: any[] = [];
@@ -1828,7 +1828,8 @@ async function fetchGoogleEventsRows(
 
     // Structured listings often carry no description now; require a venue and
     // a link instead, so what remains is still something you can go to.
-    if (!e.venue_name || !e.source_url) { drop("no venue or link"); continue; }
+    if (!e.venue_name) { drop("no venue"); continue; }
+    if (!e.source_url) { drop("no link"); continue; }
     const quality = validateScrapedEvent({
       title: e.title,
       description: e.description,
