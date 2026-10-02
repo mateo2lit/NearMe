@@ -53,12 +53,32 @@ const loadable = places.filter(isLoadableVenue);
 const known = await knownInTile();
 const existingOverture = known.filter((k) => k.overture_id).length;
 
+/**
+ * Rows linked to a place in this file but stored outside the tile's bounds
+ * (a place can move across a tile edge between releases). Without them
+ * planWrites could link a second row to an overture_id someone already holds.
+ */
+async function knownByOvertureId(ids: string[]): Promise<KnownRow[]> {
+  const out: KnownRow[] = [];
+  for (let i = 0; i < ids.length; i += 150) {
+    const list = ids.slice(i, i + 150).map((id) => `"${id.replace(/["\\]/g, "\\$&")}"`).join(",");
+    const path = `venues?select=id,name,website,lat,lng,overture_id,source&overture_id=in.(${encodeURIComponent(list)})`;
+    out.push(...await (await rest(path)).json() as KnownRow[]);
+  }
+  return out;
+}
+const knownIds = new Set(known.map((k) => k.id));
+for (const k of await knownByOvertureId([...new Set(loadable.map((p) => p.id))])) {
+  if (!knownIds.has(k.id)) { knownIds.add(k.id); known.push(k); }
+}
+
+
 if (!plausible(loadable.length, existingOverture)) {
   console.error(`implausible: ${loadable.length} loadable vs ${existingOverture} already in tile ${tile.id}; not writing`);
   Deno.exit(1);
 }
 
-const { upserts: inserts, links } = planWrites(loadable, known);
+const { upserts: inserts, links, dupOverture, sharedSite } = planWrites(loadable, known);
 
 if (!args["dry-run"]) {
   for (let i = 0; i < inserts.length; i += 500) {
@@ -79,5 +99,5 @@ if (!args["dry-run"]) {
 
 console.log(JSON.stringify({
   tile: tile.id, read: places.length, loadable: loadable.length,
-  matched: links.length, inserted: inserts.length, dryRun: !!args["dry-run"],
+  matched: links.length, inserted: inserts.length, dupOverture, sharedSite, dryRun: !!args["dry-run"],
 }));
