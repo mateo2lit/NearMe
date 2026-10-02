@@ -12,6 +12,7 @@ Deno.test("extract SQL — pinned release, tile bounds, filters and output", () 
   assertEquals(sql.includes("confidence >= 0.6"), true);
   assertEquals(sql.includes("'brewery'"), true);
   assertEquals(sql.includes("addresses[1].country IN ('US', 'CA', 'PR', 'VI')"), true);
+  assertEquals(sql.includes("AND (operating_status IS NULL OR operating_status = 'open')"), true);
   assertEquals(sql.includes("TO 'out/t24_85.ndjson' (FORMAT JSON)"), true);
 });
 
@@ -22,6 +23,6 @@ Deno.test("extract SQL — a place on a tile edge belongs to exactly one tile", 
   assertEquals(/bbox\.xmin <= -75/.test(sql), false);
 });
 
-Deno.test("extract SQL � a malformed release is refused", () => {
+Deno.test("extract SQL - a malformed release is refused", () => {
   assertThrows(() => buildExtractSql({ release: "2026-09-23.1; DROP", tile, minConfidence: 0.6, outPath: "o" }));
 });

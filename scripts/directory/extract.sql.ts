@@ -33,6 +33,7 @@ COPY (
     AND confidence >= ${minConfidence}
     AND websites IS NOT NULL AND len(websites) > 0
     AND addresses[1].country IN ('US', 'CA', 'PR', 'VI')
+    AND (operating_status IS NULL OR operating_status = 'open')
     AND (basic_category IN (${cats}) OR taxonomy.primary IN (${cats}) OR taxonomy.primary LIKE '%_place_of_worship')
 ) TO '${outPath}' (FORMAT JSON);
 `.trim();
