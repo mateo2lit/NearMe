@@ -29,6 +29,8 @@ export interface FeedEvent {
   source_url: string | null;
   /** True when the feed itself stated a start time. Never inferred. */
   time_confirmed: boolean;
+  /** The city the feed says the event is in, when it says one. */
+  city?: string | null;
 }
 
 function stripTags(html: string | null | undefined, maxLen = 500): string {
@@ -148,6 +150,7 @@ export async function fetchTheEventsCalendar(
         // An all-day listing's 00:00 is its first day, not a start time.
         // Arts Warehouse's two-month exhibitions read as "TONIGHT · 12:00 AM".
         time_confirmed: !!start && e.all_day !== true,
+        city: typeof e.venue?.city === "string" ? e.venue.city : null,
       });
     }
     return out;
@@ -161,6 +164,12 @@ export async function fetchTheEventsCalendar(
  * inline scraper pass: this one reads a page fetched specifically because it
  * is the venue's events page, and marks whether a real time was present.
  */
+function jsonLdLocality(location: any): string | null {
+  const place = Array.isArray(location) ? location[0] : location;
+  const locality = place?.address?.addressLocality;
+  return typeof locality === "string" && locality.trim() ? locality.trim() : null;
+}
+
 export function parseJsonLdEvents(html: string, pageUrl: string): FeedEvent[] {
   const out: FeedEvent[] = [];
   const re = /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
@@ -213,6 +222,7 @@ export function parseJsonLdEvents(html: string, pageUrl: string): FeedEvent[] {
           : item.image?.url ?? null,
         source_url: typeof item.url === "string" ? item.url : pageUrl,
         time_confirmed: !!start && hasClock,
+        city: jsonLdLocality(item.location),
       });
     }
   }

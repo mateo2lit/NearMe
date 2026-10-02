@@ -178,3 +178,21 @@ export function normalizeDayOfWeek(raw: string | null | undefined): string | nul
   const key = raw.trim().toLowerCase();
   return WEEKDAY_NORMALIZE[key] || null;
 }
+
+function cityKey(s: string): string {
+  return s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+/**
+ * True when a scraped event names a city that is not in its venue's address.
+ * Promoter and organiser sites list events all over a state; without this,
+ * every one was pinned to the promoter's own address (a Miami gun show shown
+ * as nearby in Orlando). No stated city, or no address to compare, keeps the
+ * event: only a stated contradiction drops it.
+ */
+export function happensElsewhere(eventCity: string | null | undefined, venueAddress: string | null | undefined): boolean {
+  const city = cityKey(eventCity ?? "");
+  const address = cityKey(venueAddress ?? "");
+  if (!city || !address) return false;
+  return !` ${address} `.includes(` ${city} `);
+}

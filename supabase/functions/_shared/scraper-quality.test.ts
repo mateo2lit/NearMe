@@ -1,5 +1,5 @@
 import { assertEquals } from "https://deno.land/std@0.177.0/testing/asserts.ts";
-import { validateScrapedEvent } from "./scraper-quality.ts";
+import { happensElsewhere, validateScrapedEvent } from "./scraper-quality.ts";
 
 const GOOD_DESC = "Group run every Saturday morning from Mizner Park. All paces welcome.";
 
@@ -81,4 +81,26 @@ Deno.test("dropping the description rule keeps every other check", () => {
   const opts = { requireDescription: false };
   assertEquals(validateScrapedEvent({ title: "Amalie Arena", description: "", venueName: "Amalie Arena" }, opts).ok, false);
   assertEquals(validateScrapedEvent({ title: "Fun", description: "" }, opts).ok, false);
+});
+
+// A promoter's site (Florida Gun Shows, Orlando) listed shows in Miami, Tampa
+// and Ft. Myers; every one was pinned to the Orlando address.
+Deno.test("an event in another city is not pinned to the venue", () => {
+  const orlando = "4603 W Colonial Dr, Orlando, FL";
+  assertEquals(happensElsewhere("Miami", orlando), true);
+  assertEquals(happensElsewhere("Ft. Myers", orlando), true);
+  assertEquals(happensElsewhere("Orlando", orlando), false);
+  assertEquals(happensElsewhere("  orlando ", orlando), false);
+});
+
+Deno.test("no stated city, or no venue address, keeps the event", () => {
+  assertEquals(happensElsewhere(null, "4603 W Colonial Dr, Orlando, FL"), false);
+  assertEquals(happensElsewhere("", "4603 W Colonial Dr, Orlando, FL"), false);
+  assertEquals(happensElsewhere("Miami", null), false);
+});
+
+Deno.test("city matching ignores accents and punctuation", () => {
+  assertEquals(happensElsewhere("Montréal", "1234 Rue Sainte-Catherine, Montreal, QC"), false);
+  assertEquals(happensElsewhere("St. Petersburg", "200 Central Ave, St Petersburg, FL"), false);
+  assertEquals(happensElsewhere("Port St. Lucie", "100 Main St, St Petersburg, FL"), true);
 });

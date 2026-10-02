@@ -158,3 +158,19 @@ Deno.test("an all-day listing is a date, not a midnight start", async () => {
   assertEquals(out.length, 1);
   assertEquals(out[0].time_confirmed, false);
 });
+
+Deno.test("feeds report the city an event is in, when they state one", async () => {
+  const tec = await fetchTheEventsCalendar("https://promoter.example/", () => jsonResponse({
+    events: [
+      { title: "Miami Gun Show", utc_start_date: "2026-10-10 14:00:00", venue: { venue: "Fair Expo", city: "Miami" } },
+      { title: "Book Club", utc_start_date: "2026-10-11 14:00:00", venue: [] },
+    ],
+  }));
+  assertEquals(tec.map((e) => e.city), ["Miami", null]);
+
+  const html = `<script type="application/ld+json">${JSON.stringify({
+    "@type": "Event", name: "Tampa Gun Show", startDate: "2026-10-12T10:00:00-04:00",
+    location: { "@type": "Place", name: "State Fairgrounds", address: { addressLocality: "Tampa" } },
+  })}</script>`;
+  assertEquals(parseJsonLdEvents(html, "https://promoter.example/").map((e) => e.city), ["Tampa"]);
+});

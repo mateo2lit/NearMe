@@ -18,7 +18,7 @@ import {
 } from "../_shared/category-mapper.ts";
 import { geohashEncode } from "../_shared/geohash.ts";
 import { detectAdultSignal, isAdultVenue } from "../_shared/adult-filter.ts";
-import { validateScrapedEvent, normalizeDayOfWeek } from "../_shared/scraper-quality.ts";
+import { happensElsewhere, validateScrapedEvent, normalizeDayOfWeek } from "../_shared/scraper-quality.ts";
 import { fetchMeetupEvents } from "../_shared/meetup-fetcher.ts";
 import { fetchCollegeSports } from "../_shared/espn-sports.ts";
 import { fetchTheEventsCalendar, parseJsonLdEvents } from "../_shared/venue-feeds.ts";
@@ -107,6 +107,10 @@ const VENUE_EVENT_SCHEMA = {
     time: { type: ["string", "null"], description: 'e.g. "7:30 PM", or null' },
     is_free: { type: "boolean" },
     price: { type: ["number", "null"], description: "USD" },
+    city: {
+      type: ["string", "null"],
+      description: "The city the page says this event takes place in, if it names one; null if it does not say",
+    },
   },
   required: ["title", "description", "category", "subcategory", "day_of_week", "time", "is_free"],
   additionalProperties: false,
@@ -1272,6 +1276,7 @@ async function extractWithClaude(
         is_free: item.is_free || false,
         price_min: item.price || null,
         price_max: null,
+        city: typeof item.city === "string" ? item.city : null,
       };
     });
   }
@@ -1424,6 +1429,7 @@ async function scanVenues(
               image_url: f.image_url,
               feed_source_url: f.source_url,
               time_unconfirmed: !f.time_confirmed,
+              city: f.city ?? null,
             }));
           if (events.length > 0) {
             usedFeed = true;
@@ -1447,6 +1453,7 @@ async function scanVenues(
               image_url: f.image_url,
               feed_source_url: f.source_url,
               time_unconfirmed: !f.time_confirmed,
+              city: f.city ?? null,
             }));
             if (jsonLd.length > 0) {
               events = jsonLd;
@@ -1497,6 +1504,10 @@ async function scanVenues(
             });
             if (!quality.ok) {
               console.log(`[scanner] drop quality: ${quality.reason} @ ${venue.name}`);
+              continue;
+            }
+            if (happensElsewhere((e as any).city, venue.address)) {
+              console.log(`[scanner] drop elsewhere: "${e.title}" in ${(e as any).city}, not ${venue.address}`);
               continue;
             }
             const adultSignal = detectAdultSignal({
