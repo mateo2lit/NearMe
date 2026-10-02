@@ -8,6 +8,7 @@ import type { Tile } from "../../supabase/functions/_shared/venue-match.ts";
  */
 export function buildExtractSql(opts: { release: string; tile: Tile; minConfidence: number; outPath: string }): string {
   const { release, tile, minConfidence, outPath } = opts;
+  if (!/^\d{4}-\d{2}-\d{2}\.\d+$/.test(release)) throw new Error(`bad release: ${release}`);
   const cats = OVERTURE_CATEGORY_KEYS.map((k) => `'${k.replace(/'/g, "''")}'`).join(", ");
   return `
 INSTALL httpfs; LOAD httpfs; SET s3_region='us-west-2';
@@ -31,7 +32,7 @@ COPY (
     AND bbox.ymin >= ${tile.south} AND bbox.ymin < ${tile.north}
     AND confidence >= ${minConfidence}
     AND websites IS NOT NULL AND len(websites) > 0
-    AND addresses[1].country IN ('US', 'CA')
+    AND addresses[1].country IN ('US', 'CA', 'PR', 'VI')
     AND (basic_category IN (${cats}) OR taxonomy.primary IN (${cats}) OR taxonomy.primary LIKE '%_place_of_worship')
 ) TO '${outPath}' (FORMAT JSON);
 `.trim();

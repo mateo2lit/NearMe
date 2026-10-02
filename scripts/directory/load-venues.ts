@@ -5,8 +5,9 @@
  * Needs SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in the environment.
  */
 import { parseArgs } from "https://deno.land/std@0.224.0/cli/parse_args.ts";
-import { classifyOverture, isLoadableVenue, type OverturePlace } from "../../supabase/functions/_shared/overture-classify.ts";
-import { type KnownVenue, matchKnownVenue, plausible, tiles } from "../../supabase/functions/_shared/venue-match.ts";
+import { isLoadableVenue, type OverturePlace } from "../../supabase/functions/_shared/overture-classify.ts";
+import { plausible, tiles } from "../../supabase/functions/_shared/venue-match.ts";
+import { type KnownRow, planWrites } from "./plan-writes.ts";
 
 const args = parseArgs(Deno.args, { string: ["tile", "in"], boolean: ["dry-run"] });
 const tile = tiles().find((t) => t.id === args.tile);
@@ -31,17 +32,18 @@ async function rest(path: string, init: RequestInit = {}): Promise<Response> {
   return res;
 }
 
-/** Every venue already stored inside the tile, 1,000 rows a page. */
-async function knownInTile(): Promise<KnownVenue[]> {
-  const out: KnownVenue[] = [];
+/** Every venue already stored inside the tile, 1,000 rows a page, until a page is empty (or 416). */
+async function knownInTile(): Promise<KnownRow[]> {
+  const out: KnownRow[] = [];
   const filter = `lat=gte.${tile!.south}&lat=lt.${tile!.north}&lng=gte.${tile!.west}&lng=lt.${tile!.east}`;
   for (let from = 0; ; from += 1000) {
-    const res = await rest(`venues?select=id,name,website,lat,lng,overture_id&${filter}&order=id`, {
-      headers: { Range: `${from}-${from + 999}` },
-    });
-    const page = await res.json() as KnownVenue[];
+    const path = `venues?select=id,name,website,lat,lng,overture_id,source&${filter}&order=id`;
+    const res = await fetch(`${URL_}/rest/v1/${path}`, { headers: { ...headers, Range: `${from}-${from + 999}` } });
+    if (res.status === 416) return out;
+    if (!res.ok) throw new Error(`GET venues -> ${res.status} ${await res.text()}`);
+    const page = await res.json() as KnownRow[];
+    if (page.length === 0) return out;
     out.push(...page);
-    if (page.length < 1000) return out;
   }
 }
 
@@ -56,26 +58,7 @@ if (!plausible(loadable.length, existingOverture)) {
   Deno.exit(1);
 }
 
-const inserts: Record<string, unknown>[] = [];
-const links: { id: string; overture_id: string }[] = [];
-for (const p of loadable) {
-  const match = matchKnownVenue({ name: p.name!, website: p.website, lat: p.lat, lng: p.lng }, known);
-  if (match && match.overture_id !== p.id) {
-    // Same venue Google already gave us: tag it, don't duplicate it.
-    if (!match.overture_id) links.push({ id: match.id, overture_id: p.id });
-    continue;
-  }
-  inserts.push({
-    overture_id: p.id,
-    source: "overture",
-    name: p.name,
-    lat: p.lat,
-    lng: p.lng,
-    address: [p.street, p.locality, p.region].filter(Boolean).join(", ") || null,
-    category: classifyOverture(p)!.venueCategory,
-    website: p.website,
-  });
-}
+const { upserts: inserts, links } = planWrites(loadable, known);
 
 if (!args["dry-run"]) {
   for (let i = 0; i < inserts.length; i += 500) {
