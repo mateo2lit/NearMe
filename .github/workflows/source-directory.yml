@@ -1,0 +1,75 @@
+# .github/workflows/source-directory.yml
+name: Source directory
+
+on:
+  schedule:
+    - cron: "0 7 2 * *"   # 07:00 UTC on the 2nd of each month
+  workflow_dispatch:
+    inputs:
+      tile:
+        description: "One tile id (blank = every tile)"
+        required: false
+        default: ""
+      release:
+        description: "Overture release"
+        required: false
+        default: "2026-09-23.1"
+      min_confidence:
+        description: "Minimum Overture confidence"
+        required: false
+        default: "0.6"
+      dry_run:
+        description: "Classify and match but do not write"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      tiles: ${{ steps.t.outputs.tiles }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with: { deno-version: v2.x }
+      - id: t
+        run: |
+          if [ -n "${{ inputs.tile }}" ]; then
+            echo "tiles=[\"${{ inputs.tile }}\"]" >> "$GITHUB_OUTPUT"
+          else
+            echo "tiles=$(deno eval 'import {tiles} from "./supabase/functions/_shared/venue-match.ts"; console.log(JSON.stringify(tiles().map(t=>t.id)))')" >> "$GITHUB_OUTPUT"
+          fi
+
+  venues:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        tile: ${{ fromJSON(needs.plan.outputs.tiles) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with: { deno-version: v2.x }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Install DuckDB
+        run: python -m pip install --quiet duckdb
+      - name: Extract
+        run: |
+          mkdir -p out
+          deno run --allow-read scripts/directory/extract.sql.ts "${{ matrix.tile }}" "${{ inputs.release || '2026-09-23.1' }}" "${{ inputs.min_confidence || '0.6' }}" > extract.sql
+          # The Python package was verified against Overture's S3 data on 2026-10-01.
+          python -c "import duckdb; con = duckdb.connect(); [con.execute(s) for s in open('extract.sql').read().split(';') if s.strip()]"
+          echo "places: $(wc -l < out/${{ matrix.tile }}.ndjson)"
+      - name: Load venues
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          deno run -A scripts/directory/load-venues.ts --tile "${{ matrix.tile }}" --in "out/${{ matrix.tile }}.ndjson" ${{ inputs.dry_run && '--dry-run' || '' }} | tee -a "$GITHUB_STEP_SUMMARY"
