@@ -56,3 +56,14 @@ These limits are visible rollout gaps, not a claim that every adapter variant ha
 2. Complete the Florida dry run through review-only continuation snapshots. Review at least 20 verified sources where available, or all if fewer.
 3. Present measured candidate counts, requests/runtime, platform gaps and conservative storage estimates before requesting the production migration/pilot load.
 4. National and recurring writes remain separately gated as agreed. No app quality improvement is claimed; Phase 3 reads the sources.
+
+## Florida sample results
+
+The extraction selected release `2026-09-23.1`: **43,763 places**, **41,700 eligible targets**, **36,381 distinct website URLs**. The tile is much larger than Palm Beach County. These are extraction counts, not newly inserted production rows.
+
+- [Initial sample, commit 6c88314](https://github.com/mateo2lit/NearMe/actions/runs/37041506258): 100 websites processed in 75 crawler seconds, 76 content requests, 69 robots requests, zero AI calls. 39 later-phase deferrals, 39 generic fetch errors. Its sole positive was a one-event CivicPlus export; review rejected it as a renewable calendar source.
+- [Corrected sample, commit 5e6f9b1](https://github.com/mateo2lit/NearMe/actions/runs/37042411777): same 100 websites, 85 crawler seconds, 179 content requests, 116 robots requests, zero AI calls. Results: 39 later-phase deferrals, 18 HTTP errors, 8 robots denials, 12 no-feed, 17 invalid-feed, 2 timeouts, 3 exhausted budgets, **1 verified calendar**. All production load/publish jobs were skipped.
+- The verified calendar is Clancy's public iCal export, discovered from its Overture website. It was independently fetched through the same robots-aware boundary and a minimal real fixture was saved in `scripts/directory/fixtures/feeds/`; original IANA-zone dates remain, titles/UIDs are replaced and descriptions/contact data omitted. Its public events page exposes the subscription route. This is one actual source, not evidence of national coverage.
+- Corrections after the initial sample: bounded/cached public robots redirects, safe failure reasons/status, rejection of one-event CivicPlus export URLs, and calendar landing pages ahead of individual event pages.
+- Remaining corrected-sample HTTP errors: 6 transport/DNS failures, 4 homepage 404s, 2 homepage 403s, 2 robots redirect limits, 2 unavailable robots responses, 1 generic transport error and 1 candidate 400. None was converted to a successful source or bypassed.
+- The sample is too small to estimate national yield confidently. Full-tile discovery and additional platform fixtures remain required. At the observed sample throughput, the full tile may require multiple bounded runs; no one-hour national promise is justified.

@@ -1,6 +1,6 @@
 # Source Directory — Phase 2: Feed Probing — Implementation Plan
 
-**Date:** 2026-10-02 · **Status:** proposed; review before implementation.
+**Date:** 2026-10-02 · **Status:** approved by the owner 2026-10-02; implementation and dry-run validation underway. Production writes remain gated on pilot review.
 
 **Goal:** Discover public, structured event feeds from Overture venue and official websites, validate that they contain future events, and store only verified sources in `event_sources`. Keep the complete probe history outside Supabase. Discovery uses no AI or paid search.
 

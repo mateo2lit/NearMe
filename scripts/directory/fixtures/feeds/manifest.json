@@ -1,0 +1,12 @@
+[
+  {
+    "file": "ical-0.ics",
+    "platform": "ical",
+    "feed_url": "https://clancysirishsportspub.com/events/?ical=1",
+    "page_url": "https://clancysirishsportspub.com/",
+    "overture_id": "9b6f9964-3f11-4a21-977f-cecaf1186d49",
+    "captured_at": "2026-10-02T17:45:45.759Z",
+    "expected": "verified",
+    "provenance": "Live public export discovered from Overture; robots allowed at capture. Original date/recurrence fields retained; titles/UIDs replaced and descriptions/contact details omitted."
+  }
+]

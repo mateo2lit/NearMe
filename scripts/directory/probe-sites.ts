@@ -11,6 +11,7 @@ import {
 } from "./probe-types.ts";
 import { decideProbe, nextCheck } from "./probe-ledger.ts";
 import { prepareTarget } from "./probe-targets.ts";
+import { planSourceWrites } from "./plan-source-writes.ts";
 import {
   args,
   lines,
@@ -178,9 +179,9 @@ export async function probeSite(
 function sourceFrom(entry: LedgerEntry): SourceRow | null {
   if (entry.outcome !== "verified" || !entry.candidate) return null;
   const { website: _website, tile: _tile, ...place } =
-    [...entry.associations].sort((a, b) =>
-      a.overture_id.localeCompare(b.overture_id)
-    )[0];
+    entry.associations.filter((t) =>
+      !["tourism", "worship", "store"].includes(t.place_class)
+    ).sort((a, b) => a.overture_id.localeCompare(b.overture_id))[0];
   return { ...place, ...entry.candidate, verified_at: entry.probed_at };
 }
 export function stableOrder(key: string): number {
@@ -264,6 +265,8 @@ if (import.meta.main) {
     const outcomes: Record<string, number> = {},
       platforms: Record<string, number> = {},
       classes: Record<string, number> = {};
+    const reasons: Record<string, number> = {},
+      httpStatuses: Record<string, number> = {};
     let checkpoint = Promise.resolve();
     await Deno.mkdir(a.out, { recursive: true });
     const pending = new Map(state.pending.map((s) => [s.feed_url, s]));
@@ -291,7 +294,13 @@ if (import.meta.main) {
         );
         state.entries[key] = result;
         const source = sourceFrom(result);
-        if (source) pending.set(source.feed_url, source);
+        if (source) {
+          const previous = pending.get(source.feed_url);
+          pending.set(
+            source.feed_url,
+            previous ? planSourceWrites([previous, source], [])[0] : source,
+          );
+        }
         if (result.candidate) {
           const update = {
             feed_url: result.candidate.feed_url,
@@ -307,11 +316,29 @@ if (import.meta.main) {
         }
         completed++;
         outcomes[result.outcome] = (outcomes[result.outcome] ?? 0) + 1;
+        if (result.reason) {
+          reasons[result.reason] = (reasons[result.reason] ?? 0) + 1;
+        }
+        if (result.http_status) {
+          httpStatuses[result.http_status] =
+            (httpStatuses[result.http_status] ?? 0) + 1;
+        }
         if (source) {
           platforms[source.platform] = (platforms[source.platform] ?? 0) + 1;
           classes[source.place_class] = (classes[source.place_class] ?? 0) + 1;
         }
-        if (completed % 500 === 0) await save();
+        if (completed % 500 === 0) {
+          await save();
+          console.log(
+            JSON.stringify({
+              progress: true,
+              completed,
+              remaining: due.length - completed,
+              verified: outcomes.verified ?? 0,
+              elapsed_seconds: Math.round((Date.now() - started) / 1000),
+            }),
+          );
+        }
       }
     }));
     await save();
@@ -325,6 +352,8 @@ if (import.meta.main) {
       completed,
       remaining: due.length - completed,
       outcomes,
+      reasons,
+      http_statuses: httpStatuses,
       platforms,
       classes,
       pending_sources: pending.size,

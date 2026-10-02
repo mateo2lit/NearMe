@@ -41,9 +41,13 @@ NearMe is an Expo/React Native iOS app (local events) with a Supabase backend
   large tables.
 - `sync-location` reads venues through the `venues_near` RPC (nearest 600 with a
   website).
-- Next: Phase 2 (probe venue and official websites for calendar feeds and
-  record them in `event_sources`). It needs its own plan in
-  `docs/superpowers/plans/`, written from the spec, before any code.
+- Phase 2 implementation is underway under the owner-approved plan
+  `docs/superpowers/plans/2026-10-02-source-directory-phase2-feeds.md`.
+  Manual dry runs use `.github/workflows/source-directory-feeds.yml`;
+  `044_event_sources.sql` has NOT been applied to production. No source loads
+  or monthly feed schedule are authorized until the pilot review gate.
+  Evidence and remaining gaps:
+  `docs/superpowers/reports/2026-10-02-source-directory-phase2-validation.md`.
 
 ## Things learned the hard way
 
