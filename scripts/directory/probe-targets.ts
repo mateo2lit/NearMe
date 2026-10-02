@@ -5,6 +5,7 @@ import {
   type OverturePlace,
 } from "../../supabase/functions/_shared/overture-classify.ts";
 import type { ProbeTarget } from "./probe-types.ts";
+import { associationAllowed } from "./source-review.ts";
 
 // Only global-unicast IPv4 is used by the initial pinned-address transport.
 // IPv6-only hosts are deferred rather than risking mapped/local address bypasses.
@@ -64,6 +65,7 @@ export function prepareTarget(
   ) return null;
   if (p.name.length > 512 || p.id.length > 128) return null;
   try {
+    if (!associationAllowed(p.id, p.website)) return null;
     return {
       overture_id: p.id,
       place_name: p.name,

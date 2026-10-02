@@ -2,6 +2,7 @@ import type { SourceRow } from "./probe-types.ts";
 import { isAdultVenue } from "../../supabase/functions/_shared/adult-filter.ts";
 import { normalizeUrl } from "./probe-targets.ts";
 import { singleEventUrl } from "./feed-detectors.ts";
+import { associationAllowed } from "./source-review.ts";
 export function planSourceWrites(
   input: SourceRow[],
   existing: SourceRow[],
@@ -26,6 +27,10 @@ export function planSourceWrites(
     const feed_url = normalizeUrl(source.feed_url),
       page_url = normalizeUrl(source.page_url);
     if (singleEventUrl(feed_url)) throw new Error("single_event_source");
+    if (
+      !associationAllowed(source.overture_id, page_url) ||
+      !associationAllowed(source.overture_id, feed_url)
+    ) throw new Error("review_rejected_association");
     const previousOwner = known.get(feed_url) ?? result.get(feed_url);
     const owner =
       previousOwner && previousOwner.overture_id !== source.overture_id

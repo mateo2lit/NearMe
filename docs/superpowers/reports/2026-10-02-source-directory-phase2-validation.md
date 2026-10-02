@@ -14,7 +14,7 @@ The query used `pg_database_size(current_database())` and `pg_total_relation_siz
 
 ## Implementation checks
 
-Latest local verification: **416 edge/directory tests passed**. Deno CLI entry points type-check; workflow YAML parses. App/Edge Function runtime code is unchanged.
+Latest local verification: **419 edge/directory tests passed**. Deno CLI entry points type-check; workflow YAML parses. App/Edge Function runtime code is unchanged.
 
 - Deno 2.7.13: pinned for GitHub runners; supports native Temporal for explicit IANA timezone validation, rejecting DST ambiguity and gaps.
 - PostgreSQL migration tested in isolated in-memory PGlite 0.3.14, including roles, RLS, unique URLs and coordinate constraints. This machine has no Docker. This tests PostgreSQL behavior, but does not substitute for a linked Supabase migration/grant check after authorization.
@@ -85,3 +85,33 @@ Run `37043202262` failed at 18:20:10 UTC with `Uncaught null`, without a stack t
 Code inspection found an HTTP error-listener gap: a response exceeding the Content-Length cap was destroyed before its response error listener was attached. Response errors are now handled before any early destruction, including null errors; request errors tolerate null and aborted bodies reject cleanly. Regression tests cover oversized headers, streamed overflow and aborts. This fixes a demonstrated error path, but the production log alone does not prove it was the sole cause of this exit.
 
 Candidate review also found single-event Localist/GrowthZone exports and JSON-LD event-detail pages. Their recognized URL forms are now excluded from discovery and rejected by the write planner. Previously saved candidates are still review evidence, not authorization to load them. The conservative path heuristic can miss calendar-category pages; broader platform-specific routes need fixture evidence before loosening it.
+
+[Recovery run 37047470189](https://github.com/mateo2lit/NearMe/actions/runs/37047470189) resumes that checkpoint on commit `6f07bb7`. It remains discovery-only. It predates subsequent fixture-capture and association-review additions below.
+
+### Manual source-page review, in progress
+
+These checks inspect publishers' public pages in addition to the crawler's date evidence. Browser/search cache dates vary and do not substitute for a fresh feed fetch; final minimized feed fixtures remain pending while the crawler runs. No event is assigned the source place's coordinates by this phase.
+
+| Candidate / primary page | Review finding |
+|---|---|
+| [MAU academic calendar](https://maufl.edu/academic-calendar/) | October 2026 registration and term deadlines; renewable calendar, but predominantly administrative content. Source validation is not an app-event quality endorsement. |
+| [Florida Museum](https://www.floridamuseum.ufl.edu/events/) | Publisher explicitly describes offsite/community programs during building closure. A feed found through Randell Research Center must not inherit that site's location. |
+| [Lake Worth Drainage District](https://www.lwdd.net/events) | Calendar subscription is published; includes board meetings and office closures. Cached page has older months, so current dates rely on crawler evidence pending recapture. |
+| [Babcock Schools](https://babcockneighborhoodschools.org/events/) | October 3 golf tournament plus school/administrative entries and dated breaks; events have different locations and audiences. |
+| [Broward College calendar](https://calendar.broward.edu/) | College-wide calendar associated with an aviation institute record; browser text does not independently expose the feed's dates. Multi-campus location check remains necessary. |
+| [Delray Beach Public Library](https://www.delraylibrary.org/) | October 3 programs include a writing festival and classes; renewable homepage event list. |
+| [State College of Florida](https://www.scf.edu/events/) | October 8 music event explicitly in Bradenton although discovering place is Venice; preserve each event's venue. |
+| [Miami Beach Bandshell](https://miamibeachbandshell.com/) | Ongoing October concert list and explicit Miami Beach address. |
+| [Apalachicola](https://www.cityofapalachicola.com/events/) | Municipal calendar landing page; cached September view alone does not prove current future dates. |
+| [Florida Aquarium](https://www.flaquarium.org/news-events/attend-an-event/calendar/) | Dedicated renewable calendar page; feed dates still need minimized recapture. |
+| [Miami Art Scene](https://www.themiamiartscene.com/events/) | Regional art calendar, not events exclusively at the discovering Art & Sol Studios record. |
+| [Shamrock comedy detail](https://www.shamrockcomedyclub.com/events/chris-renois-shamrock-comedy-club-1) | One October 20 show: rejected as a renewable source despite being a real future event. |
+| [International Drive Chamber](https://internationaldrivechamber.com/events/) | October 8 and November 13 luncheons at different Orlando venues; source office is not the event venue. |
+| [Ivanhoe Park Brewing](https://ivanhoeparkbrewing.com/events/) | October calendar separates brewery and Lager House locations; includes promotional specials requiring later quality filtering. |
+| [Florida Holocaust Museum](https://www.thefhm.org/events/) | Future November 9 commemoration shown as date-only; do not manufacture a start time. |
+| [Nathan Benderson Park](https://nathanbendersonpark.org/events/) | Renewable calendar includes ongoing programs as well as dated events; future-start validation does not cover every ongoing program. |
+| [Wickham Park](https://wickhampark.org/) | **Rejected association:** publisher says Manchester/East Hartford, Connecticut; Overture's discovering record is Melbourne, Florida. |
+
+The Wickham mismatch is recorded as a negative data-quality decision in `scripts/directory/source-review-exclusions.json`, scoped to the Overture id plus hostname with primary evidence and date. Both target preparation and source-write validation enforce it. It is not a discovery seed list and does not block correctly associated records elsewhere. No existing production row is deleted. This removes one further target association from the offline eligibility counts above.
+
+Attempts to inspect the CFBACC and Martin MPO pages timed out/failed, and Sanford did not yield reviewable browser text; these are not counted as successful manual reviews. The fixture helper now also minimizes TEC, Localist, Squarespace and JSON-LD date evidence, preserving original dates while removing descriptions/contact fields; tests ensure it cannot turn an originally invalid event into positive evidence.

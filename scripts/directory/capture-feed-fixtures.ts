@@ -11,6 +11,13 @@ export function minimizeIcal(body: string, now: Date): string | null {
   ];
   const kept: string[] = [];
   for (const match of candidates) {
+    if (
+      validateFeed(
+        "ical",
+        `BEGIN:VCALENDAR\nBEGIN:VEVENT\n${match[1]}END:VEVENT\nEND:VCALENDAR`,
+        now,
+      ).outcome !== "verified"
+    ) continue;
     const fields = match[1].split(/\r?\n/).filter((line) =>
       /^(?:DTSTART|DTEND|RRULE|RDATE|EXDATE|RECURRENCE-ID|STATUS)[:;]/.test(
         line,
@@ -28,6 +35,91 @@ export function minimizeIcal(body: string, now: Date): string | null {
   }
   return kept.length
     ? `BEGIN:VCALENDAR\nVERSION:2.0\n${kept.join("\n")}\nEND:VCALENDAR\n`
+    : null;
+}
+export function minimizeFeed(
+  platform: string,
+  body: string,
+  now: Date,
+): { body: string; extension: string } | null {
+  if (validateFeed(platform, body, now).outcome !== "verified") return null;
+  const ical = minimizeIcal(body, now);
+  if (ical) return { body: ical, extension: "ics" };
+  let minimal: string;
+  if (["tec", "localist", "squarespace"].includes(platform)) {
+    const data = JSON.parse(body);
+    const list = platform === "squarespace" ? data.items : data.events;
+    const kept = [];
+    for (const item of list) {
+      const original = platform === "localist" ? item.event : item;
+      if (!original || !(original.title || original.name)) continue;
+      const event: Record<string, unknown> = {
+        title: "Public event (title removed)",
+      };
+      for (
+        const key of ["utc_start_date", "start_date", "startDate", "status"]
+      ) {
+        if (original[key] !== undefined) event[key] = original[key];
+      }
+      if (platform === "localist") {
+        event.event_instances = (original.event_instances ?? []).map((
+          i: { event_instance?: { start?: string } },
+        ) => ({ event_instance: { start: i.event_instance?.start } }));
+      }
+      const candidate = platform === "localist" ? { event } : event;
+      const wrapper = platform === "squarespace"
+        ? { items: [candidate] }
+        : { events: [candidate] };
+      if (
+        validateFeed(platform, JSON.stringify(wrapper), now).outcome ===
+          "verified"
+      ) kept.push(candidate);
+      if (kept.length === 3) break;
+    }
+    minimal = JSON.stringify(
+      platform === "squarespace" ? { items: kept } : { events: kept },
+      null,
+      2,
+    );
+  } else if (platform === "jsonld") {
+    const kept: Record<string, unknown>[] = [];
+    const walk = (value: unknown) => {
+      if (Array.isArray(value)) {
+        for (const v of value) walk(v);
+        return;
+      }
+      if (!value || typeof value !== "object" || kept.length >= 3) return;
+      const o = value as Record<string, unknown>;
+      if (o.name && o.startDate) {
+        const event = {
+          "@type": o["@type"],
+          name: "Public event (title removed)",
+          startDate: o.startDate,
+          eventStatus: o.eventStatus,
+        };
+        if (
+          validateFeed(
+            "jsonld",
+            `<script type="application/ld+json">${
+              JSON.stringify(event)
+            }</script>`,
+            now,
+          ).outcome === "verified"
+        ) kept.push(event);
+      }
+      if (o["@graph"]) walk(o["@graph"]);
+    };
+    for (
+      const s of body.matchAll(
+        /<script\b[^>]*type\s*=\s*["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi,
+      )
+    ) walk(JSON.parse(s[1]));
+    minimal = `<script type="application/ld+json">${
+      JSON.stringify(kept, null, 2)
+    }</script>\n`;
+  } else return null;
+  return validateFeed(platform, minimal, now).outcome === "verified"
+    ? { body: minimal, extension: platform === "jsonld" ? "html" : "json" }
     : null;
 }
 if (import.meta.main) {
@@ -51,7 +143,7 @@ if (import.meta.main) {
           continue;
         }
         const validation = validateFeed(source.platform, response.body, now);
-        const minimal = minimizeIcal(response.body, now);
+        const minimal = minimizeFeed(source.platform, response.body, now);
         if (!minimal) {
           manifest.push({
             platform: source.platform,
@@ -61,8 +153,9 @@ if (import.meta.main) {
           });
           continue;
         }
-        const name = `${source.platform}-${manifest.length}.ics`;
-        await Deno.writeTextFile(`${a.out}/${name}`, minimal);
+        const name =
+          `${source.platform}-${manifest.length}.${minimal.extension}`;
+        await Deno.writeTextFile(`${a.out}/${name}`, minimal.body);
         manifest.push({
           file: name,
           platform: source.platform,
