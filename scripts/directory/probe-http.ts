@@ -133,6 +133,7 @@ export function createProbeHttp(
     { tail: Promise<unknown>; next: number; delay: number }
   >();
   const robots = new Map<string, Promise<ReturnType<typeof robotsParser>>>();
+  const robotsPages = new Map<string, Promise<WireResponse>>();
   const stats = { content_requests: 0, robots_requests: 0, bytes: 0 };
   async function send(
     url: string,
@@ -173,9 +174,25 @@ export function createProbeHttp(
     let pending = robots.get(url.origin);
     if (!pending) {
       pending = (async () => {
-        stats.robots_requests++;
-        const r = await send(`${url.origin}/robots.txt`);
-        // Robots redirects conservatively defer: never follow a new host unchecked.
+        let robotUrl = `${url.origin}/robots.txt`;
+        let r: WireResponse | undefined;
+        for (let hop = 0; hop <= 3; hop++) {
+          // Fetching robots itself is the policy bootstrap; all redirects still
+          // use the public-address transport and shared host scheduler.
+          let fetched = robotsPages.get(robotUrl);
+          if (!fetched) {
+            stats.robots_requests++;
+            fetched = send(robotUrl);
+            robotsPages.set(robotUrl, fetched);
+          }
+          r = await fetched;
+          if (![301, 302, 303, 307, 308].includes(r.status)) break;
+          if (!r.headers.location || hop === 3) {
+            throw new Error("robots_redirect_limit");
+          }
+          robotUrl = normalizeUrl(r.headers.location, robotUrl);
+        }
+        if (!r) throw new Error("robots_unavailable");
         if (![200, 404, 410].includes(r.status)) {
           throw new Error(
             r.status === 401 || r.status === 403

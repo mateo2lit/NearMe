@@ -29,6 +29,7 @@ export async function probeSite(
 ): Promise<LedgerEntry> {
   const budget = http.budget();
   let candidate = old?.candidate;
+  let reason: string | undefined, http_status: number | undefined;
   let future_dates: string[] = [],
     etag: string | undefined,
     last_modified: string | undefined;
@@ -44,6 +45,8 @@ export async function probeSite(
     last_modified,
     requests: budget.requests,
     detector_version: DETECTOR_VERSION,
+    reason,
+    http_status,
   });
   if (
     targets.every((t) =>
@@ -85,7 +88,11 @@ export async function probeSite(
       response = await http.get(c.feed_url, budget);
     }
     if (response.status !== 200) {
-      if (![404, 410].includes(response.status)) saw = "http_error";
+      if (![404, 410].includes(response.status)) {
+        saw = "http_error";
+        reason = "candidate_http_status";
+        http_status = response.status;
+      }
       return false;
     }
     const validation = validateFeed(c.platform, response.body, now);
@@ -103,7 +110,7 @@ export async function probeSite(
     return true;
   };
   try {
-    if (old?.candidate && old.outcome === "verified") {
+    if (old?.candidate) {
       if (await inspect(old.candidate, undefined, true)) {
         return finish("verified");
       }
@@ -111,7 +118,11 @@ export async function probeSite(
       return finish(saw === "no_feed" ? "http_error" : saw);
     }
     const home = await http.get(targets[0].website, budget);
-    if (home.status !== 200) return finish("http_error");
+    if (home.status !== 200) {
+      reason = "homepage_http_status";
+      http_status = home.status;
+      return finish("http_error");
+    }
     const base = home.url ?? targets[0].website;
     const attempted = new Set<string>();
     const inspectPage = async (url: string, html: string) => {
@@ -130,7 +141,11 @@ export async function probeSite(
     const pages = links(home.body, base).filter((url) =>
       /(?:events?|calendar|athletics|libcal|localist|bibliocommons|communico)/i
         .test(url)
-    ).slice(0, 3);
+    ).sort((a, b) => {
+      const score = (url: string) =>
+        /[?&](?:eid|eventid)=|\/events?\/[\w-]+/i.test(url) ? 1 : 0;
+      return score(a) - score(b);
+    }).slice(0, 3);
     for (const page of pages) {
       if (attempted.has(page)) continue;
       if (/bibliocommons\.com/i.test(page)) {
@@ -151,6 +166,7 @@ export async function probeSite(
     return finish(saw);
   } catch (e) {
     const code = e instanceof Error ? e.message : "http_error";
+    reason = /^[a-z_]+$/.test(code) ? code : "transport_error";
     return finish(
       code === "budget_exhausted" || code === "robots_disallowed" ||
         code === "timeout" || code === "terms_blocked"
@@ -251,8 +267,12 @@ if (import.meta.main) {
     let checkpoint = Promise.resolve();
     await Deno.mkdir(a.out, { recursive: true });
     const pending = new Map(state.pending.map((s) => [s.feed_url, s]));
+    const pendingFailures = new Map(
+      (state.pending_failures ?? []).map((s) => [s.feed_url, s]),
+    );
     const save = () => {
       state.pending = [...pending.values()];
+      state.pending_failures = [...pendingFailures.values()];
       checkpoint = checkpoint.then(() => writeSnapshot(a.out!, state));
       return checkpoint;
     };
@@ -272,6 +292,19 @@ if (import.meta.main) {
         state.entries[key] = result;
         const source = sourceFrom(result);
         if (source) pending.set(source.feed_url, source);
+        if (result.candidate) {
+          const update = {
+            feed_url: result.candidate.feed_url,
+            probed_at: result.probed_at,
+            failures: result.outcome === "verified" ? 0 : result.failures,
+          };
+          const prior = pendingFailures.get(update.feed_url);
+          // Shared sources: a success at the same observation time wins over failure.
+          if (
+            !prior || prior.probed_at < update.probed_at ||
+            (prior.probed_at === update.probed_at && update.failures === 0)
+          ) pendingFailures.set(update.feed_url, update);
+        }
         completed++;
         outcomes[result.outcome] = (outcomes[result.outcome] ?? 0) + 1;
         if (source) {

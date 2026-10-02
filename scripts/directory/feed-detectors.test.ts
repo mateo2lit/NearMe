@@ -34,3 +34,11 @@ Deno.test("detectors deduplicate and never invent calendar ids from plugin marke
     false,
   );
 });
+Deno.test("single-event CivicPlus exports do not masquerade as renewable calendar sources", () => {
+  const result = detectCandidates(
+    "https://example.org/Calendar.aspx",
+    '<a href="/iCalendar.aspx?feed=calendar&amp;eventID=12">One event</a><a href="/iCalendar.aspx?catID=3">Category</a>',
+  );
+  assertEquals(result.some((c) => c.feed_url.includes("eventID=")), false);
+  assertEquals(result.some((c) => c.feed_url.includes("catID=3")), true);
+});

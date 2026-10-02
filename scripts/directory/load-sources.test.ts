@@ -2,7 +2,11 @@ import {
   assertEquals,
   assertRejects,
 } from "https://deno.land/std@0.177.0/testing/asserts.ts";
-import { loadSources, supabaseHeaders } from "./load-sources.ts";
+import {
+  applyProbeFailures,
+  loadSources,
+  supabaseHeaders,
+} from "./load-sources.ts";
 import { source } from "./plan-source-writes.test.ts";
 Deno.test("loader dry run has no mutation; capacity failure blocks writes; JWT headers are correct", async () => {
   const methods: string[] = [];
@@ -55,4 +59,26 @@ Deno.test("loader upserts bounded batches and replay uses conflict key", async (
   );
   assertEquals(counts, [100, 100, 5]);
   assertEquals(result.written, 205);
+});
+Deno.test("failure updates replay absolute values and cannot overwrite newer verification", async () => {
+  const writes: { path: string; body: string }[] = [];
+  const rest = async (path: string, init: RequestInit = {}) => {
+    if (init.method === "PATCH") {
+      writes.push({ path, body: String(init.body) });
+      return new Response(null, { status: 204 });
+    }
+    return new Response(JSON.stringify([{ database_bytes: 100000000 }]));
+  };
+  const updates = [{
+    feed_url: source.feed_url,
+    probed_at: "2026-10-02T12:00:00Z",
+    failures: 2,
+  }];
+  await applyProbeFailures(updates, rest, true);
+  assertEquals(writes.length, 0);
+  await applyProbeFailures(updates, rest, false);
+  await applyProbeFailures(updates, rest, false);
+  assertEquals(writes[0], writes[1]);
+  assertEquals(writes[0].path.includes("verified_at=lte."), true);
+  assertEquals(JSON.parse(writes[0].body), { failures: 2 });
 });

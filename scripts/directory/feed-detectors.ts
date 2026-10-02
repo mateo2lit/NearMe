@@ -96,6 +96,9 @@ export function detectCandidates(
   };
   const allLinks = links(html, siteUrl);
   for (const url of allLinks) {
+    if (/icalendar\.aspx/i.test(url) && /[?&](?:eventid|eid)=/i.test(url)) {
+      continue;
+    }
     if (
       /\.ics(?:[?#]|$)|icalendar\.aspx|ical_subscribe\.php|[?&](?:ical|icalendar|tribe_ical)=1|[?&](?:format|type|export)=(?:ical|ics)|\/api\/feeds\/ics\//i
         .test(url)

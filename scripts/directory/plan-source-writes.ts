@@ -22,7 +22,11 @@ export function planSourceWrites(
     ) throw new Error("invalid_source");
     const feed_url = normalizeUrl(source.feed_url),
       page_url = normalizeUrl(source.page_url);
-    const owner = known.get(feed_url) ?? result.get(feed_url) ?? source;
+    const previousOwner = known.get(feed_url) ?? result.get(feed_url);
+    const owner =
+      previousOwner && previousOwner.overture_id !== source.overture_id
+        ? previousOwner
+        : source;
     const row: SourceRow = {
       overture_id: owner.overture_id,
       place_name: owner.place_name,

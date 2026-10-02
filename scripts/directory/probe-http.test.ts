@@ -9,6 +9,34 @@ const response = (
   status = 200,
   headers: Record<string, string> = {},
 ): WireResponse => ({ body, status, headers });
+Deno.test("robots redirects to the public canonical host are bounded, cached and enforced", async () => {
+  const seen: string[] = [];
+  const http = createProbeHttp({
+    sleep: async () => {},
+    wire: async (url) => {
+      seen.push(url);
+      if (url === "http://example.org/robots.txt") {
+        return response("", 301, {
+          location: "https://www.example.org/robots.txt",
+        });
+      }
+      if (url.endsWith("robots.txt")) {
+        return response("User-agent: *\nDisallow: /private");
+      }
+      return response("ok");
+    },
+  });
+  await assertRejects(
+    () => http.get("http://example.org/private", http.budget()),
+    Error,
+    "robots_disallowed",
+  );
+  await http.get("https://www.example.org/public", http.budget());
+  assertEquals(
+    seen.filter((u) => u === "https://www.example.org/robots.txt").length,
+    1,
+  );
+});
 Deno.test("HTTP boundary shares queues and robots across sites on the same host", async () => {
   let clock = 0;
   const starts: number[] = [];

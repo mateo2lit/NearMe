@@ -38,3 +38,11 @@ Deno.test("shared feed owner is deterministic and then stable; reader fields nev
   assertEquals("failures" in rows[0], false);
   assertThrows(() => planSourceWrites([{ ...source, lat: 100 }], []));
 });
+Deno.test("the same feed owner can refresh its metadata without moving another owner's feed", () => {
+  const updated = { ...source, place_name: "Renamed library", lat: 27 };
+  assertEquals(planSourceWrites([updated], [source])[0].lat, 27);
+  assertEquals(
+    planSourceWrites([updated], [source])[0].place_name,
+    "Renamed library",
+  );
+});

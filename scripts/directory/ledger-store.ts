@@ -40,6 +40,7 @@ export async function packState(
     1,
     Math.ceil(entries.length / 2000),
     Math.ceil(pending.length / 2000),
+    Math.ceil((state.pending_failures?.length ?? 0) / 2000),
   );
   for (let i = 0; i < chunks; i++) {
     const data: Snapshot = {
@@ -48,6 +49,12 @@ export async function packState(
       pending: pending.slice(i * 2000, (i + 1) * 2000),
       extractions: i === 0 ? state.extractions : {},
     };
+    if (state.pending_failures) {
+      data.pending_failures = state.pending_failures.slice(
+        i * 2000,
+        (i + 1) * 2000,
+      );
+    }
     const text = JSON.stringify(data),
       name = `${state.generation}-${i}.json.gz`;
     files.set(name, await gzip(text));
@@ -86,6 +93,9 @@ export async function unpackState(
     ) throw new Error("ledger_schema");
     Object.assign(state.entries, chunk.entries);
     state.pending.push(...chunk.pending);
+    if (chunk.pending_failures) {
+      (state.pending_failures ??= []).push(...chunk.pending_failures);
+    }
     Object.assign(state.extractions, chunk.extractions);
   }
   return state;
@@ -163,6 +173,19 @@ if (import.meta.main) {
     }
     if (!a.in || a["dry-run"]) throw new Error("publishing_not_allowed");
     const state = await readSnapshot(a.in);
+    const packed = await packState(state);
+    if (manifest?.generation === state.generation) {
+      if (JSON.stringify(manifest) !== JSON.stringify(packed.manifest)) {
+        throw new Error("ledger_generation_conflict");
+      }
+      console.log(
+        JSON.stringify({
+          generation: state.generation,
+          already_published: true,
+        }),
+      );
+      return;
+    }
     if (
       (manifest?.generation ?? null) !== state.parent ||
       (a["expected-parent"] &&
@@ -179,12 +202,23 @@ if (import.meta.main) {
         }),
       })).json();
     }
-    const packed = await packState(state);
     const upload = async (
       name: string,
       bytes: Uint8Array,
       contentType: string,
     ) => {
+      const existing = assets.find((a) => a.name === name);
+      if (existing) {
+        const response = await api(`releases/assets/${existing.id}`, {
+          headers: { Accept: "application/octet-stream" },
+        });
+        const stored = new Uint8Array(await response.arrayBuffer());
+        if (
+          stored.length !== bytes.length ||
+          stored.some((value, i) => value !== bytes[i])
+        ) throw new Error("ledger_asset_conflict");
+        return;
+      }
       const r = await fetch(
         `https://uploads.github.com/repos/${repo}/releases/${release.id}/assets?name=${
           encodeURIComponent(name)

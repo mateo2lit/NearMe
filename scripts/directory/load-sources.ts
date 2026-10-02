@@ -1,5 +1,6 @@
 import { planSourceWrites } from "./plan-source-writes.ts";
-import type { SourceRow } from "./probe-types.ts";
+import type { Snapshot, SourceRow } from "./probe-types.ts";
+import { normalizeUrl } from "./probe-targets.ts";
 import { args, readSnapshot, safeMain, writeSnapshot } from "./directory-io.ts";
 export function supabaseHeaders(key: string): Record<string, string> {
   const result: Record<string, string> = {
@@ -10,6 +11,46 @@ export function supabaseHeaders(key: string): Record<string, string> {
   return result;
 }
 type Rest = (path: string, init?: RequestInit) => Promise<Response>;
+export async function applyProbeFailures(
+  updates: NonNullable<Snapshot["pending_failures"]>,
+  rest: Rest,
+  dryRun: boolean,
+  receipt?: (url: string) => Promise<void>,
+) {
+  for (let i = 0; i < updates.length; i++) {
+    const update = updates[i];
+    if (
+      !Number.isSafeInteger(update.failures) || update.failures < 0 ||
+      !Number.isFinite(Date.parse(update.probed_at))
+    ) throw new Error("invalid_failure_update");
+    const url = normalizeUrl(update.feed_url);
+    if (dryRun) continue;
+    if (i % 100 === 0) {
+      const response = await rest("rpc/directory_storage_stats");
+      if (!response.ok) throw new Error("storage_unavailable");
+      const stats = (await response.json())[0];
+      if (!stats || !Number.isFinite(Number(stats.database_bytes))) {
+        throw new Error("storage_unavailable");
+      }
+      if (
+        Number(stats.database_bytes) +
+            Math.min(100, updates.length - i) * 16384 >= 400000000
+      ) throw new Error("storage_ceiling");
+    }
+    const response = await rest(
+      `event_sources?feed_url=eq.${encodeURIComponent(url)}&verified_at=lte.${
+        encodeURIComponent(update.probed_at)
+      }`,
+      {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({ failures: update.failures }),
+      },
+    );
+    if (!response.ok) throw new Error("failure_write_failed");
+    await receipt?.(url);
+  }
+}
 export async function loadSources(
   input: SourceRow[],
   rest: Rest,
@@ -97,6 +138,17 @@ if (import.meta.main) {
         await writeSnapshot(a.out!, state);
       },
     });
+    await applyProbeFailures(
+      state.pending_failures ?? [],
+      rest,
+      dryRun,
+      async (url) => {
+        state.pending_failures = state.pending_failures?.filter((s) =>
+          s.feed_url !== url
+        );
+        await writeSnapshot(a.out!, state);
+      },
+    );
     await writeSnapshot(a.out, state);
     console.log(JSON.stringify(result));
   });

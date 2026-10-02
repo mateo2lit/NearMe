@@ -57,6 +57,8 @@ export interface LedgerEntry {
   last_modified?: string;
   requests: number;
   detector_version: number;
+  reason?: string;
+  http_status?: number;
 }
 export interface Snapshot {
   schema: number;
@@ -65,7 +67,12 @@ export interface Snapshot {
   entries: Record<string, LedgerEntry>;
   pending: SourceRow[];
   extractions: Record<string, number>;
+  pending_failures?: {
+    feed_url: string;
+    probed_at: string;
+    failures: number;
+  }[];
 }
-export const DETECTOR_VERSION = 1;
+export const DETECTOR_VERSION = 2;
 export const USER_AGENT =
   "NearMeSourceDirectory/1.0 (+https://github.com/mateo2lit/NearMe)";
