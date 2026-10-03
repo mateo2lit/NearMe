@@ -123,3 +123,30 @@ Attempts to inspect the CFBACC and Martin MPO pages timed out/failed, and Sanfor
 Offline replay through the current write planner accepts the structure of **93 of the 99** saved candidates (57 iCal, 20 TEC, 14 JSON-LD, 2 Timely). It rejects five single-event URLs and the Wickham association. This is not a completed feed-quality review or final pilot count. The initial 16 KiB/source planning reserve for those 93 is **1,523,712 bytes**; actual table/index growth remains unmeasured until authorized loading.
 
 Additional audited safeguards for the next run: each site uses its actual probe-start timestamp rather than the whole crawl's start time; completed host queues no longer retain their last response body; robots caches discard unused error/redirect bodies and compact HTML soft-404 bodies while preserving their unavailable-policy outcome. Focused HTTP/orchestration/capture tests pass after these changes. The public User-Agent repository URL returned unauthenticated HTTP 200 during the review.
+
+### Full Florida tile completed (run #5, commit 3abe678)
+
+Source directory feeds run #5 (dry run, release `2026-09-23.1`, resuming the
+recovery checkpoint) finished successfully in 1 h 21 m with **remaining 0**. The
+summary was read from a screenshot of the run page; the review artifact has not
+been inspected yet.
+
+- Scope: 43,763 extracted, 41,684 eligible, 36,367 websites; 14,097 skipped as
+  already done in earlier checkpoints, 22,270 probed in this run.
+- This run's outcomes: 8,824 later-phase deferrals, 5,164 HTTP errors, 2,513
+  no-feed, 2,407 invalid-feed, 1,733 robots denials, 718 timeouts (32 hit the
+  180 s site deadline), 532 exhausted budgets, 101 empty-future feeds, 19
+  terms-blocked, 18 unsupported, 5 needs-key, **236 verified**.
+- Verified by platform: 154 iCal, 42 TEC, 33 JSON-LD, 3 MEC, 2 EventON, 1
+  Tockify, 1 Google. By class: 152 venue, 43 community, 19 government, 13
+  university, 4 chamber, 3 library, 2 school.
+- **333 pending source candidates** across the whole tile (deduplicated; not yet
+  passed through the write planner or hand review).
+- 33,705 content requests, 17,768 robots requests, about 3.55 GB downloaded,
+  4,807 crawler seconds, **0 AI calls**.
+- `stray_errors: 100`. The crash class behind both earlier `Uncaught null`
+  exits recurred and was absorbed instead of ending the run. Its root cause is
+  still unidentified.
+
+Still to do before the owner's rollout decision: replay the 333 candidates
+through the current write planner, hand-check at least 20, and estimate storage.
