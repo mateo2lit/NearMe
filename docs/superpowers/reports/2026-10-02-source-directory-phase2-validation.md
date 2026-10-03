@@ -161,15 +161,15 @@ Wickham association. A same-day re-fetch of all 327 through `createProbeHttp`
 
 About 120 sources were hand-checked against their fetched events: all 54
 JSON-LD sources, every iCal/TEC source with at most two future events, and every
-ninth remaining iCal/TEC source. A further 37 did not pass:
+ninth remaining iCal/TEC source. 22 of them did not pass:
 
-- **Calendar is not at the place (about 10):** TW Fine Art → The Momentary,
+- **Calendar is not at the place (8):** TW Fine Art → The Momentary,
   Bentonville AR; Bottled Blonde Miami → Scottsdale; Coyote Ugly Daytona → the
   chain's New York events; Tumbleweeds (Dunedin) → Tybee Island GA; Gwinnett
   Orlando → Roswell GA campus; Bonkerz → touring shows in Cheyenne WY; a Port
   Everglades customs office → Internet Archive, San Francisco (wrong Overture
   website); Barcodes Orlando → a citywide gay-events aggregator.
-- **Single-event pages or exports (11):** pages such as bocaraton.com festival,
+- **Single-event pages or exports (10):** pages such as bocaraton.com festival,
   LEGOLAND holiday, E11EVEN, eventcreate, runsignup and Sebring detail; `.ics`
   files such as SOBEWFF 2027, `winterfestparade.com/eventpost/<id>.ics` and a
   GrowthZone `chamber-events/ICal/<slug>-<id>.ics` on another tenant host. The
