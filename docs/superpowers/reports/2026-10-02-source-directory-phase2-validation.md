@@ -259,3 +259,68 @@ fetch time).
 Production, read-only on 2026-10-03: database **224,423,059 bytes (214 MB)**;
 `event_sources` does not exist yet. Pilot load estimate: 282 × 16 KiB =
 **4.6 MB** maximum.
+
+### Next-cycle check (Task 7 step 8)
+
+`selectDue` (extracted from the CLI, commit 37a750a) has a month-later test:
+next-day retries, monthly revalidation of verified feeds, staggered no-feed
+rotation, changed websites as new keys, merged associations, and entries outside
+the extraction left untouched.
+
+Applying it to the saved run #5 Florida ledger at later dates, with no work done
+in between, shows the real monthly workload:
+
+| Date | Due | Skipped | Main due outcomes |
+|---|---|---|---|
+| +1 day | 10,854 | 25,516 | 8,472 HTTP errors, 1,157 timeouts, 806 budget, 419 verified* |
+| +1 month | 32,712 | 3,658 | 14,392 later-phase, 8,472 HTTP errors, 3,919 invalid, 2,812 robots, 508 no-feed |
+| +6 months | 36,370 | 0 | everything |
+
+\*Run #5 verified entries predate acceptance version 1, so they are due at once.
+
+**Finding for the owner:** later-phase deferrals cost no requests, but about
+18,000 of the 32,700 sites due a month later do. HTTP errors reach a monthly
+retry after two failures; invalid feeds, robots denials, terms blocks,
+unsupported and empty feeds recheck monthly. A monthly run would therefore
+re-crawl about half of every tile, not a small refresh. The approved plan pinned
+these cadences, so they were not changed. **Recommendation before enabling a
+monthly schedule:** move invalid feeds, robots denials and repeated HTTP errors
+(three or more failures) to the six-month staggered rotation, and give
+later-phase deferrals no due date until their phase ships. Estimated effect:
+about 2–4,000 request-costing sites a month per Florida-sized tile.
+
+## Phase 3 handoff
+
+- **What a source row is:** one verified public feed (`feed_url`) plus the
+  Overture place that led to it (`overture_id`, name, class, lat/lng). The
+  place's coordinates describe the discovering place, **not** the events. Phase
+  3 must take each event's location from the event (LOCATION/venue/location
+  fields) and drop or hold events without one rather than pin them to the place.
+  `happensElsewhere` and the acceptance rules are the starting point.
+- **Platforms and formats:** `ical` (`?ical=1`, `.ics`, iCalendar exports),
+  `tec` (`/wp-json/tribe/events/v1/events`, use `utc_start_date`), `jsonld`
+  (Event objects in the page), `timely`, `mec`, `eventon`, `tockify`,
+  `google`, `growthzone`, `chambermaster`. Validation rules are in
+  `scripts/directory/feed-validation.ts`.
+- **Time semantics (honesty rule):** date-only events stay date-only (time
+  TBA). About a sixth of feeds stamp times as UTC while meaning local wall
+  clock (WordPress default timezone). A reader must not show an exact time from
+  `TZID=UTC`, `UTC+0` or `+00:00` sources unless the time is corroborated; use
+  time TBA. Floating times and unknown TZIDs stay ambiguous.
+- **Recurrence:** RRULE/RDATE/EXDATE events are not expanded in Phase 2; such
+  feeds may be `unsupported`. A reader needs a bounded recurrence engine.
+- **Shared and system calendars:** one feed per website; the owner is the
+  lexicographically smallest Overture id and stays stable. Statewide or system
+  feeds (YMCA, Legion, college systems) cover many locations. Other associations
+  are only in the external ledger.
+- **Failure ownership:** the discovery loader writes `failures` as absolute,
+  receipt-tracked values. Before a Phase 3 reader writes `failures`,
+  `last_read_at` or `last_event_count`, split failure ownership or add an atomic
+  merge, so reader and loader do not race.
+- **Event-level quality left to Phase 3/4:** test entries ("TEST - CI"),
+  administrative items (board meetings, closures, academic deadlines),
+  members-only events and promotions. Phase 4 adds meetings/services filters.
+- **Gaps:** BiblioCommons and Communico need keys (Phase 5); Squarespace JSON
+  needs live confirmation; athletics platforms are discovery-only; the first
+  validated feed per website is kept, so branch/category feeds are not
+  enumerated.
