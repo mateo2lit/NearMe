@@ -43,9 +43,12 @@ NearMe is an Expo/React Native iOS app (local events) with a Supabase backend
   website).
 - Phase 2 implementation is underway under the owner-approved plan
   `docs/superpowers/plans/2026-10-02-source-directory-phase2-feeds.md`.
-  Manual dry runs use `.github/workflows/source-directory-feeds.yml`;
-  `044_event_sources.sql` has NOT been applied to production. No source loads
-  or monthly feed schedule are authorized until the pilot review gate.
+  Runs use `.github/workflows/source-directory-feeds.yml` (manual only).
+  `044_event_sources.sql` was applied 2026-10-03 (`event_sources` empty, RLS
+  on, service role only). The owner approved the Florida pilot load (tile
+  `t24_85`) on 2026-10-03; it has not run for real yet (run 37098253971 was a
+  dry run by mistake). National loads and a monthly feed schedule are NOT
+  authorized.
   Evidence and remaining gaps:
   `docs/superpowers/reports/2026-10-02-source-directory-phase2-validation.md`.
 

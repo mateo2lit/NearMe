@@ -324,3 +324,18 @@ about 2–4,000 request-costing sites a month per Florida-sized tile.
   needs live confirmation; athletics platforms are discovery-only; the first
   validated feed per website is kept, so branch/category feeds are not
   enumerated.
+
+### Migration applied; pilot load pending (2026-10-03)
+
+The owner approved the migration and the Florida pilot load. `npx supabase db
+push` (run by the owner) applied only `044_event_sources.sql`. A read-only check
+confirmed: `event_sources` exists with 0 rows and RLS on; anon and authenticated
+have no table or RPC access; `directory_storage_stats()` works (database
+224,504,979 bytes, table 32,768 bytes).
+
+[Run 37098253971](https://github.com/mateo2lit/NearMe/actions/runs/37098253971)
+was intended as the live load. It finished successfully, but its load and
+publish jobs were skipped. The workflow skips them only for dry runs, so the
+dry-run input was left checked. Production still has 0 rows. Next: dispatch
+again with dry run unchecked and bootstrap checked, then run the Task 7 step 6
+production checks.
