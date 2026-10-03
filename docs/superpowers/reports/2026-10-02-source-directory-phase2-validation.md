@@ -150,3 +150,57 @@ been inspected yet.
 
 Still to do before the owner's rollout decision: replay the 333 candidates
 through the current write planner, hand-check at least 20, and estimate storage.
+
+### Run #5 candidate review (2026-10-02, local)
+
+The `feed-probe-review` artifact holds 333 candidates. The current write planner,
+applied per record, accepts **327** and rejects 6: 5 single-event URLs and the
+Wickham association. A same-day re-fetch of all 327 through `createProbeHttp`
+(robots, per-host spacing; 327 content and 324 robots requests, 31.5 MB) found
+**323 still verified**, plus 1 invalid, 1 empty-future and 2 timeouts.
+
+About 120 sources were hand-checked against their fetched events: all 54
+JSON-LD sources, every iCal/TEC source with at most two future events, and every
+ninth remaining iCal/TEC source. A further 37 did not pass:
+
+- **Calendar is not at the place (about 10):** TW Fine Art → The Momentary,
+  Bentonville AR; Bottled Blonde Miami → Scottsdale; Coyote Ugly Daytona → the
+  chain's New York events; Tumbleweeds (Dunedin) → Tybee Island GA; Gwinnett
+  Orlando → Roswell GA campus; Bonkerz → touring shows in Cheyenne WY; a Port
+  Everglades customs office → Internet Archive, San Francisco (wrong Overture
+  website); Barcodes Orlando → a citywide gay-events aggregator.
+- **Single-event pages or exports (11):** pages such as bocaraton.com festival,
+  LEGOLAND holiday, E11EVEN, eventcreate, runsignup and Sebring detail; `.ics`
+  files such as SOBEWFF 2027, `winterfestparade.com/eventpost/<id>.ics` and a
+  GrowthZone `chamber-events/ICal/<slug>-<id>.ics` on another tenant host. The
+  last one shows a gap in `singleEventUrl`.
+- **Not events (2):** Trulia real-estate listing pages marked up as Event.
+- **Fabricated time (1):** Medieval Times JSON-LD `startDate` is the fetch
+  time, with seconds.
+- **Test data (1):** YMCA "TEST - CI" events in an `America/Halifax` zone.
+
+Spot checks of ordinary iCal/TEC sources were mostly sound: about 26 of 30
+listed renewable events at or near the place. Statewide or system feeds (Florida
+Legion, YMCA South Florida, UF TREEO trainings, Miami-Dade Auditorium "away from
+home") are real calendars but describe many locations.
+
+**Time-zone finding for Phase 3:** 53 of the 323 feeds stamp times in UTC, and 24
+of those show evening-type events at 04:00–12:00 UTC. Many WordPress/TEC sites
+keep the default UTC site timezone while entering local wall-clock times (FC
+Naples home game 19:00 "UTC", I-Drive luncheon 11:00 "UTC"). Phase 2 validation
+only needs the date, so this does not change verification. A Phase 3 reader must
+not present a `TZID=UTC`/`UTC+0` time from such sources as exact; it should use
+time TBA unless corroborated. Several JSON-LD offsets are also implausible
+(-06:00 in Florida, 05:30 yoga). 51 feeds include date-only events, which stay
+date-only.
+
+**Storage:** 327 rows × the 16 KiB planning reserve = **5.4 MB**, against a
+database last measured at 214 MB. The real per-row cost is expected to be far
+smaller and will be measured after an authorized load.
+
+**Recommended before the pilot load:** reject sources whose events mostly name
+another state or region than the place (a generic location check, in the spirit
+of `happensElsewhere`); require at least two distinct future events for a new
+source; widen single-event URL detection for numeric-id `.ics` and detail pages;
+and reject JSON-LD feeds whose dates equal the fetch time. Then replay this
+artifact offline and re-review.
