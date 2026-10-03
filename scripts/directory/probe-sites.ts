@@ -263,6 +263,42 @@ function sourceFrom(entry: LedgerEntry): SourceRow | null {
     ).sort((a, b) => a.overture_id.localeCompare(b.overture_id))[0];
   return { ...place, ...entry.candidate, verified_at: entry.probed_at };
 }
+/**
+ * Websites to probe this run, in stable hash order. Merges this extraction's
+ * places into existing entries (other associations are kept) and never
+ * touches entries outside the extraction.
+ */
+export function selectDue(
+  groups: Map<string, ProbeTarget[]>,
+  entries: Record<string, LedgerEntry>,
+  now: Date,
+): { due: [string, ProbeTarget[]][]; skipped: number } {
+  const due: [string, ProbeTarget[]][] = [];
+  let skipped = 0;
+  for (const [key, targets] of groups) {
+    const old = entries[key];
+    if (old) {
+      // Keep associations outside this extraction's scope; source ownership stays stable.
+      const merged = new Map(old.associations.map((t) => [t.overture_id, t]));
+      for (const t of targets) merged.set(t.overture_id, t);
+      old.associations = [...merged.values()];
+    }
+    if (
+      old && old.detector_version === DETECTOR_VERSION &&
+      decideProbe(old, now) === "skip" &&
+      !(old.outcome === "verified" &&
+        (old.acceptance_version ?? 0) < ACCEPTANCE_VERSION)
+    ) {
+      skipped++;
+      continue;
+    }
+    due.push([key, old?.associations ?? targets]);
+  }
+  due.sort((a, b) =>
+    stableOrder(a[0]) - stableOrder(b[0]) || a[0].localeCompare(b[0])
+  );
+  return { due, skipped };
+}
 export function stableOrder(key: string): number {
   let h = 2166136261;
   for (const c of key) h = Math.imul(h ^ c.charCodeAt(0), 16777619);
@@ -333,30 +369,7 @@ if (import.meta.main) {
       state.extractions[`${id}|${manifest.min_confidence}`] = count;
     }
     const now = new Date(), started = Date.now();
-    const due: [string, ProbeTarget[]][] = [];
-    let skipped = 0;
-    for (const [key, targets] of groups) {
-      const old = state.entries[key];
-      if (old) {
-        // Keep associations outside this extraction's scope; source ownership stays stable.
-        const merged = new Map(old.associations.map((t) => [t.overture_id, t]));
-        for (const t of targets) merged.set(t.overture_id, t);
-        old.associations = [...merged.values()];
-      }
-      if (
-        old && old.detector_version === DETECTOR_VERSION &&
-        decideProbe(old, now) === "skip" &&
-        !(old.outcome === "verified" &&
-          (old.acceptance_version ?? 0) < ACCEPTANCE_VERSION)
-      ) {
-        skipped++;
-        continue;
-      }
-      due.push([key, old?.associations ?? targets]);
-    }
-    due.sort((a, b) =>
-      stableOrder(a[0]) - stableOrder(b[0]) || a[0].localeCompare(b[0])
-    );
+    const { due, skipped } = selectDue(groups, state.entries, now);
     const http = createProbeHttp();
     let cursor = 0, completed = 0;
     const outcomes: Record<string, number> = {},

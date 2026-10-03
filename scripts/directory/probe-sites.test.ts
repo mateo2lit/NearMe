@@ -1,8 +1,9 @@
 import { assertEquals } from "https://deno.land/std@0.177.0/testing/asserts.ts";
-import { probeSite, probeWithDeadline } from "./probe-sites.ts";
+import { probeSite, probeWithDeadline, selectDue } from "./probe-sites.ts";
 import { createProbeHttp } from "./probe-http.ts";
 import {
   ACCEPTANCE_VERSION,
+  DETECTOR_VERSION,
   type LedgerEntry,
   type ProbeTarget,
 } from "./probe-types.ts";
@@ -106,18 +107,57 @@ Deno.test("blocked/deferred discovery cannot become no_feed", async () => {
 Deno.test("a site that hangs or throws is recorded as a timeout, not a dead run", async () => {
   const now = new Date("2026-10-02T12:00:00Z");
   const site: ProbeTarget[] = [{ ...target }];
-  const hung = await probeWithDeadline(() => new Promise(() => {}), 20, site, now);
-  assertEquals([hung.outcome, hung.reason, hung.failures], ["timeout", "site_deadline", 1]);
-  const threw = await probeWithDeadline(() => Promise.reject(null), 1000, site, now);
+  const hung = await probeWithDeadline(
+    () => new Promise(() => {}),
+    20,
+    site,
+    now,
+  );
+  assertEquals([hung.outcome, hung.reason, hung.failures], [
+    "timeout",
+    "site_deadline",
+    1,
+  ]);
+  const threw = await probeWithDeadline(
+    () => Promise.reject(null),
+    1000,
+    site,
+    now,
+  );
   assertEquals([threw.outcome, threw.reason], ["timeout", "site_crash"]);
-  const old = { ...hung, failures: 2, candidate: { feed_url: "https://x.example/cal.ics", page_url: "https://x.example/", platform: "ical" } } as LedgerEntry;
-  const again = await probeWithDeadline(() => new Promise(() => {}), 20, site, now, old);
-  assertEquals([again.failures, again.candidate?.feed_url], [3, "https://x.example/cal.ics"]);
+  const old = {
+    ...hung,
+    failures: 2,
+    candidate: {
+      feed_url: "https://x.example/cal.ics",
+      page_url: "https://x.example/",
+      platform: "ical",
+    },
+  } as LedgerEntry;
+  const again = await probeWithDeadline(
+    () => new Promise(() => {}),
+    20,
+    site,
+    now,
+    old,
+  );
+  assertEquals([again.failures, again.candidate?.feed_url], [
+    3,
+    "https://x.example/cal.ics",
+  ]);
 });
 
 Deno.test("a site that finishes in time keeps its own result", async () => {
   const ok = { outcome: "no_feed" } as LedgerEntry;
-  assertEquals(await probeWithDeadline(() => Promise.resolve(ok), 1000, [{ ...target }], new Date()), ok);
+  assertEquals(
+    await probeWithDeadline(
+      () => Promise.resolve(ok),
+      1000,
+      [{ ...target }],
+      new Date(),
+    ),
+    ok,
+  );
 });
 
 function feedHttp(body: string, seen: Record<string, string>[] = []) {
@@ -128,7 +168,11 @@ function feedHttp(body: string, seen: Record<string, string>[] = []) {
         return { status: 200, headers: {}, body: "" };
       }
       seen.push(headers);
-      return { status: headers["If-None-Match"] ? 304 : 200, headers: {}, body };
+      return {
+        status: headers["If-None-Match"] ? 304 : 200,
+        headers: {},
+        body,
+      };
     },
   });
 }
@@ -169,11 +213,21 @@ Deno.test("a new one-event feed is not a source; it is rechecked monthly", async
 });
 Deno.test("a source accepted under older rules is refetched in full and rechecked", async () => {
   const seen: Record<string, string>[] = [];
-  const result = await probeSite([target], feedHttp(oneEvent, seen), now, verifiedEntry());
+  const result = await probeSite(
+    [target],
+    feedHttp(oneEvent, seen),
+    now,
+    verifiedEntry(),
+  );
   assertEquals(seen[0]["If-None-Match"], undefined);
   assertEquals(result.outcome, "zero_future_events");
   assertEquals(result.reason, "too_few_events");
-  const passing = await probeSite([target], feedHttp(calendar), now, verifiedEntry());
+  const passing = await probeSite(
+    [target],
+    feedHttp(calendar),
+    now,
+    verifiedEntry(),
+  );
   assertEquals(passing.outcome, "verified");
   assertEquals(passing.acceptance_version, ACCEPTANCE_VERSION);
 });
@@ -186,4 +240,77 @@ Deno.test("a source accepted under current rules stays verified in a quiet month
   );
   assertEquals(result.outcome, "verified");
   assertEquals(result.acceptance_version, ACCEPTANCE_VERSION);
+});
+Deno.test("next monthly cycle: what is rechecked, skipped and left alone", () => {
+  const probed = new Date("2026-10-02T12:00:00Z");
+  const site = (website: string, id = website): ProbeTarget => ({
+    ...target,
+    overture_id: id,
+    website,
+  });
+  const entry = (
+    outcome: LedgerEntry["outcome"],
+    next: string,
+    extra: Partial<LedgerEntry> = {},
+  ): LedgerEntry => ({
+    outcome,
+    probed_at: probed.toISOString(),
+    next_check_at: next,
+    failures: 0,
+    associations: [site("https://x.example/", "old-place")],
+    future_dates: [],
+    requests: 1,
+    detector_version: DETECTOR_VERSION,
+    acceptance_version: ACCEPTANCE_VERSION,
+    ...extra,
+  });
+  const entries: Record<string, LedgerEntry> = {
+    "all|https://feed.example/": entry("verified", "2026-11-02T12:00:00Z"),
+    "all|https://none-soon.example/": entry("no_feed", "2026-11-02T12:00:00Z"),
+    "all|https://none-later.example/": entry("no_feed", "2027-02-02T12:00:00Z"),
+    "all|https://down.example/": entry("http_error", "2026-10-03T12:00:00Z"),
+    "all|https://old-rules.example/": entry(
+      "verified",
+      "2026-11-02T12:00:00Z",
+      {
+        acceptance_version: undefined,
+      },
+    ),
+    "all|https://other-tile.example/": entry("no_feed", "2026-11-02T12:00:00Z"),
+  };
+  const outOfScope = structuredClone(
+    entries["all|https://other-tile.example/"],
+  );
+  const groups = new Map<string, ProbeTarget[]>([
+    ["all|https://feed.example/", [site("https://feed.example/", "new-place")]],
+    ["all|https://none-soon.example/", [site("https://none-soon.example/")]],
+    ["all|https://none-later.example/", [site("https://none-later.example/")]],
+    ["all|https://down.example/", [site("https://down.example/")]],
+    ["all|https://old-rules.example/", [site("https://old-rules.example/")]],
+    // A place whose website changed arrives under a new key.
+    ["all|https://changed.example/", [site("https://changed.example/")]],
+  ]);
+  const keys = (now: string) =>
+    selectDue(groups, entries, new Date(now)).due.map(([k]) =>
+      k.replace(/^all\|https:\/\/|\.example\/$/g, "")
+    ).sort();
+  // The next day: retries, sources from older rules, and changed websites.
+  assertEquals(keys("2026-10-03T13:00:00Z"), ["changed", "down", "old-rules"]);
+  // A month on: verified feeds revalidate and the first no-feed slice rotates in.
+  assertEquals(keys("2026-11-02T13:00:00Z"), [
+    "changed",
+    "down",
+    "feed",
+    "none-soon",
+    "old-rules",
+  ]);
+  // Later no-feed slices wait for their own month.
+  assertEquals(keys("2027-02-02T13:00:00Z").includes("none-later"), true);
+  // Entries outside this extraction are never touched.
+  assertEquals(entries["all|https://other-tile.example/"], outOfScope);
+  // New places join an existing website without dropping the old association.
+  assertEquals(
+    entries["all|https://feed.example/"].associations.map((t) => t.overture_id),
+    ["old-place", "new-place"],
+  );
 });
