@@ -3,11 +3,13 @@ import {
   assertRejects,
 } from "https://deno.land/std@0.177.0/testing/asserts.ts";
 import {
+  acceptedPending,
   applyProbeFailures,
   loadSources,
   supabaseHeaders,
 } from "./load-sources.ts";
 import { source } from "./plan-source-writes.test.ts";
+import { ACCEPTANCE_VERSION, type Snapshot } from "./probe-types.ts";
 Deno.test("loader dry run has no mutation; capacity failure blocks writes; JWT headers are correct", async () => {
   const methods: string[] = [];
   const rest = async (path: string, init: RequestInit = {}) => {
@@ -101,4 +103,38 @@ Deno.test("null database metrics never authorize a write", async () => {
     Error,
     "storage_unavailable",
   );
+});
+Deno.test("only sources accepted under current rules are loaded", () => {
+  const entry = (
+    url: string,
+    acceptance_version?: number,
+    outcome = "verified",
+  ) => ({
+    outcome,
+    probed_at: "2026-10-02",
+    next_check_at: "2026-11-02",
+    failures: 0,
+    associations: [],
+    candidate: { platform: "ical", feed_url: url, page_url: url },
+    future_dates: [],
+    requests: 1,
+    detector_version: 2,
+    acceptance_version,
+  });
+  const a = { ...source, feed_url: "https://a.example/cal.ics" };
+  const b = { ...source, feed_url: "https://b.example/cal.ics" };
+  const c = { ...source, feed_url: "https://c.example/cal.ics" };
+  const state = {
+    schema: 1,
+    generation: "g",
+    parent: null,
+    entries: {
+      a: entry(a.feed_url, ACCEPTANCE_VERSION),
+      b: entry(b.feed_url),
+      c: entry(c.feed_url, ACCEPTANCE_VERSION, "zero_future_events"),
+    },
+    pending: [a, b, c],
+    extractions: {},
+  } as Snapshot;
+  assertEquals(acceptedPending(state).map((s) => s.feed_url), [a.feed_url]);
 });

@@ -6,7 +6,9 @@ import {
   singleEventUrl,
 } from "./feed-detectors.ts";
 import { validateFeed } from "./feed-validation.ts";
+import { sourceRejection } from "./source-quality.ts";
 import {
+  ACCEPTANCE_VERSION,
   DETECTOR_VERSION,
   type FeedCandidate,
   type LedgerEntry,
@@ -26,6 +28,12 @@ import {
 } from "./directory-io.ts";
 import { tiles } from "../../supabase/functions/_shared/venue-match.ts";
 
+const REJECTIONS = new Set([
+  "too_few_events",
+  "events_elsewhere",
+  "not_events",
+  "single_event_source",
+]);
 export async function probeSite(
   targets: ProbeTarget[],
   http: ReturnType<typeof createProbeHttp>,
@@ -35,6 +43,9 @@ export async function probeSite(
 ): Promise<LedgerEntry> {
   const budget = http.budget();
   let candidate = old?.candidate;
+  let accepted = old?.acceptance_version;
+  // A candidate never accepted under the current rules is checked as new.
+  const stale = (old?.acceptance_version ?? 0) < ACCEPTANCE_VERSION;
   let reason: string | undefined, http_status: number | undefined;
   let future_dates: string[] = [],
     etag: string | undefined,
@@ -58,6 +69,7 @@ export async function probeSite(
     last_modified,
     requests: budget.requests,
     detector_version: DETECTOR_VERSION,
+    acceptance_version: accepted,
     reason,
     http_status,
   });
@@ -121,6 +133,15 @@ export async function probeSite(
       reason = "single_event_source";
       return false;
     }
+    const known = old?.candidate?.feed_url === c.feed_url && !stale;
+    const rejection = sourceRejection(validation, targets, !known);
+    if (rejection) {
+      // Too few events may grow into a calendar; the monthly recheck covers it.
+      saw = rejection === "too_few_events" ? "zero_future_events" : "unsupported";
+      reason = rejection;
+      return false;
+    }
+    accepted = ACCEPTANCE_VERSION;
     candidate = { ...c, feed_url: response.url ?? c.feed_url };
     future_dates = validation.future_dates;
     etag = response.headers.etag;
@@ -129,7 +150,8 @@ export async function probeSite(
   };
   try {
     if (old?.candidate) {
-      if (await inspect(old.candidate, undefined, true)) {
+      // A 304 cannot show the feed passes newer acceptance rules.
+      if (await inspect(old.candidate, undefined, !stale)) {
         return finish("verified");
       }
       // Monthly revalidation is bounded; a failed known feed retries later.
@@ -218,6 +240,7 @@ export async function probeWithDeadline(
     last_modified: old?.last_modified,
     requests: 0,
     detector_version: DETECTOR_VERSION,
+    acceptance_version: old?.acceptance_version,
     reason,
   });
   let timer: number | undefined;
@@ -322,7 +345,9 @@ if (import.meta.main) {
       }
       if (
         old && old.detector_version === DETECTOR_VERSION &&
-        decideProbe(old, now) === "skip"
+        decideProbe(old, now) === "skip" &&
+        !(old.outcome === "verified" &&
+          (old.acceptance_version ?? 0) < ACCEPTANCE_VERSION)
       ) {
         skipped++;
         continue;
@@ -373,6 +398,17 @@ if (import.meta.main) {
             source.feed_url,
             previous ? planSourceWrites([previous, source], [])[0] : source,
           );
+        } else if (
+          result.candidate && REJECTIONS.has(result.reason ?? "")
+        ) {
+          // A queued, never-loaded source that now fails acceptance is dropped.
+          const queued = pending.get(result.candidate.feed_url);
+          if (
+            queued &&
+            result.associations.some((t) =>
+              t.overture_id === queued.overture_id
+            )
+          ) pending.delete(queued.feed_url);
         }
         if (result.candidate) {
           const update = {

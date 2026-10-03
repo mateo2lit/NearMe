@@ -1,5 +1,9 @@
 import { planSourceWrites } from "./plan-source-writes.ts";
-import type { Snapshot, SourceRow } from "./probe-types.ts";
+import {
+  ACCEPTANCE_VERSION,
+  type Snapshot,
+  type SourceRow,
+} from "./probe-types.ts";
 import { normalizeUrl } from "./probe-targets.ts";
 import { args, readSnapshot, safeMain, writeSnapshot } from "./directory-io.ts";
 export function supabaseHeaders(key: string): Record<string, string> {
@@ -57,6 +61,19 @@ export async function applyProbeFailures(
     if (!response.ok) throw new Error("failure_write_failed");
     await receipt?.(url);
   }
+}
+/**
+ * Pending sources whose ledger entry is verified under the current acceptance
+ * rules. Anything queued before a rule change waits for its recheck.
+ */
+export function acceptedPending(state: Snapshot): SourceRow[] {
+  const ok = new Set(
+    Object.values(state.entries).filter((e) =>
+      e.outcome === "verified" && e.candidate &&
+      (e.acceptance_version ?? 0) >= ACCEPTANCE_VERSION
+    ).map((e) => e.candidate!.feed_url),
+  );
+  return state.pending.filter((s) => ok.has(s.feed_url));
 }
 export async function loadSources(
   input: SourceRow[],
@@ -145,7 +162,7 @@ if (import.meta.main) {
         signal: AbortSignal.timeout(15000),
         headers: { ...supabaseHeaders(key), ...init.headers },
       });
-    const result = await loadSources(state.pending, rest, {
+    const result = await loadSources(acceptedPending(state), rest, {
       dryRun,
       maxDbBytes: a["max-db-bytes"] ? Number(a["max-db-bytes"]) : undefined,
       receipt: async (urls) => {

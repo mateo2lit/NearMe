@@ -204,3 +204,42 @@ of `happensElsewhere`); require at least two distinct future events for a new
 source; widen single-event URL detection for numeric-id `.ics` and detail pages;
 and reject JSON-LD feeds whose dates equal the fetch time. Then replay this
 artifact offline and re-review.
+
+### Source-acceptance rules (acceptance version 1)
+
+`scripts/directory/source-quality.ts` adds checks that run after a feed
+validates. They use only the feed's own data and work in any city:
+
+- **Too few events:** a new source needs at least two distinct future events
+  (title plus start). A source already accepted keeps verifying in a quiet
+  month. Rejections are rechecked monthly as `zero_future_events`.
+- **Events elsewhere:** if most events with a stated location are more than
+  200 km from every associated place (by coordinates), or in another US
+  state, Canadian province or country (by structured region or address text),
+  the source is rejected. Unknown locations never count against a source, and a
+  shared calendar is local if it matches any associated place.
+- **Not events:** calendars whose events are mostly street-address names or
+  open houses (property listings) are rejected.
+- **Fetch-time dates:** a start with seconds within an hour of the fetch does
+  not count as an event.
+- Single-event URL detection now also covers GrowthZone-style
+  `/ICal/<slug>-<id>.ics` on any host, `/eventpost/` and `/events/<x>/<id>`.
+
+A separate `ACCEPTANCE_VERSION` avoids a detector-version bump, which would
+re-crawl every website. Verified entries accepted under older rules are
+refetched in full (no 304 shortcut) on the next run. A rechecked source that
+fails is dropped from the pending queue, and the loader loads only pending
+sources whose ledger entry is verified under the current version.
+
+**Offline replay of the 327 candidates (fresh re-fetch, 2026-10-03 UTC):** **273
+accepted**. Rejected: 30 too few events, 13 events elsewhere, 5 single-event
+URLs, 2 not events (Trulia), 2 zero future events (including Medieval Times
+after the fetch-time rule), 1 invalid, 1 timeout. Of the 22 bad sources found
+by hand review, the rules reject 21. The YMCA feed with "TEST" events still
+passes; that is event-level quality for Phase 3. Newly found mismatches were
+checked: Gainesville City Power Plant → Gainesville, **Georgia** tourism
+calendar; Brass Rail DeLand → Fort Wayne; Lucy's Key West → New Orleans;
+Springfield College Tampa → Massachusetts; plus chain-wide calendars (Gordon
+Biersch, In the Game, Barons Creek). The two-event rule also defers some real
+local calendars that list one event this month (Lowry Parcade, Apex Theatre,
+Fitzgerald's). They are rechecked monthly rather than lost.

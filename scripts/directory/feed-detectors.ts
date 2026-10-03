@@ -37,6 +37,11 @@ export function singleEventUrl(value: string): boolean {
     /\/events\/[^/]+\/?$/i.test(u.pathname) &&
       !/\/events\/(?:calendar|calendar\.ics|feed|ical)\/?$/i.test(u.pathname) ||
     /\/eventcalendar\/ical\/[^/]+\.ics$/i.test(u.pathname) ||
+    // GrowthZone-style per-event exports on any path, numbered event posts,
+    // and numbered detail pages under an events path.
+    /\/ical\/[^/]+-\d+\.ics$/i.test(u.pathname) ||
+    /\/eventpost\//i.test(u.pathname) ||
+    /\/events\/[^/]+\/\d+\/?$/i.test(u.pathname) ||
     /[?&](?:eventid|eid)=/i.test(u.search);
 }
 function unescape(s: string): string {

@@ -29,10 +29,24 @@ export interface FeedCandidate {
   feed_url: string;
   page_url: string;
 }
+export interface EventLocation {
+  text?: string;
+  region?: string;
+  country?: string;
+  lat?: number;
+  lng?: number;
+}
+export interface EventEvidence {
+  title: string;
+  start: string;
+  location?: EventLocation;
+}
 export interface Validation {
   outcome: Outcome;
   future_dates: string[];
   event_count: number;
+  // Future, non-cancelled events (capped) for source-acceptance checks.
+  events?: EventEvidence[];
 }
 export interface SourceRow extends FeedCandidate {
   overture_id: string;
@@ -57,6 +71,8 @@ export interface LedgerEntry {
   last_modified?: string;
   requests: number;
   detector_version: number;
+  // Acceptance rules the verified candidate last passed with a full fetch.
+  acceptance_version?: number;
   reason?: string;
   http_status?: number;
 }
@@ -74,5 +90,8 @@ export interface Snapshot {
   }[];
 }
 export const DETECTOR_VERSION = 2;
+// Raised when source-acceptance rules tighten; verified entries below it are
+// rechecked with a full fetch, without rediscovering every other website.
+export const ACCEPTANCE_VERSION = 1;
 export const USER_AGENT =
   "NearMeSourceDirectory/1.0 (+https://github.com/mateo2lit/NearMe)";
