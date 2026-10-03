@@ -243,3 +243,19 @@ Springfield College Tampa → Massachusetts; plus chain-wide calendars (Gordon
 Biersch, In the Game, Barons Creek). The two-event rule also defers some real
 local calendars that list one event this month (Lowry Parcade, Apex Theatre,
 Fitzgerald's). They are rechecked monthly rather than lost.
+
+### Dry run with acceptance rules (run #6, commit c2ad09c)
+
+[Run 37097388738](https://github.com/mateo2lit/NearMe/actions/runs/37097388738)
+(dry run, resuming run #5) finished in 3 m 1 s with remaining 0. It skipped
+35,949 websites and probed 418 due entries: the stale verified sources plus
+transient failures due for retry. Outcomes: **319 verified**, 32 zero-future
+(30 too few events), 29 unsupported (17 events elsewhere, 10 single-event, 2
+not events), 35 HTTP errors and 3 timeouts. **282 pending sources** after
+deduplication; 389 content and 329 robots requests; 0 AI calls; 0 stray errors.
+The pipeline agrees with the offline replay (273 accepted, from a different
+fetch time).
+
+Production, read-only on 2026-10-03: database **224,423,059 bytes (214 MB)**;
+`event_sources` does not exist yet. Pilot load estimate: 282 × 16 KiB =
+**4.6 MB** maximum.
